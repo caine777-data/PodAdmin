@@ -1,0 +1,95 @@
+name: Build executables
+
+# Compile PodAdmin en .exe (Windows) et .app/.zip (macOS) automatiquement.
+# Déclencheurs : push d'un tag "v*" (ex : v0.1.0) → crée une Release,
+#                ou lancement manuel via le bouton "Run workflow".
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:        # bouton "Run workflow" dans l'onglet Actions
+
+jobs:
+  # ────────────────────────────── WINDOWS ──────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compiler PodAdmin.exe
+        run: |
+          pyinstaller --onefile --windowed --name "PodAdmin" `
+            --collect-all customtkinter `
+            --collect-all keyring `
+            --collect-all tkinterdnd2 `
+            --collect-all openpyxl `
+            --add-data "assets;assets" `
+            app.py
+
+      - name: Publier l'artefact Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAdmin-Windows
+          path: dist/PodAdmin.exe
+
+  # ─────────────────────────────── macOS ───────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compiler PodAdmin.app
+        run: |
+          pyinstaller --onefile --windowed --name "PodAdmin" \
+            --collect-all customtkinter \
+            --collect-all keyring \
+            --collect-all tkinterdnd2 \
+            --collect-all openpyxl \
+            --add-data "assets:assets" \
+            app.py
+
+      - name: Compresser le .app
+        run: |
+          cd dist
+          zip -r PodAdmin-macOS.zip PodAdmin.app || zip -r PodAdmin-macOS.zip PodAdmin
+
+      - name: Publier l'artefact macOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAdmin-macOS
+          path: dist/PodAdmin-macOS.zip
+
+  # ──────────────────── Release GitHub (si tag v*) ─────────────────────
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Créer la release et joindre les binaires
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PodAdmin-Windows/PodAdmin.exe
+            PodAdmin-macOS/PodAdmin-macOS.zip

@@ -177,6 +177,7 @@ class App(_AppBase):
         for label, key in [
             ("📂   Téléversement", "upload"),
             ("👤   Comptes",       "comptes"),
+            ("🎞️   Vidéos",        "browse"),
             ("🔄   Réaffectation", "reassign"),
             ("🧹   Nettoyage",     "clean"),
             ("📊   Inventaire",    "stats"),
@@ -203,6 +204,7 @@ class App(_AppBase):
         self.tabs = {}
         self._build_tab_upload()
         self._build_tab_comptes()
+        self._build_tab_browse()
         self._build_tab_reassign()
         self._build_tab_clean()
         self._build_tab_stats()
@@ -1116,6 +1118,373 @@ class App(_AppBase):
             self._ui(self.comptes_count_lbl.configure,
                      text=f"❌  Échec pour {uname} : {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Échec MAJ statut de {uname} : {e}")
+
+    # ═════════════════════════════════════════════════════════════════════
+    #  ONGLET VIDÉOS — explorateur + édition d'UNE vidéo
+    # ═════════════════════════════════════════════════════════════════════
+    #
+    #  Rechercher/filtrer une vidéo dans une liste (gauche), puis l'éditer dans
+    #  un panneau de détail (droite) : renommer, changer le statut
+    #  (brouillon/public, restreinte), gérer les co-propriétaires et les
+    #  chaînes, supprimer. Les actions portent sur UNE vidéo à la fois.
+
+    def _build_tab_browse(self):
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["browse"] = frame
+
+        ctk.CTkLabel(frame, text="🎞️  Vidéos",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            frame,
+            text="Recherchez une vidéo, sélectionnez-la dans la liste, puis éditez-la dans "
+                 "le panneau de droite (titre, statut, co-propriétaires, chaînes, suppression).",
+            text_color="gray70", font=ctk.CTkFont(size=12),
+            justify="left", wraplength=860).pack(anchor="w", pady=(0, 8))
+
+        # — Ligne : charger + statut —
+        top = ctk.CTkFrame(frame, fg_color="transparent")
+        top.pack(fill="x")
+        ctk.CTkButton(top, text="📡  Charger les vidéos", fg_color="#2563eb",
+                      hover_color="#1d4ed8", command=self._browse_load).pack(side="left")
+        self.browse_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
+                                          font=ctk.CTkFont(size=11))
+        self.browse_status.pack(side="left", padx=10)
+
+        # — Ligne : filtres —
+        filt = ctk.CTkFrame(frame, fg_color="transparent")
+        filt.pack(fill="x", pady=(8, 4))
+        self.browse_text = ctk.CTkEntry(filt, placeholder_text="rechercher : titre / slug / propriétaire…")
+        self.browse_text.pack(side="left", fill="x", expand=True)
+        self.browse_text.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
+        self.browse_statut = ctk.CTkOptionMenu(
+            filt, width=130, values=["Tous statuts", "Brouillon", "Public", "Restreinte"],
+            command=lambda _c: self._browse_apply_filter())
+        self.browse_statut.set("Tous statuts")
+        self.browse_statut.pack(side="left", padx=6)
+        self.browse_encode = ctk.CTkOptionMenu(
+            filt, width=150, values=["Tout encodage", "Encodées", "Non-encodées"],
+            command=lambda _c: self._browse_apply_filter())
+        self.browse_encode.set("Tout encodage")
+        self.browse_encode.pack(side="left", padx=6)
+        self.browse_chan = ctk.CTkOptionMenu(filt, width=170, values=["Toutes chaînes"],
+                                             command=lambda _c: self._browse_apply_filter())
+        self.browse_chan.set("Toutes chaînes")
+        self.browse_chan.pack(side="left", padx=6)
+
+        # — Corps : liste (gauche) + détail (droite) —
+        body = ctk.CTkFrame(frame, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=2)
+        body.columnconfigure(1, weight=3)
+        body.rowconfigure(1, weight=1)
+
+        self.browse_count_lbl = ctk.CTkLabel(body, text="", text_color="gray",
+                                             font=ctk.CTkFont(size=11), anchor="w")
+        self.browse_count_lbl.grid(row=0, column=0, sticky="w", pady=(0, 2))
+        self.browse_list = ctk.CTkScrollableFrame(body, label_text="Résultats")
+        self.browse_list.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        self.browse_detail = ctk.CTkScrollableFrame(body, label_text="Détail / actions")
+        self.browse_detail.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
+
+        # — Données —
+        self.browse_videos = []         # scan complet (cache)
+        self.browse_channels = []       # chaînes (pour filtre + sélecteur)
+        self.browse_chan_by_url = {}    # URL chaîne → titre
+        self.browse_filtered = []       # sous-ensemble affiché
+        self.browse_selected = None     # vidéo en cours d'édition
+
+        self._browse_render_detail()    # affiche le message d'invite
+
+    # ── Chargement (vidéos + chaînes) ──────────────────────────────────────
+
+    def _browse_load(self):
+        if not self.api:
+            self.browse_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        self.browse_status.configure(text="⏳  Chargement…", text_color="gray")
+        self._run(self._do_browse_load)
+
+    def _do_browse_load(self):
+        """(Thread) Récupère toutes les vidéos + les chaînes (pour le filtre/sélecteur)."""
+        try:
+            def prog(n):
+                self._ui(self.browse_status.configure,
+                         text=f"⏳  {n} vidéos lues…", text_color="gray")
+            videos = self.api.get_all_videos(progress_cb=prog)
+            try:
+                channels = self.api.get_channels()
+            except Exception:
+                channels = []
+            self.browse_videos = videos
+            self.browse_channels = channels
+            self.browse_chan_by_url = {str(c.get("url", "")).rstrip("/"): c.get("title", "?")
+                                       for c in channels}
+            self._ui(self._browse_refresh_channel_menu)
+            self._ui(self._browse_apply_filter)
+            self._ui(self.browse_status.configure,
+                     text=f"✅  {len(videos)} vidéos, {len(channels)} chaîne(s).",
+                     text_color="#22c55e")
+            self._ui(self._log, f"Explorateur vidéos : {len(videos)} vidéos chargées.")
+        except Exception as e:
+            self._ui(self.browse_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Chargement explorateur : {e}")
+
+    def _browse_refresh_channel_menu(self):
+        """Remplit le filtre par chaîne avec les titres chargés."""
+        vals = ["Toutes chaînes"] + sorted(self.browse_chan_by_url.values(), key=str.lower)
+        self.browse_chan.configure(values=vals)
+        self.browse_chan.set("Toutes chaînes")
+
+    # ── Filtrage ───────────────────────────────────────────────────────────
+
+    def _browse_owner_label(self, v) -> str:
+        """Nom lisible du propriétaire d'une vidéo (via la liste des comptes)."""
+        oid = str(self._video_owner_id(v)).rstrip("/")
+        for u in (self.all_users or []):
+            if str(u.get("url", "")).rstrip("/") == oid or u.get("username") == oid:
+                return u.get("username", oid)
+        return oid or "—"
+
+    def _browse_apply_filter(self, *_):
+        if not self.browse_videos:
+            self.browse_count_lbl.configure(text="Cliquez sur « Charger les vidéos ».")
+            for w in self.browse_list.winfo_children():
+                w.destroy()
+            return
+
+        vids = self.browse_videos
+        # Filtre statut
+        st = self.browse_statut.get()
+        if st == "Brouillon":
+            vids = [v for v in vids if v.get("is_draft")]
+        elif st == "Public":
+            vids = [v for v in vids if not v.get("is_draft")]
+        elif st == "Restreinte":
+            vids = [v for v in vids if v.get("is_restricted")]
+        # Filtre encodage
+        enc = self.browse_encode.get()
+        if enc == "Encodées":
+            vids = [v for v in vids if v.get("encoded")]
+        elif enc == "Non-encodées":
+            vids = [v for v in vids if PodAPI.is_unencoded(v)]
+        # Filtre chaîne
+        ch = self.browse_chan.get()
+        if ch and ch != "Toutes chaînes":
+            # On retrouve l'URL de la chaîne à partir de son titre
+            wanted = [u for u, t in self.browse_chan_by_url.items() if t == ch]
+            def in_chan(v):
+                cs = v.get("channel") or []
+                if isinstance(cs, str):
+                    cs = [cs]
+                cs = [str(c).rstrip("/") for c in cs]
+                return any(w in cs for w in wanted)
+            vids = [v for v in vids if in_chan(v)]
+        # Filtre texte (titre / slug / propriétaire)
+        txt = self.browse_text.get().strip().lower()
+        if txt:
+            def hay(v):
+                return f"{v.get('title','')} {v.get('slug','')} {self._browse_owner_label(v)}".lower()
+            vids = [v for v in vids if txt in hay(v)]
+
+        self.browse_filtered = vids
+        self._render_browse_list()
+
+    def _render_browse_list(self):
+        for w in self.browse_list.winfo_children():
+            w.destroy()
+        self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
+
+        if not self.browse_filtered:
+            ctk.CTkLabel(self.browse_list, text="Aucune vidéo ne correspond.",
+                         text_color="gray").pack(pady=10)
+            return
+
+        CAP = 300
+        sel_slug = self.browse_selected.get("slug") if self.browse_selected else None
+        for v in self.browse_filtered[:CAP]:
+            slug = v.get("slug", "?")
+            is_sel = slug == sel_slug
+            title = (v.get("title") or "(sans titre)")[:48]
+            tag = "📝" if v.get("is_draft") else "🌐"        # brouillon / public
+            ctk.CTkButton(
+                self.browse_list, text=f"{tag}  {title}", anchor="w", height=28,
+                fg_color=("gray75", "gray30") if is_sel else "transparent",
+                text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
+                font=ctk.CTkFont(size=12),
+                command=lambda vv=v: self._browse_select(vv)).pack(fill="x", pady=1)
+        if len(self.browse_filtered) > CAP:
+            ctk.CTkLabel(self.browse_list,
+                         text=f"… +{len(self.browse_filtered) - CAP}. Affinez la recherche.",
+                         text_color="gray").pack(pady=4)
+
+    def _browse_select(self, v):
+        """Sélectionne une vidéo et affiche son panneau de détail."""
+        self.browse_selected = v
+        self._render_browse_list()      # met à jour la surbrillance
+        self._browse_render_detail()
+
+    # ── Panneau de détail / actions ────────────────────────────────────────
+
+    def _browse_render_detail(self):
+        for w in self.browse_detail.winfo_children():
+            w.destroy()
+        v = self.browse_selected
+        if not v:
+            ctk.CTkLabel(self.browse_detail,
+                         text="Sélectionnez une vidéo dans la liste pour l'éditer.",
+                         text_color="gray").pack(pady=14)
+            return
+
+        slug = v.get("slug", "?")
+
+        # — Informations —
+        ctk.CTkLabel(self.browse_detail, text=v.get("title", "(sans titre)"),
+                     font=ctk.CTkFont(size=15, weight="bold"),
+                     wraplength=420, justify="left").pack(anchor="w", padx=4, pady=(4, 0))
+        chans = v.get("channel") or []
+        if isinstance(chans, str):
+            chans = [chans]
+        chan_names = ", ".join(self.browse_chan_by_url.get(str(c).rstrip("/"), "?")
+                               for c in chans) or "(aucune)"
+        info = (f"slug : {slug}\n"
+                f"propriétaire : {self._browse_owner_label(v)}\n"
+                f"durée : {v.get('duration_in_time', '—')}     "
+                f"encodée : {'oui' if v.get('encoded') else 'non'}\n"
+                f"chaînes : {chan_names}")
+        ctk.CTkLabel(self.browse_detail, text=info, justify="left", anchor="w",
+                     text_color="gray80", font=ctk.CTkFont(size=12)).pack(
+            anchor="w", padx=4, pady=(2, 10))
+
+        # — Renommer —
+        ren = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        ren.pack(fill="x", padx=4)
+        self.browse_title_entry = ctk.CTkEntry(ren)
+        self.browse_title_entry.insert(0, v.get("title", ""))
+        self.browse_title_entry.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(ren, text="Renommer", width=90, fg_color="gray35",
+                      command=lambda: self._browse_rename(v)).pack(side="left", padx=6)
+
+        # — Statut (interrupteurs, application immédiate) —
+        ctk.CTkLabel(self.browse_detail, text="Statut", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(10, 2))
+        sw = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        sw.pack(fill="x", padx=4)
+        draft_var = ctk.BooleanVar(value=bool(v.get("is_draft")))
+        ctk.CTkSwitch(sw, text="Brouillon (sinon public)", variable=draft_var,
+                      command=lambda: self._browse_patch(v, {"is_draft": draft_var.get()},
+                                                         f"statut → {'brouillon' if draft_var.get() else 'public'}")
+                      ).pack(side="left", padx=(0, 16))
+        restr_var = ctk.BooleanVar(value=bool(v.get("is_restricted")))
+        ctk.CTkSwitch(sw, text="Accès restreint", variable=restr_var,
+                      command=lambda: self._browse_patch(v, {"is_restricted": restr_var.get()},
+                                                         f"accès → {'restreint' if restr_var.get() else 'libre'}")
+                      ).pack(side="left")
+
+        # — Co-propriétaires & chaînes —
+        ctk.CTkLabel(self.browse_detail, text="Relations", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        rel = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        rel.pack(fill="x", padx=4)
+        ctk.CTkButton(rel, text="👥  Co-propriétaires…", fg_color="gray35",
+                      command=lambda: self._browse_edit_owners(v)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(rel, text="🗂  Chaînes…", fg_color="gray35",
+                      command=lambda: self._browse_edit_channels(v)).pack(side="left")
+
+        # — Suppression —
+        ctk.CTkLabel(self.browse_detail, text="Zone sensible", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color="#ef4444").pack(anchor="w", padx=4, pady=(14, 2))
+        ctk.CTkButton(self.browse_detail, text="🗑  Supprimer cette vidéo",
+                      fg_color="#b91c1c", hover_color="#991b1b",
+                      command=lambda: self._browse_delete(v)).pack(anchor="w", padx=4, pady=(0, 8))
+
+        # Zone de message du panneau
+        self.browse_msg = ctk.CTkLabel(self.browse_detail, text="", text_color="gray",
+                                       font=ctk.CTkFont(size=11), wraplength=420, justify="left")
+        self.browse_msg.pack(anchor="w", padx=4, pady=(4, 8))
+
+    # ── Actions sur la vidéo sélectionnée ──────────────────────────────────
+
+    def _browse_rename(self, v):
+        new = self.browse_title_entry.get().strip()
+        if new and new != v.get("title"):
+            self._browse_patch(v, {"title": new}, f"titre → {new}")
+
+    def _browse_patch(self, v, payload, msg):
+        """Applique un PATCH sur la vidéo puis met à jour l'affichage."""
+        self._run(self._do_browse_patch, v, payload, msg)
+
+    def _do_browse_patch(self, v, payload, msg):
+        slug = v.get("slug", "")
+        try:
+            self.api.patch_video(slug, payload)
+            v.update(payload)               # met à jour le cache local
+            self._ui(self._log, f"✏ {slug} : {msg}")
+            self._ui(self._browse_set_msg, f"✅  {msg}", "#22c55e")
+            self._ui(self._browse_render_detail)
+            self._ui(self._render_browse_list)
+        except Exception as e:
+            self._ui(self._log, f"❌ {slug} : {e}")
+            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_render_detail)
+
+    def _browse_set_msg(self, text, color):
+        if hasattr(self, "browse_msg") and self.browse_msg.winfo_exists():
+            self.browse_msg.configure(text=text, text_color=color)
+
+    def _browse_edit_owners(self, v):
+        """Ouvre le sélecteur d'utilisateurs (OwnerPicker) pour les co-propriétaires."""
+        # Pré-sélection : co-propriétaires actuels (URL → libellé lisible)
+        user_by_url = {str(u.get("url", "")).rstrip("/"): u for u in (self.all_users or [])}
+        pre = {}
+        for ourl in (v.get("additional_owners") or []):
+            u = user_by_url.get(str(ourl).rstrip("/"))
+            pre[ourl] = self._user_label(u) if u else ourl
+        OwnerPicker(self, on_done=lambda urls, labels: self._browse_apply_owners(v, urls),
+                    title="Co-propriétaires de la vidéo", preselected=pre)
+
+    def _browse_apply_owners(self, v, urls):
+        self._run(self._do_browse_patch, v, {"additional_owners": list(urls)},
+                  f"{len(urls)} co-propriétaire(s)")
+
+    def _browse_edit_channels(self, v):
+        """Ouvre le sélecteur de chaînes pour cette vidéo."""
+        cur = v.get("channel") or []
+        if isinstance(cur, str):
+            cur = [cur]
+        pre = {c: self.browse_chan_by_url.get(str(c).rstrip("/"), str(c)) for c in cur}
+        ChannelPicker(self, self.browse_channels,
+                      on_done=lambda urls, labels: self._browse_apply_channels(v, urls),
+                      title="Chaînes de la vidéo", preselected=pre)
+
+    def _browse_apply_channels(self, v, urls):
+        self._run(self._do_browse_patch, v, {"channel": list(urls)},
+                  f"{len(urls)} chaîne(s)")
+
+    def _browse_delete(self, v):
+        if not messagebox.askyesno(
+                "⚠️  Supprimer la vidéo",
+                f"Supprimer DÉFINITIVEMENT « {v.get('title')} » ?\n\n"
+                "Cette action est IRRÉVERSIBLE (pas de corbeille sur Pod)."):
+            return
+        if not messagebox.askyesno("Dernière confirmation",
+                                   "Confirmez-vous la suppression de cette vidéo ?"):
+            return
+        self._run(self._do_browse_delete, v)
+
+    def _do_browse_delete(self, v):
+        slug = v.get("slug", "")
+        try:
+            self.api.delete_video(slug)
+            if v in self.browse_videos:
+                self.browse_videos.remove(v)
+            self.browse_selected = None
+            self._ui(self._log, f"🗑 Vidéo supprimée : {slug}")
+            self._ui(self._browse_render_detail)
+            self._ui(self._browse_apply_filter)
+        except Exception as e:
+            self._ui(self._log, f"❌ Suppression {slug} : {e}")
+            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET RÉAFFECTATION — changer le propriétaire de vidéos par lot
@@ -2549,6 +2918,87 @@ class OwnerPicker(ctk.CTkToplevel):
                                       text_color="#22c55e")
         else:
             self.chosen_lbl.configure(text="Sélection : aucun", text_color="gray")
+
+    def _validate(self):
+        self.on_done(list(self.selected.keys()), list(self.selected.values()))
+        self.destroy()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class ChannelPicker(ctk.CTkToplevel):
+    """Sélecteur multi-chaînes (sur le modèle d'OwnerPicker).
+    `channels` : liste de dicts {url, title}. `on_done(urls, labels)` au Valider."""
+
+    def __init__(self, master, channels, on_done, title="Chaînes",
+                 preselected: dict | None = None):
+        super().__init__(master)
+        self.on_done = on_done
+        self.channels = channels or []
+        self.selected: dict[str, str] = dict(preselected or {})   # url → titre
+        self.title(title)
+        self.geometry("460x520")
+
+        ctk.CTkLabel(self, text="Cochez les chaînes où la vidéo doit apparaître.",
+                     justify="left").pack(padx=14, pady=(14, 8), anchor="w")
+
+        self.filter = ctk.CTkEntry(self, placeholder_text="filtrer par titre…")
+        self.filter.pack(fill="x", padx=14)
+        self.filter.bind("<KeyRelease>", lambda e: self._render())
+
+        self.listbox = ctk.CTkScrollableFrame(self, height=320)
+        self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
+
+        self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucune", text_color="gray",
+                                       wraplength=420, justify="left")
+        self.chosen_lbl.pack(padx=14, anchor="w")
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=10)
+        ctk.CTkButton(btns, text="Valider", fg_color="#16a34a", hover_color="#15803d",
+                      command=self._validate).pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color="gray35", hover_color="gray28",
+                      command=self.destroy).pack(side="right", padx=8)
+
+        self._render()
+        self._update_chosen()
+
+    def _render(self):
+        flt = self.filter.get().strip().lower()
+        for w in self.listbox.winfo_children():
+            w.destroy()
+        matches = [c for c in self.channels
+                   if not flt or flt in (c.get("title", "")).lower()]
+        for c in matches:
+            url = c.get("url", "")
+            sel = url in self.selected
+            ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + c.get("title", "?"),
+                          anchor="w", height=28,
+                          fg_color=("gray75", "gray30") if sel else "transparent",
+                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
+                          font=ctk.CTkFont(size=12),
+                          command=lambda cc=c: self._toggle(cc)).pack(fill="x", pady=1)
+        if not matches:
+            ctk.CTkLabel(self.listbox, text="Aucune chaîne.", text_color="gray").pack(pady=8)
+
+    def _toggle(self, c: dict):
+        url = c.get("url", "")
+        if not url:
+            return
+        if url in self.selected:
+            del self.selected[url]
+        else:
+            self.selected[url] = c.get("title", "?")
+        self._render()
+        self._update_chosen()
+
+    def _update_chosen(self):
+        if self.selected:
+            self.chosen_lbl.configure(text="Sélection : " + ", ".join(self.selected.values()),
+                                      text_color="#22c55e")
+        else:
+            self.chosen_lbl.configure(text="Sélection : aucune", text_color="gray")
 
     def _validate(self):
         self.on_done(list(self.selected.keys()), list(self.selected.values()))

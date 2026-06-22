@@ -1364,21 +1364,30 @@ class App(_AppBase):
         ctk.CTkButton(ren, text="Renommer", width=90, fg_color="gray35",
                       command=lambda: self._browse_rename(v)).pack(side="left", padx=6)
 
-        # — Statut (interrupteurs, application immédiate) —
+        # — Statut (interrupteurs) —
+        # Important : on met à jour le cache local AVANT de lancer le thread,
+        # pour que _browse_render_detail() reconstruise le panneau avec la
+        # bonne valeur même si la réponse réseau tarde.
         ctk.CTkLabel(self.browse_detail, text="Statut", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(10, 2))
         sw = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         sw.pack(fill="x", padx=4)
         draft_var = ctk.BooleanVar(value=bool(v.get("is_draft")))
+        def _toggle_draft():
+            val = draft_var.get()
+            v["is_draft"] = val          # mise à jour locale immédiate
+            self._browse_patch(v, {"is_draft": val},
+                               f"statut → {'brouillon' if val else 'public'}")
         ctk.CTkSwitch(sw, text="Brouillon (sinon public)", variable=draft_var,
-                      command=lambda: self._browse_patch(v, {"is_draft": draft_var.get()},
-                                                         f"statut → {'brouillon' if draft_var.get() else 'public'}")
-                      ).pack(side="left", padx=(0, 16))
+                      command=_toggle_draft).pack(side="left", padx=(0, 16))
         restr_var = ctk.BooleanVar(value=bool(v.get("is_restricted")))
-        ctk.CTkSwitch(sw, text="Accès restreint", variable=restr_var,
-                      command=lambda: self._browse_patch(v, {"is_restricted": restr_var.get()},
-                                                         f"accès → {'restreint' if restr_var.get() else 'libre'}")
-                      ).pack(side="left")
+        def _toggle_restr():
+            val = restr_var.get()
+            v["is_restricted"] = val     # mise à jour locale immédiate
+            self._browse_patch(v, {"is_restricted": val},
+                               f"accès → {'restreint (connexion requise)' if val else 'public'}")
+        ctk.CTkSwitch(sw, text="Connexion requise", variable=restr_var,
+                      command=_toggle_restr).pack(side="left")
 
         # — Co-propriétaires & chaînes —
         ctk.CTkLabel(self.browse_detail, text="Relations", anchor="w",

@@ -2868,6 +2868,7 @@ class App(_AppBase):
         # Données
         self.ct_channels = []           # liste de chaînes (dicts)
         self.ct_themes = []             # liste de thèmes (dicts)
+        self.ct_videos = []             # cache des vidéos (pour gérer l'appartenance)
         self.ct_channel_choices = {}    # titre de chaîne → URL (pour le menu thème)
 
     # ── Chargement ─────────────────────────────────────────────────────────
@@ -2941,6 +2942,8 @@ class App(_AppBase):
             # Actions de la chaîne
             ctk.CTkButton(crow, text="✏", width=34, fg_color="gray35",
                           command=lambda c=ch: self._ct_rename_channel(c)).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🎬 Vidéos", width=80, fg_color="gray35",
+                          command=lambda c=ch: self._ct_manage_videos(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color="gray35",
                           command=lambda c=ch: self._ct_toggle_visible(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🗑", width=34, fg_color="#b91c1c", hover_color="#991b1b",
@@ -3024,6 +3027,95 @@ class App(_AppBase):
         if new and new.strip():
             self._run(self._do_ct_patch, "theme", th.get("url"),
                       {"title": new.strip()}, f"Thème renommé : {new.strip()}")
+
+    def _ct_manage_videos(self, ch):
+        """Ouvre un sélecteur de vidéos pour gérer celles présentes dans la chaîne.
+        Scanne les vidéos au besoin (en arrière-plan) puis ouvre la fenêtre."""
+        if not self.api:
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        self.ct_status.configure(text="⏳  Chargement des vidéos…", text_color="gray")
+        self._run(self._do_ct_open_video_picker, ch)
+
+    def _do_ct_open_video_picker(self, ch):
+        """(Thread) Scanne les vidéos si nécessaire, pré-coche celles déjà dans la
+        chaîne, puis ouvre le sélecteur de vidéos dans le thread principal."""
+        try:
+            if not self.ct_videos:
+                self.ct_videos = self.api.get_all_videos()
+            curl = str(ch.get("url", "")).rstrip("/")
+            # Pré-sélection = vidéos dont le champ `channel` contient cette chaîne
+            pre = {}
+            for v in self.ct_videos:
+                chans = v.get("channel") or []
+                if isinstance(chans, str):
+                    chans = [chans]
+                if curl in [str(c).rstrip("/") for c in chans]:
+                    pre[v.get("slug")] = v.get("title", "?")
+            self._ui(self.ct_status.configure,
+                     text=f"{len(self.ct_videos)} vidéos chargées.", text_color="gray")
+            # Ouverture de la fenêtre dans le thread UI
+            self._ui(lambda: VideoPicker(
+                self, self.ct_videos,
+                on_done=lambda slugs: self._ct_apply_channel_videos(ch, slugs),
+                title=f"Vidéos de « {ch.get('title')} »", preselected=pre))
+        except Exception as e:
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Chargement vidéos (chaîne) : {e}")
+
+    def _ct_apply_channel_videos(self, ch, selected_slugs):
+        """Callback du sélecteur : applique les ajouts/retraits en arrière-plan."""
+        self._run(self._do_ct_apply_channel_videos, ch, set(selected_slugs))
+
+    def _do_ct_apply_channel_videos(self, ch, desired):
+        """(Thread) Met le champ `channel` à jour sur chaque vidéo ajoutée ou retirée.
+        On préserve les AUTRES chaînes de chaque vidéo (on n'ajoute/retire que celle-ci)."""
+        curl = ch.get("url", "")
+        curl_n = str(curl).rstrip("/")
+        by_slug = {v.get("slug"): v for v in self.ct_videos}
+
+        # Membres actuels de la chaîne (d'après le cache)
+        current = set()
+        for v in self.ct_videos:
+            chans = v.get("channel") or []
+            if isinstance(chans, str):
+                chans = [chans]
+            if curl_n in [str(c).rstrip("/") for c in chans]:
+                current.add(v.get("slug"))
+
+        to_add = desired - current        # à rattacher à la chaîne
+        to_remove = current - desired     # à détacher de la chaîne
+        ok = fail = 0
+
+        for slug in (to_add | to_remove):
+            v = by_slug.get(slug)
+            if not v:
+                continue
+            chans = v.get("channel") or []
+            if isinstance(chans, str):
+                chans = [chans]
+            chans = [str(c) for c in chans]
+            chans_n = [c.rstrip("/") for c in chans]
+            if slug in to_add and curl_n not in chans_n:
+                chans.append(curl)                                     # ajout de cette chaîne
+            if slug in to_remove:
+                chans = [c for c in chans if c.rstrip("/") != curl_n]  # retrait
+            try:
+                # PATCH du champ channel (liste complète d'URLs) — préserve les autres
+                self.api.assign_video_to_channels(slug, chans)
+                v["channel"] = chans                                   # MAJ cache local
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ {slug} : {e}")
+
+        self._ui(self.ct_status.configure,
+                 text=f"✅  Chaîne « {ch.get('title')} » : "
+                      f"+{len(to_add)} / -{len(to_remove)} vidéo(s).",
+                 text_color="#22c55e" if not fail else "#f59e0b")
+        self._ui(self._log,
+                 f"Chaîne « {ch.get('title')} » : {len(to_add)} ajout(s), "
+                 f"{len(to_remove)} retrait(s), {fail} échec(s).")
 
     def _ct_toggle_visible(self, ch):
         # Inverse la visibilité de la chaîne
@@ -3251,6 +3343,93 @@ class OwnerPicker(ctk.CTkToplevel):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+
+
+class VideoPicker(ctk.CTkToplevel):
+    """Sélecteur multi-vidéos (recherche + cases à cocher).
+    `videos` : liste de dicts {slug, title, …}. `on_done(slugs)` au Valider.
+    `preselected` : dict {slug: titre} cochés au départ (membres actuels)."""
+
+    def __init__(self, master, videos, on_done, title="Vidéos",
+                 preselected: dict | None = None):
+        super().__init__(master)
+        self.on_done = on_done
+        self.videos = videos or []
+        self.selected: dict[str, str] = dict(preselected or {})   # slug → titre
+        self.title(title)
+        self.geometry("520x560")
+
+        ctk.CTkLabel(self, text="Cochez les vidéos à inclure dans la chaîne "
+                                "(décochez pour les retirer).",
+                     justify="left", wraplength=480).pack(padx=14, pady=(14, 8), anchor="w")
+
+        self.filter = ctk.CTkEntry(self, placeholder_text="filtrer : titre / slug…")
+        self.filter.pack(fill="x", padx=14)
+        self.filter.bind("<KeyRelease>", lambda e: self._render())
+
+        self.listbox = ctk.CTkScrollableFrame(self, height=360)
+        self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
+
+        self.chosen_lbl = ctk.CTkLabel(self, text="0 vidéo sélectionnée", text_color="gray")
+        self.chosen_lbl.pack(padx=14, anchor="w")
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=10)
+        ctk.CTkButton(btns, text="Valider", fg_color="#16a34a", hover_color="#15803d",
+                      command=self._validate).pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color="gray35", hover_color="gray28",
+                      command=self.destroy).pack(side="right", padx=8)
+
+        self._render()
+        self._update_chosen()
+
+    def _render(self):
+        """Affiche la liste filtrée des vidéos (cases à cocher)."""
+        flt = self.filter.get().strip().lower()
+        for w in self.listbox.winfo_children():
+            w.destroy()
+        matches = [v for v in self.videos
+                   if not flt or flt in f"{v.get('title','')} {v.get('slug','')}".lower()]
+        CAP = 500
+        for v in matches[:CAP]:
+            slug = v.get("slug", "")
+            sel = slug in self.selected
+            title = (v.get("title") or "(sans titre)")[:54]
+            ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + f"{title}  ·  {slug}",
+                          anchor="w", height=26,
+                          fg_color=("gray75", "gray30") if sel else "transparent",
+                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
+                          font=ctk.CTkFont(size=12),
+                          command=lambda vv=v: self._toggle(vv)).pack(fill="x", pady=1)
+        if len(matches) > CAP:
+            ctk.CTkLabel(self.listbox, text=f"… +{len(matches) - CAP}. Affinez le filtre.",
+                         text_color="gray").pack(pady=4)
+        elif not matches:
+            ctk.CTkLabel(self.listbox, text="Aucune vidéo.", text_color="gray").pack(pady=8)
+
+    def _toggle(self, v: dict):
+        """Coche/décoche une vidéo dans la sélection."""
+        slug = v.get("slug", "")
+        if not slug:
+            return
+        if slug in self.selected:
+            del self.selected[slug]
+        else:
+            self.selected[slug] = v.get("title", "?")
+        self._render()
+        self._update_chosen()
+
+    def _update_chosen(self):
+        """Met à jour le compteur de sélection."""
+        n = len(self.selected)
+        self.chosen_lbl.configure(
+            text=f"{n} vidéo(s) sélectionnée(s)",
+            text_color="#22c55e" if n else "gray")
+
+    def _validate(self):
+        """Renvoie la liste des slugs sélectionnés à l'appelant puis ferme."""
+        self.on_done(list(self.selected.keys()))
+        self.destroy()
 
 
 class ChannelPicker(ctk.CTkToplevel):

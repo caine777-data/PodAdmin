@@ -1,19 +1,17 @@
-# version.txt — Métadonnées Windows de PodAdmin.exe
-# Référencé dans la commande PyInstaller via --version-file version.txt
-# Visible dans : clic droit sur PodAdmin.exe → Propriétés → onglet Détails
+# version.txt - Metadonnees Windows de PodAdmin.exe
+# Reference dans la commande PyInstaller via --version-file version.txt
+# Visible dans : clic droit sur PodAdmin.exe -> Proprietes -> onglet Details
+# NB : fichier volontairement en ASCII pur (pas d'accents, d'apostrophes ni de
+# tirets longs) car il est evalue comme du Python par PyInstaller.
 
 VSVersionInfo(
   ffi=FixedFileInfo(
-    # filevers et prodvers : tuple (majeur, mineur, patch, build)
-    # Mettre à jour à chaque release (ex. 0.2.0 → (0, 2, 0, 0))
+    # filevers / prodvers : (majeur, mineur, patch, build) - a mettre a jour a chaque release
     filevers=(0, 1, 0, 0),
     prodvers=(0, 1, 0, 0),
-    # Masques de validité et d'info (valeurs standard Windows)
     mask=0x3f,
     flags=0x0,
-    # OS cible : Windows 32/64 bits
     OS=0x40004,
-    # Type : application (.exe)
     fileType=0x1,
     subtype=0x0,
     date=(0, 0)
@@ -22,35 +20,19 @@ VSVersionInfo(
     StringFileInfo(
       [
         StringTable(
-          # 040C04B0 = Français (France), Unicode
-          u'040C04B0',
+          u'040C04B0',  # Francais (France), Unicode
           [
-            # Nom du fichier tel qu'il apparaît dans l'explorateur
             StringStruct(u'OriginalFilename', u'PodAdmin.exe'),
-
-            # Nom affiché dans Propriétés → Détails → Description
-            StringStruct(u'FileDescription',  u'PodAdmin — Console d'administration Esup-Pod'),
-
-            # Version affichée dans Propriétés → Détails → Version du fichier
+            StringStruct(u'FileDescription',  u'PodAdmin - Administration Esup-Pod'),
             StringStruct(u'FileVersion',      u'0.1.0'),
-
-            # Nom du produit (ex. dans le Gestionnaire des tâches)
             StringStruct(u'ProductName',      u'PodAdmin'),
-
-            # Version du produit
             StringStruct(u'ProductVersion',   u'0.1.0'),
-
-            # Société / établissement — visible dans Propriétés → Détails → Société
-            StringStruct(u'CompanyName',      u'Université de Toulouse — MFCA'),
-
-            # Copyright — visible dans Propriétés → Détails → Copyright
-            StringStruct(u'LegalCopyright',   u'© 2026 Cédric MONNA — Université de Toulouse'),
-
-            # Commentaires internes (non affichés par défaut mais lisibles par des outils)
+            StringStruct(u'CompanyName',      u'Universite de Toulouse - MFCA'),
+            StringStruct(u'LegalCopyright',   u'(C) 2026 Cedric MONNA - Universite de Toulouse'),
             StringStruct(u'Comments',
-                         u'Développé par Cédric MONNA (cedricmonna@gmail.com) '
-                         u'pour le service MFCA, Université de Toulouse. '
-                         u'Usage interne — non redistribuable.'),
+                         u'Developpe par Cedric MONNA (cedricmonna@gmail.com) '
+                         u'pour le service MFCA, Universite de Toulouse. '
+                         u'Usage interne - non redistribuable.'),
           ]
         )
       ]

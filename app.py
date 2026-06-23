@@ -190,6 +190,7 @@ class App(_AppBase):
         self.nav_btns = {}
         for label, key in [
             ("📂   Téléversement", "upload"),
+            ("⚙️   Encodage",      "encode"),
             ("👤   Comptes",       "comptes"),
             ("🎞️   Vidéos",        "browse"),
             ("🔄   Réaffectation", "reassign"),
@@ -217,6 +218,7 @@ class App(_AppBase):
 
         self.tabs = {}
         self._build_tab_upload()
+        self._build_tab_encode()
         self._build_tab_comptes()
         self._build_tab_browse()
         self._build_tab_reassign()
@@ -1037,7 +1039,240 @@ class App(_AppBase):
     #  ONGLET COMPTES — statut « équipe » (is_staff)
     # ═════════════════════════════════════════════════════════════════════
 
+    # ═════════════════════════════════════════════════════════════════════
+    #  ONGLET ENCODAGE — supervision du transcodage + relance
+    # ═════════════════════════════════════════════════════════════════════
+    #
+    #  L'API n'expose pas de file d'encodage dédiée (vérifié au sondage).
+    #  On se base donc sur les champs par vidéo : `encoded`,
+    #  `encoding_in_progress`, `get_encoding_step`, `is_draft`. On classe
+    #  chaque vidéo par état, et on peut relancer l'encodage (launch_encoding)
+    #  à l'unité ou en masse sur les vidéos « à problème ».
+    #
+    #  États retenus :
+    #    ✅ encodée            : encoded == True
+    #    ⏳ en cours           : encoding_in_progress == True
+    #    📝 non lancée         : brouillon non encodé (is_draft, pas encore lancé)
+    #    ❌ à problème         : ni encodée, ni en cours, ni brouillon (suspecte)
+
+    @staticmethod
+    def _encode_state(v: dict) -> str:
+        """Classe une vidéo dans un état d'encodage (clé interne)."""
+        if v.get("encoded"):
+            return "ok"
+        if v.get("encoding_in_progress"):
+            return "running"
+        if v.get("is_draft"):
+            return "draft"
+        return "failed"
+
+    # Libellés lisibles + pastille pour chaque état
+    _ENCODE_LABELS = {
+        "ok":      "✅ Encodée",
+        "running": "⏳ En cours",
+        "failed":  "❌ À problème",
+        "draft":   "📝 Non lancée",
+    }
+
+    def _build_tab_encode(self):
+        """Construit l'onglet Encodage (supervision du transcodage + relance)."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["encode"] = frame
+
+        ctk.CTkLabel(frame, text="⚙️  Encodage",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            frame,
+            text="Supervisez le transcodage : voyez les encodages en cours, terminés ou en "
+                 "échec, et relancez l'encodage des vidéos qui posent problème (à l'unité ou "
+                 "en masse).",
+            text_color="gray70", font=ctk.CTkFont(size=12),
+            justify="left", wraplength=860).pack(anchor="w", pady=(0, 8))
+
+        # — Ligne : scan + état —
+        top = ctk.CTkFrame(frame, fg_color="transparent")
+        top.pack(fill="x")
+        ctk.CTkButton(top, text="📡  Scanner", fg_color="#2563eb",
+                      hover_color="#1d4ed8", command=self._encode_scan).pack(side="left")
+        self.encode_status = ctk.CTkLabel(top, text="(aucun scan)", text_color="gray",
+                                          font=ctk.CTkFont(size=11))
+        self.encode_status.pack(side="left", padx=10)
+
+        # — Bandeau de compteurs —
+        self.encode_counters = ctk.CTkLabel(frame, text="", justify="left", anchor="w",
+                                            font=ctk.CTkFont(size=13))
+        self.encode_counters.pack(anchor="w", pady=(8, 4))
+
+        # — Ligne : filtre par état + relance en masse —
+        bar = ctk.CTkFrame(frame, fg_color="transparent")
+        bar.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(bar, text="État :").pack(side="left", padx=(0, 4))
+        self.encode_filter = ctk.CTkOptionMenu(
+            bar, width=150,
+            values=["Tous", "En cours", "À problème", "Non lancées", "Encodées"],
+            command=lambda _c: self._render_encode())
+        self.encode_filter.set("À problème")
+        self.encode_filter.pack(side="left")
+        # Relance en masse de tout ce qui est affiché
+        self.encode_relaunch_btn = ctk.CTkButton(
+            bar, text="🔁  Relancer l'encodage des vidéos affichées",
+            fg_color="#16a34a", hover_color="#15803d", command=self._encode_relaunch_shown)
+        self.encode_relaunch_btn.pack(side="left", padx=10)
+        self.encode_progress = ctk.CTkLabel(bar, text="", text_color="gray",
+                                            font=ctk.CTkFont(size=11))
+        self.encode_progress.pack(side="left", padx=6)
+
+        # — Liste —
+        self.encode_list = ctk.CTkScrollableFrame(frame, label_text="Vidéos")
+        self.encode_list.pack(fill="both", expand=True, pady=(4, 0))
+
+        # — Données —
+        self.encode_videos = []      # scan complet (cache)
+        self.encode_filtered = []    # sous-ensemble affiché
+
+    # ── Scan ────────────────────────────────────────────────────────────────
+
+    def _encode_scan(self):
+        """Déclenche le scan complet des vidéos (en arrière-plan)."""
+        if not self.api:
+            self.encode_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        self.encode_status.configure(text="⏳  Scan…", text_color="gray")
+        self._run(self._do_encode_scan)
+
+    def _do_encode_scan(self):
+        """(Thread) Récupère toutes les vidéos puis met à jour compteurs + liste."""
+        try:
+            def prog(n):
+                self._ui(self.encode_status.configure,
+                         text=f"⏳  {n} vidéos lues…", text_color="gray")
+            videos = self.api.get_all_videos(progress_cb=prog)
+            self.encode_videos = videos
+            self._ui(self._render_encode)
+            self._ui(self.encode_status.configure,
+                     text=f"✅  {len(videos)} vidéos analysées.", text_color="#22c55e")
+            self._ui(self._log, f"Encodage : {len(videos)} vidéos scannées.")
+        except Exception as e:
+            self._ui(self.encode_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Scan encodage : {e}")
+
+    # ── Rendu (compteurs + liste filtrée) ───────────────────────────────────
+
+    def _render_encode(self, *_):
+        """Met à jour les compteurs par état et la liste filtrée."""
+        if not hasattr(self, "encode_list"):
+            return
+        for w in self.encode_list.winfo_children():
+            w.destroy()
+
+        if not self.encode_videos:
+            self.encode_counters.configure(text="")
+            ctk.CTkLabel(self.encode_list, text="Cliquez sur « Scanner ».",
+                         text_color="gray").pack(pady=10)
+            return
+
+        # Comptage par état
+        counts = {"ok": 0, "running": 0, "failed": 0, "draft": 0}
+        for v in self.encode_videos:
+            counts[self._encode_state(v)] += 1
+        self.encode_counters.configure(
+            text=(f"✅ {counts['ok']} encodées      "
+                  f"⏳ {counts['running']} en cours      "
+                  f"❌ {counts['failed']} à problème      "
+                  f"📝 {counts['draft']} non lancées"))
+
+        # Filtre par état
+        sel = self.encode_filter.get()
+        wanted = {"En cours": "running", "À problème": "failed",
+                  "Non lancées": "draft", "Encodées": "ok"}.get(sel)
+        if wanted:
+            vids = [v for v in self.encode_videos if self._encode_state(v) == wanted]
+        else:
+            vids = list(self.encode_videos)
+        self.encode_filtered = vids
+
+        # Le bouton de relance en masse n'a de sens que pour les états relançables
+        relaunchable = sel in ("À problème", "Non lancées", "En cours", "Tous")
+        self.encode_relaunch_btn.configure(state="normal" if (vids and relaunchable) else "disabled")
+
+        if not vids:
+            ctk.CTkLabel(self.encode_list, text="Aucune vidéo dans cet état.",
+                         text_color="gray").pack(pady=10)
+            return
+
+        # Une ligne par vidéo : [pastille état] titre · slug · étape  [Relancer]
+        CAP = 400
+        for v in vids[:CAP]:
+            st = self._encode_state(v)
+            row = ctk.CTkFrame(self.encode_list, fg_color=("gray85", "gray17"),
+                               corner_radius=6)
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=self._ENCODE_LABELS[st], width=110, anchor="w",
+                         font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 4), pady=6)
+            title = (v.get("title") or "(sans titre)")[:46]
+            step = v.get("get_encoding_step", "")
+            ctk.CTkLabel(row, text=f"{title}   ·   {v.get('slug','?')}   ·   {step}",
+                         anchor="w", font=ctk.CTkFont(size=12)).pack(
+                side="left", padx=4, pady=6, fill="x", expand=True)
+            # Bouton de relance individuelle (sauf si déjà encodée — relance possible quand même,
+            # mais on la réserve aux états non terminés pour éviter les clics inutiles)
+            if st != "ok":
+                ctk.CTkButton(row, text="🔁 Relancer", width=100, height=26, fg_color="gray35",
+                              command=lambda vv=v: self._encode_relaunch_one(vv)).pack(
+                    side="right", padx=8)
+        if len(vids) > CAP:
+            ctk.CTkLabel(self.encode_list,
+                         text=f"… +{len(vids) - CAP}. Affinez le filtre.",
+                         text_color="gray").pack(pady=4)
+
+    # ── Relance de l'encodage ────────────────────────────────────────────────
+
+    def _encode_relaunch_one(self, v):
+        """Relance l'encodage d'une vidéo après confirmation."""
+        if not messagebox.askyesno(
+                "Relancer l'encodage",
+                f"Relancer l'encodage de :\n\n{v.get('title')}  ({v.get('slug')}) ?"):
+            return
+        self._run(self._do_encode_relaunch, [v])
+
+    def _encode_relaunch_shown(self):
+        """Relance l'encodage de toutes les vidéos actuellement affichées."""
+        vids = list(self.encode_filtered)
+        if not vids:
+            return
+        if not messagebox.askyesno(
+                "Relancer en masse",
+                f"Relancer l'encodage de {len(vids)} vidéo(s) ?\n\n"
+                "Chaque vidéo sera renvoyée dans la file d'encodage du serveur."):
+            return
+        self._run(self._do_encode_relaunch, vids)
+
+    def _do_encode_relaunch(self, vids):
+        """(Thread) Appelle launch_encoding(slug) pour chaque vidéo, avec bilan."""
+        ok = fail = 0
+        for i, v in enumerate(vids, 1):
+            slug = v.get("slug", "")
+            try:
+                self.api.launch_encoding(slug)          # GET /rest/launch_encode_view/?slug=
+                ok += 1
+                self._ui(self._log, f"🔁 Encodage relancé : {slug}")
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ Relance {slug} : {e}")
+            self._ui(self.encode_progress.configure,
+                     text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+        self._ui(self.encode_progress.configure,
+                 text=f"Terminé : {ok} relancée(s), {fail} échec(s).",
+                 text_color="#22c55e" if not fail else "#f59e0b")
+        # Re-scan pour refléter les nouveaux états (en cours d'encodage)
+        self._do_encode_scan()
+
+    # ═════════════════════════════════════════════════════════════════════
+    #  ONGLET COMPTES — statut « équipe » (is_staff)
+    # ═════════════════════════════════════════════════════════════════════
+
     def _build_tab_comptes(self):
+        """Construit l'onglet Comptes (statut équipe is_staff)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["comptes"] = frame
 
@@ -1058,6 +1293,17 @@ class App(_AppBase):
             bar, placeholder_text="nom / prénom / identifiant…")
         self.comptes_filter.pack(side="left", fill="x", expand=True)
         self.comptes_filter.bind("<KeyRelease>", lambda e: self._render_comptes())
+        # Filtre par statut équipe (is_staff)
+        self.comptes_statut = ctk.CTkOptionMenu(
+            bar, width=150,
+            values=["Tous", "Équipe", "Sans statut"],
+            command=lambda _c: self._render_comptes())
+        self.comptes_statut.set("Tous")
+        self.comptes_statut.pack(side="left", padx=6)
+        # Regrouper : trie pour rassembler les comptes « équipe » en tête
+        self.comptes_group = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(bar, text="Regrouper", variable=self.comptes_group,
+                        command=self._render_comptes, width=90).pack(side="left", padx=6)
         ctk.CTkButton(bar, text="🔄  Recharger", width=130,
                       command=lambda: self._run(self._reload_users_for_admin)).pack(side="left", padx=8)
 
@@ -1109,6 +1355,19 @@ class App(_AppBase):
 
         matches = [u for u in self.all_users
                    if not flt or flt in self._user_label(u).lower()]
+
+        # Filtre par statut équipe (menu déroulant)
+        statut = self.comptes_statut.get() if hasattr(self, "comptes_statut") else "Tous"
+        if statut == "Équipe":
+            matches = [u for u in matches if u.get("is_staff")]
+        elif statut == "Sans statut":
+            matches = [u for u in matches if not u.get("is_staff")]
+
+        # Regroupement : comptes « équipe » d'abord, puis tri alphabétique
+        if hasattr(self, "comptes_group") and self.comptes_group.get():
+            matches.sort(key=lambda u: (not u.get("is_staff"),
+                                        (u.get("username") or "").lower()))
+
         staff_n = sum(1 for u in self.all_users if u.get("is_staff"))
         self.comptes_count_lbl.configure(
             text=f"{len(self.all_users)} compte(s) — {staff_n} avec statut équipe. "

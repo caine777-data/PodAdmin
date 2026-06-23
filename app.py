@@ -3208,6 +3208,25 @@ class App(_AppBase):
 #  FENÊTRE : sélection de propriétaires additionnels
 # ════════════════════════════════════════════════════════════════════════════
 
+def _focus_toplevel(win, master=None):
+    """Amène une fenêtre secondaire au premier plan, lui donne le focus et la
+    rend modale (focus capturé jusqu'à fermeture). Corrige le cas où une
+    CTkToplevel s'ouvre derrière la fenêtre principale.
+    Les appels sont légèrement différés (after) car la fenêtre n'est pas encore
+    dessinée à l'instant de sa création."""
+    try:
+        if master is not None:
+            win.transient(master)          # la fenêtre reste au-dessus de son parent
+    except Exception:
+        pass
+    win.lift()
+    win.attributes("-topmost", True)        # passe au-dessus, le temps de s'afficher
+    # On retire 'topmost' juste après (sinon elle resterait au-dessus de TOUTES
+    # les applications), puis on capture le focus.
+    win.after(150, lambda: (win.attributes("-topmost", False), win.focus_force()))
+    win.after(200, lambda: win.grab_set())  # modale : bloque la fenêtre principale
+
+
 class OwnerPicker(ctk.CTkToplevel):
     """Sélecteur multi-utilisateurs : même système que l'agent (liste + filtre + clic)."""
 
@@ -3220,6 +3239,7 @@ class OwnerPicker(ctk.CTkToplevel):
         self.on_single = on_single
         self.title(title)
         self.geometry("500x560")
+        _focus_toplevel(self, master)
         self.selected: dict[str, str] = dict(preselected or {})   # url → libellé
 
         intro = ("Cliquez sur un utilisateur pour le choisir." if single else
@@ -3358,6 +3378,7 @@ class VideoPicker(ctk.CTkToplevel):
         self.selected: dict[str, str] = dict(preselected or {})   # slug → titre
         self.title(title)
         self.geometry("520x560")
+        _focus_toplevel(self, master)
 
         ctk.CTkLabel(self, text="Cochez les vidéos à inclure dans la chaîne "
                                 "(décochez pour les retirer).",
@@ -3444,6 +3465,7 @@ class ChannelPicker(ctk.CTkToplevel):
         self.selected: dict[str, str] = dict(preselected or {})   # url → titre
         self.title(title)
         self.geometry("460x520")
+        _focus_toplevel(self, master)
 
         ctk.CTkLabel(self, text="Cochez les chaînes où la vidéo doit apparaître.",
                      justify="left").pack(padx=14, pady=(14, 8), anchor="w")

@@ -11,6 +11,8 @@ Console d'administration Esup-Pod. Reprend le téléversement par lot de
 Nécessite un token de compte SUPERUTILISATEUR.
 """
 
+from __future__ import annotations
+
 __author__      = "Cédric MONNA"
 __contact__     = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
@@ -19,7 +21,6 @@ __date__        = "2026"
 __license__     = "Usage interne — Université de Toulouse"
 
 
-from __future__ import annotations
 import os
 import sys
 import threading

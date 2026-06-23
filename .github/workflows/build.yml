@@ -30,6 +30,7 @@ jobs:
       - name: Compiler PodAdmin.exe
         run: |
           pyinstaller --onefile --windowed --name "PodAdmin" `
+            --version-file version.txt `
             --collect-all customtkinter `
             --collect-all keyring `
             --collect-all tkinterdnd2 `

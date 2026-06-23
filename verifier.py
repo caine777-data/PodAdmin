@@ -7,6 +7,14 @@ Lancement :  python verifier.py
 (ou double-clic sur le fichier si Python est associé aux .py)
 """
 
+__author__      = "Cédric MONNA"
+__contact__     = "cedricmonna@gmail.com"
+__institution__ = "Université de Toulouse — MFCA"
+__version__     = "0.1.0"
+__date__        = "2026"
+__license__     = "Usage interne — Université de Toulouse"
+
+
 import sys
 import requests
 

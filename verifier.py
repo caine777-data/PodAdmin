@@ -14,6 +14,9 @@ DEFAULT_URL = "https://videos.utoulouse.fr"
 
 
 def main():
+    """Diagnostic interactif de l'API : valide le token, découvre les champs
+    requis pour l'upload (OPTIONS), liste les endpoints, les types et inspecte
+    /rest/users/. Purement en lecture (GET/OPTIONS), ne modifie rien."""
     print("=" * 64)
     print("  Pod Téléverseur — Vérification de l'API")
     print("=" * 64)
@@ -28,6 +31,7 @@ def main():
         return
 
     rest = f"{url}/rest"
+    # En-tête d'authentification Esup-Pod : Authorization: Token <token>
     headers = {"Authorization": f"Token {token}", "Accept": "application/json"}
 
     # 1) Le token fonctionne-t-il ?

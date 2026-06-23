@@ -53,6 +53,7 @@ APP_VERSION = "0.1.0"
 
 class UploadItem:
     def __init__(self, path: str):
+        """Crée une entrée de la file d'upload à partir d'un chemin de fichier."""
         self.path = path
         self.filename = os.path.basename(path)
         # Titre par défaut = nom de fichier sans extension, nettoyé
@@ -83,6 +84,7 @@ else:
 
 class App(_AppBase):
     def __init__(self):
+        """Initialise la fenêtre, charge config + token, construit l'UI et tente une connexion auto."""
         super().__init__()
         # Initialiser le moteur glisser-déposer (tkdnd)
         self.dnd_ok = False
@@ -120,14 +122,17 @@ class App(_AppBase):
     # ── Threading helpers ────────────────────────────────────────────────
 
     def _run(self, fn, *a):
+        """Lance une fonction dans un thread d'arrière-plan (pour ne pas geler l'interface)."""
         threading.Thread(target=fn, args=a, daemon=True).start()
 
     def _ui(self, fn, *a, **kw):
+        """Planifie une mise à jour d'interface dans le thread principal Tk (thread-safe)."""
         self.after(0, lambda: fn(*a, **kw))
 
     # ── Construction de l'interface ──────────────────────────────────────
 
     def _build_ui(self):
+        """Construit la barre latérale (logo, état, navigation) et la zone de contenu."""
         # Sidebar
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar.pack(side="left", fill="y")
@@ -214,6 +219,7 @@ class App(_AppBase):
         self._build_tab_log()
 
     def _show_tab(self, key: str):
+        """Affiche l'onglet `key` et met en surbrillance son bouton de navigation."""
         for f in self.tabs.values():
             f.pack_forget()
         self.tabs[key].pack(fill="both", expand=True)
@@ -225,6 +231,7 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
 
     def _build_tab_upload(self):
+        """Construit l'onglet Téléversement (sélection, réglages communs, liste, lancement)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["upload"] = frame
 
@@ -337,6 +344,7 @@ class App(_AppBase):
     # ── Ajout de fichiers / dossier ──────────────────────────────────────
 
     def _add_files(self):
+        """Ouvre un sélecteur de fichiers et ajoute les vidéos choisies à la file."""
         paths = filedialog.askopenfilenames(
             title="Choisir des vidéos",
             filetypes=[("Vidéos", "*.mp4 *.mov *.avi *.mkv *.webm *.m4v *.wmv *.flv *.mpg *.mpeg"),
@@ -344,6 +352,7 @@ class App(_AppBase):
         self._add_paths(paths)
 
     def _add_folder(self):
+        """Scanne un dossier (récursivement) et ajoute toutes les vidéos trouvées à la file."""
         folder = filedialog.askdirectory(title="Choisir un dossier de vidéos")
         if not folder:
             return
@@ -386,6 +395,7 @@ class App(_AppBase):
                 text="Aucune vidéo reconnue dans les éléments déposés.", text_color="#f59e0b")
 
     def _add_paths(self, paths):
+        """Ajoute des chemins à la file en évitant les doublons, puis rafraîchit l'affichage."""
         existing = {it.path for it in self.items}
         added = 0
         for p in paths:
@@ -398,10 +408,12 @@ class App(_AppBase):
             self._log(f"{added} vidéo(s) ajoutée(s) à la file.")
 
     def _clear_items(self):
+        """Vide la file d'attente et rafraîchit l'affichage."""
         self.items.clear()
         self._refresh_list()
 
     def _refresh_list(self):
+        """Reconstruit le tableau des vidéos en attente (nom, titre éditable, état)."""
         for w in self.list_frame.winfo_children():
             w.destroy()
 
@@ -460,11 +472,13 @@ class App(_AppBase):
         self.count_lbl.configure(text=f"{len(self.items)} vidéo(s)")
 
     def _remove_item(self, item: UploadItem):
+        """Retire une vidéo de la file et rafraîchit l'affichage."""
         if item in self.items:
             self.items.remove(item)
             self._refresh_list()
 
     def _set_item_status(self, item: UploadItem, status: str, color="gray60"):
+        """Met à jour le libellé d'état d'une vidéo dans la liste."""
         item.status = status
         if item.status_lbl:
             item.status_lbl.configure(text=status, text_color=color)
@@ -472,6 +486,7 @@ class App(_AppBase):
     # ── Propriétaires additionnels communs ───────────────────────────────
 
     def _edit_additional_owners(self):
+        """Ouvre OwnerPicker pour choisir les co-propriétaires communs au lot."""
         if not self.api:
             self.global_msg.configure(text="Connectez-vous d'abord (onglet Configuration).",
                                       text_color="#f59e0b")
@@ -480,6 +495,7 @@ class App(_AppBase):
                     preselected=dict(self.additional_owner_map))
 
     def _on_owners_picked(self, urls: list[str], labels: list[str]):
+        """Callback d'OwnerPicker : mémorise les co-propriétaires choisis et met à jour le libellé."""
         self.additional_owner_urls = urls
         self.additional_owner_map = dict(zip(urls, labels))
         if urls:
@@ -490,6 +506,7 @@ class App(_AppBase):
     # ── Lancement du téléversement ───────────────────────────────────────
 
     def _start_upload(self):
+        """Vérifie les prérequis (connexion, agent, type) puis lance le lot en arrière-plan."""
         if not self.api:
             self.global_msg.configure(text="Non connecté. Voir l'onglet Configuration.",
                                       text_color="#ef4444")
@@ -514,6 +531,7 @@ class App(_AppBase):
         self._run(self._do_batch_upload, owner_url, type_url)
 
     def _do_batch_upload(self, owner_url: str, type_url: str):
+        """(Thread) Téléverse chaque vidéo, ajoute les crédits, lance l'encodage, suit la progression."""
         is_draft = self.visibility_combo.get().startswith("Brouillon")
         do_encode = self.encode_var.get()
         total = len(self.items)
@@ -582,6 +600,7 @@ class App(_AppBase):
         self._ui(self._on_batch_done, ok, total)
 
     def _on_batch_done(self, ok: int, total: int):
+        """Réactive l'interface et affiche le bilan une fois le lot terminé."""
         self.launch_btn.configure(state="normal")
         self.file_progress.set(0)
         self.file_progress_lbl.configure(text="")
@@ -594,6 +613,7 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
 
     def _build_tab_coauthors(self):
+        """Construit l'onglet Co-auteurs (recherche de vidéo + ajout de contributeurs)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["coauthors"] = frame
 
@@ -651,6 +671,7 @@ class App(_AppBase):
         self._ca_selected_video = None
 
     def _ca_search_videos(self):
+        """(Thread) Recherche des vidéos par titre via l'API et affiche les résultats."""
         if not self.api:
             self._ui(self.ca_msg.configure, text="Non connecté.", text_color="#ef4444")
             return
@@ -663,6 +684,7 @@ class App(_AppBase):
             self._ui(self.ca_msg.configure, text=f"Erreur : {e}", text_color="#ef4444")
 
     def _ca_show_results(self, videos: list):
+        """Affiche la liste cliquable des vidéos trouvées."""
         for w in self.ca_results.winfo_children():
             w.destroy()
         if not videos:
@@ -676,10 +698,12 @@ class App(_AppBase):
                           command=lambda vid=v: self._ca_select(vid)).pack(fill="x", pady=1)
 
     def _ca_select(self, video: dict):
+        """Mémorise la vidéo sélectionnée pour l'ajout de contributeurs."""
         self._ca_selected_video = video
         self.ca_selected_lbl.configure(text=f"✅  {video.get('title','')[:60]}", text_color="#22c55e")
 
     def _ca_pick_user(self):
+        """Ouvre OwnerPicker en mode sélection unique pour pré-remplir un contributeur."""
         if not self.api:
             self.ca_msg.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
@@ -687,6 +711,7 @@ class App(_AppBase):
                     single=True, on_single=self._ca_fill_from_user)
 
     def _ca_fill_from_user(self, u: dict):
+        """Pré-remplit le formulaire contributeur à partir d'un compte Pod choisi."""
         name = f"{u.get('first_name','')} {u.get('last_name','')}".strip() or u.get("username", "")
         self.ca_name.delete(0, "end")
         self.ca_name.insert(0, name)
@@ -697,6 +722,7 @@ class App(_AppBase):
         self.ca_msg.configure(text=f"Pré-rempli depuis : {u.get('username','')}", text_color="#22c55e")
 
     def _ca_add_contributor(self):
+        """Vérifie la saisie puis lance l'ajout du contributeur en arrière-plan."""
         if not self._ca_selected_video:
             self.ca_msg.configure(text="Sélectionnez une vidéo.", text_color="#f59e0b")
             return
@@ -708,6 +734,7 @@ class App(_AppBase):
         self._run(self._ca_do_add, video_url, name, self.ca_email.get().strip(), self.ca_role.get())
 
     def _ca_do_add(self, video_url, name, email, role):
+        """(Thread) Ajoute un contributeur (crédit) à la vidéo via l'API."""
         try:
             self.api.add_contributor(video_url, name, email, role)
             self._ui(self.ca_msg.configure, text=f"✅  {name} ajouté(e) ({role}).", text_color="#22c55e")
@@ -722,6 +749,7 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
 
     def _build_tab_config(self):
+        """Construit l'onglet Configuration (connexion API + choix de l'agent déposant)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["config"] = frame
 
@@ -823,6 +851,7 @@ class App(_AppBase):
         self._log("Token effacé du poste — déconnexion.")
 
     def _connect(self):
+        """Lit URL + token saisis et lance la connexion en arrière-plan."""
         url = self.url_entry.get().strip()
         token = self.token_entry.get().strip()
         if not url or not token:
@@ -832,6 +861,7 @@ class App(_AppBase):
         self._run(self._do_connect, url, token)
 
     def _do_connect(self, url, token):
+        """(Thread) Teste la connexion à l'instance puis bascule l'UI selon le résultat."""
         try:
             api = PodAPI(url, token)
             count = api.test_connection()
@@ -841,6 +871,7 @@ class App(_AppBase):
             self._ui(self._set_status, False)
 
     def _on_connected(self, api, url, token, count):
+        """Connexion réussie : mémorise le client, enregistre le token, charge types et comptes."""
         self.api = api
         self.token = token
         self.config_data["url"] = url
@@ -853,6 +884,7 @@ class App(_AppBase):
         self._run(self._load_all_users)
 
     def _auto_connect(self):
+        """(Thread) Reconnexion automatique au démarrage si un token est déjà enregistré."""
         try:
             api = PodAPI(self.config_data["url"], self.token)
             count = api.test_connection()
@@ -861,6 +893,7 @@ class App(_AppBase):
             self._ui(self._set_status, False)
 
     def _on_auto_ok(self, api, count):
+        """Reconnexion auto réussie : active l'état connecté et charge types et comptes."""
         self.api = api
         self._set_status(True)
         u = self.config_data.get("agent_username", "")
@@ -870,11 +903,13 @@ class App(_AppBase):
         self._run(self._load_all_users)
 
     def _set_status(self, ok: bool):
+        """Met à jour l'indicateur de connexion (pastille + libellé) de la barre latérale."""
         self.status_dot.configure(text="🟢" if ok else "🔴")
         self.status_lbl.configure(text="Connecté" if ok else "Non connecté",
                                   text_color="#22c55e" if ok else "#ef4444")
 
     def _load_types(self):
+        """(Thread) Charge les types de vidéo et les sites (champ requis à l'upload)."""
         try:
             self.types = self.api.get_types()
             self.type_map = {t.get("title", f"type-{t.get('id')}"): t.get("url", "")
@@ -897,6 +932,7 @@ class App(_AppBase):
             self._ui(self._log, f"Impossible de charger les sites : {e}")
 
     def _load_all_users(self):
+        """(Thread) Charge tous les comptes Pod (paginé) et rafraîchit les vues qui en dépendent."""
         if not self.api:
             self._ui(self.users_count_lbl.configure,
                      text="Connectez-vous d'abord.", text_color="#f59e0b")
@@ -932,6 +968,7 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Erreur chargement utilisateurs : {e}")
 
     def _user_label(self, u: dict) -> str:
+        """Libellé lisible d'un compte : « identifiant — Prénom Nom »."""
         return f"{u.get('username','?')} — {u.get('first_name','')} {u.get('last_name','')}".strip()
 
     def _preselect_agent(self, username: str):
@@ -943,6 +980,7 @@ class App(_AppBase):
             self._render_users()
 
     def _render_users(self):
+        """Affiche la liste filtrée des comptes pour choisir l'agent déposant."""
         flt = self.agent_filter.get().strip().lower() if hasattr(self, "agent_filter") else ""
         for w in self.agent_results.winfo_children():
             w.destroy()
@@ -976,6 +1014,7 @@ class App(_AppBase):
                          text_color="gray").pack(pady=8)
 
     def _pick_agent(self, user: dict):
+        """Enregistre le compte choisi comme propriétaire par défaut des dépôts."""
         self.config_data["agent_username"] = user.get("username", "")
         self.config_data["agent_owner_url"] = user.get("url", "")
         cfg.save_config(self.config_data)
@@ -2777,6 +2816,7 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
 
     def _build_tab_log(self):
+        """Construit l'onglet Journal (zone de texte horodatée + bouton Effacer)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["log"] = frame
         top = ctk.CTkFrame(frame, fg_color="transparent")
@@ -2790,6 +2830,7 @@ class App(_AppBase):
         self._log("Application démarrée.")
 
     def _log(self, msg: str):
+        """Ajoute une ligne horodatée au journal."""
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
         self.log_box.insert("end", f"[{ts}]  {msg}\n")
@@ -2797,6 +2838,7 @@ class App(_AppBase):
         self.log_box.configure(state="disabled")
 
     def _clear_log(self):
+        """Vide le journal."""
         self.log_box.configure(state="normal")
         self.log_box.delete("1.0", "end")
         self.log_box.configure(state="disabled")
@@ -2852,6 +2894,7 @@ class OwnerPicker(ctk.CTkToplevel):
         self.after(80, self._init_list)
 
     def _init_list(self):
+        """Affiche la liste si les comptes sont déjà chargés, sinon déclenche un chargement."""
         if self.master_app.all_users:
             self._render()
             self._update_chosen()
@@ -2860,6 +2903,7 @@ class OwnerPicker(ctk.CTkToplevel):
             self._reload()
 
     def _reload(self):
+        """(Thread) Charge la liste des comptes si nécessaire, puis rafraîchit l'affichage."""
         def work():
             try:
                 if not self.master_app.all_users:
@@ -2873,9 +2917,11 @@ class OwnerPicker(ctk.CTkToplevel):
         threading.Thread(target=work, daemon=True).start()
 
     def _label(self, u: dict) -> str:
+        """Libellé lisible d'un compte."""
         return f"{u.get('username','?')} — {u.get('first_name','')} {u.get('last_name','')}".strip()
 
     def _render(self):
+        """Affiche la liste filtrée (cases à cocher)."""
         flt = self.filter.get().strip().lower()
         for w in self.listbox.winfo_children():
             w.destroy()
@@ -2906,6 +2952,7 @@ class OwnerPicker(ctk.CTkToplevel):
             ctk.CTkLabel(self.listbox, text="Aucun résultat.", text_color="gray").pack(pady=8)
 
     def _toggle(self, u: dict):
+        """Coche/décoche un compte (ou valide directement en mode sélection unique)."""
         if self.single:
             if self.on_single:
                 self.on_single(u)
@@ -2922,6 +2969,7 @@ class OwnerPicker(ctk.CTkToplevel):
         self._update_chosen()
 
     def _update_chosen(self):
+        """Met à jour le libellé récapitulant la sélection courante."""
         if self.selected:
             self.chosen_lbl.configure(text="Sélection : " + ", ".join(self.selected.values()),
                                       text_color="#22c55e")
@@ -2929,6 +2977,7 @@ class OwnerPicker(ctk.CTkToplevel):
             self.chosen_lbl.configure(text="Sélection : aucun", text_color="gray")
 
     def _validate(self):
+        """Renvoie la sélection à l'appelant (on_done) puis ferme la fenêtre."""
         self.on_done(list(self.selected.keys()), list(self.selected.values()))
         self.destroy()
 
@@ -2974,6 +3023,7 @@ class ChannelPicker(ctk.CTkToplevel):
         self._update_chosen()
 
     def _render(self):
+        """Affiche la liste filtrée (cases à cocher)."""
         flt = self.filter.get().strip().lower()
         for w in self.listbox.winfo_children():
             w.destroy()
@@ -2992,6 +3042,7 @@ class ChannelPicker(ctk.CTkToplevel):
             ctk.CTkLabel(self.listbox, text="Aucune chaîne.", text_color="gray").pack(pady=8)
 
     def _toggle(self, c: dict):
+        """Coche/décoche une chaîne dans la sélection."""
         url = c.get("url", "")
         if not url:
             return
@@ -3003,6 +3054,7 @@ class ChannelPicker(ctk.CTkToplevel):
         self._update_chosen()
 
     def _update_chosen(self):
+        """Met à jour le libellé récapitulant la sélection courante."""
         if self.selected:
             self.chosen_lbl.configure(text="Sélection : " + ", ".join(self.selected.values()),
                                       text_color="#22c55e")
@@ -3010,6 +3062,7 @@ class ChannelPicker(ctk.CTkToplevel):
             self.chosen_lbl.configure(text="Sélection : aucune", text_color="gray")
 
     def _validate(self):
+        """Renvoie la sélection à l'appelant (on_done) puis ferme la fenêtre."""
         self.on_done(list(self.selected.keys()), list(self.selected.values()))
         self.destroy()
 

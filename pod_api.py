@@ -250,9 +250,10 @@ class PodAPI:
 
     # ── 5. Propriétaires additionnels (PATCH) ─────────────────────────────
 
-    def set_additional_owners(self, slug: str, owner_urls: list[str]) -> dict:
-        """Remplace la liste des propriétaires additionnels d'une vidéo."""
-        return self._patch(f"/videos/{slug}/",
+    def set_additional_owners(self, video, owner_urls: list[str]) -> dict:
+        """Remplace la liste des propriétaires additionnels d'une vidéo
+        (réf = dict vidéo, URL, id ou slug)."""
+        return self._patch(self._video_endpoint(video),
                            json={"additional_owners": list(owner_urls)})
 
     # ── 6. Contributeurs (crédits) ────────────────────────────────────────
@@ -309,38 +310,58 @@ class PodAPI:
         data = self._get("/videos/", params)
         return data.get("results", []) if isinstance(data, dict) else (data or [])
 
-    def get_video(self, slug: str) -> dict:
-        return self._get(f"/videos/{slug}/")
+    # ── Résolution de l'endpoint d'une vidéo ──────────────────────────────
+    # IMPORTANT : l'API indexe les vidéos par ID NUMÉRIQUE (/rest/videos/108/),
+    # PAS par slug. On accepte donc une « référence » souple :
+    #   • un dict vidéo  -> on prend son champ 'url' (absolu, fourni par l'API)
+    #   • une URL (http) -> utilisée telle quelle
+    #   • un id numérique-> /videos/<id>/
+    #   • à défaut, un slug (peu fiable : peut donner 404 sur le détail)
+    def _video_endpoint(self, ref) -> str:
+        """Construit l'URL de détail d'une vidéo à partir d'une référence souple."""
+        if isinstance(ref, dict):
+            if ref.get("url"):
+                return ref["url"]                 # URL absolue donnée par l'API
+            ref = ref.get("id")                   # repli sur l'id numérique
+        s = str(ref)
+        if s.startswith("http"):
+            return s                              # déjà une URL absolue
+        return f"/videos/{s}/"                     # id numérique (ou slug en dernier recours)
 
-    def patch_video(self, slug: str, payload: dict) -> dict:
-        """PATCH générique d'une vidéo (relations = URLs ou listes d'URLs)."""
-        return self._patch(f"/videos/{slug}/", json=payload)
+    def get_video(self, video) -> dict:
+        """Détail d'une vidéo (réf = dict vidéo, URL, id ou slug)."""
+        return self._get(self._video_endpoint(video))
 
-    def set_video_owner(self, slug: str, owner_url: str,
+    def patch_video(self, video, payload: dict) -> dict:
+        """PATCH générique d'une vidéo (réf = dict vidéo, URL, id ou slug).
+        Les relations (owner, channel…) sont des URLs ou des listes d'URLs."""
+        return self._patch(self._video_endpoint(video), json=payload)
+
+    def set_video_owner(self, video, owner_url: str,
                         additional_owner_urls: Optional[list[str]] = None) -> dict:
         """Réaffecte le propriétaire (et, en option, les co-propriétaires)."""
         payload: dict = {"owner": owner_url}
         if additional_owner_urls is not None:
             payload["additional_owners"] = list(additional_owner_urls)
-        return self.patch_video(slug, payload)
+        return self.patch_video(video, payload)
 
-    def set_video_draft(self, slug: str, value: bool) -> dict:
-        return self.patch_video(slug, {"is_draft": bool(value)})
+    def set_video_draft(self, video, value: bool) -> dict:
+        return self.patch_video(video, {"is_draft": bool(value)})
 
-    def set_video_restricted(self, slug: str, value: bool) -> dict:
-        return self.patch_video(slug, {"is_restricted": bool(value)})
+    def set_video_restricted(self, video, value: bool) -> dict:
+        return self.patch_video(video, {"is_restricted": bool(value)})
 
-    def assign_video_to_channels(self, slug: str, channel_urls: list[str],
+    def assign_video_to_channels(self, video, channel_urls: list[str],
                                  theme_urls: Optional[list[str]] = None) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""
         payload: dict = {"channel": list(channel_urls)}
         if theme_urls is not None:
             payload["theme"] = list(theme_urls)
-        return self.patch_video(slug, payload)
+        return self.patch_video(video, payload)
 
-    def delete_video(self, slug: str) -> bool:
+    def delete_video(self, video) -> bool:
         """⚠️ Suppression définitive d'une vidéo (DELETE)."""
-        return self._delete(f"/videos/{slug}/")
+        return self._delete(self._video_endpoint(video))
 
     # Aides au module Nettoyage (logique pure, testable sans réseau) ───────
 

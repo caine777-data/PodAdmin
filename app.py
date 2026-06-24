@@ -1733,7 +1733,7 @@ class App(_AppBase):
     def _do_browse_patch(self, v, payload, msg):
         slug = v.get("slug", "")
         try:
-            self.api.patch_video(slug, payload)
+            self.api.patch_video(v, payload)
             v.update(payload)               # met à jour le cache local
             self._ui(self._log, f"✏ {slug} : {msg}")
             self._ui(self._browse_set_msg, f"✅  {msg}", "#22c55e")
@@ -1791,7 +1791,7 @@ class App(_AppBase):
     def _do_browse_delete(self, v):
         slug = v.get("slug", "")
         try:
-            self.api.delete_video(slug)
+            self.api.delete_video(v)
             if v in self.browse_videos:
                 self.browse_videos.remove(v)
             self.browse_selected = None
@@ -2124,8 +2124,8 @@ class App(_AppBase):
                     # Conserver les co-propriétaires existants + ajouter l'ancien
                     existing = list(v.get("additional_owners") or [])
                     add = list(dict.fromkeys(existing + [self.reassign_source.get("url")]))
-                # ÉCRITURE réelle : PATCH /rest/videos/<slug>/ {owner: <url cible>}
-                self.api.set_video_owner(slug, tgt.get("url"), additional_owner_urls=add)
+                # ÉCRITURE réelle : PATCH /rest/videos/<id>/ {owner: <url cible>}
+                self.api.set_video_owner(v, tgt.get("url"), additional_owner_urls=add)
                 v["owner"] = tgt.get("url")       # met à jour le cache local
                 ok += 1
                 self._ui(self._mark_reassign_row, slug, True)
@@ -2456,15 +2456,15 @@ class App(_AppBase):
             try:
                 # Aiguillage selon l'action ; on met aussi à jour le cache local
                 if action == "draft_on":
-                    self.api.set_video_draft(slug, True);        v["is_draft"] = True
+                    self.api.set_video_draft(v, True);        v["is_draft"] = True
                 elif action == "draft_off":
-                    self.api.set_video_draft(slug, False);       v["is_draft"] = False
+                    self.api.set_video_draft(v, False);       v["is_draft"] = False
                 elif action == "restrict_on":
-                    self.api.set_video_restricted(slug, True);   v["is_restricted"] = True
+                    self.api.set_video_restricted(v, True);   v["is_restricted"] = True
                 elif action == "restrict_off":
-                    self.api.set_video_restricted(slug, False);  v["is_restricted"] = False
+                    self.api.set_video_restricted(v, False);  v["is_restricted"] = False
                 elif action == "delete":
-                    self.api.delete_video(slug)
+                    self.api.delete_video(v)
                     # Retirer du cache pour que les filtres suivants soient cohérents
                     if v in self.clean_videos:
                         self.clean_videos.remove(v)
@@ -3102,7 +3102,7 @@ class App(_AppBase):
                 chans = [c for c in chans if c.rstrip("/") != curl_n]  # retrait
             try:
                 # PATCH du champ channel (liste complète d'URLs) — préserve les autres
-                self.api.assign_video_to_channels(slug, chans)
+                self.api.assign_video_to_channels(v, chans)
                 v["channel"] = chans                                   # MAJ cache local
                 ok += 1
             except Exception as e:

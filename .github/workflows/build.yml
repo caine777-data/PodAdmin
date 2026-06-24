@@ -62,11 +62,10 @@ jobs:
 
       - name: Compiler PodAdmin.app
         run: |
-          # --onedir (au lieu de --onefile) : sur macOS, un .app est un BUNDLE
-          # (un dossier), pas un fichier unique. C'est le mode recommandé par
-          # PyInstaller pour les apps fenêtrées macOS et ça supprime
-          # l'avertissement de dépréciation. Produit dist/PodAdmin.app
-          pyinstaller --onedir --windowed --name "PodAdmin" \
+          # --onefile : build macOS leger (~20-30 Mo) au prix d'un avertissement
+          # de depreciation PyInstaller (tolere aujourd'hui, bloquant en v7.0).
+          # Choix assume : taille reduite > suppression de l'avertissement.
+          pyinstaller --onefile --windowed --name "PodAdmin" \
             --collect-all customtkinter \
             --collect-all keyring \
             --collect-all tkinterdnd2 \

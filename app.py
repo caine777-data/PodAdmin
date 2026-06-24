@@ -30,7 +30,8 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 import config as cfg
-from pod_api import PodAPI, PodAPIError, CONTRIBUTOR_ROLES
+from pod_api import (PodAPI, PodAPIError, CONTRIBUTOR_ROLES,
+                     SUBTITLE_LANGS, SUBTITLE_KINDS)
 
 # Pillow (fourni avec customtkinter) — pour afficher le logo
 try:
@@ -1706,6 +1707,21 @@ class App(_AppBase):
         ctk.CTkButton(rel, text="🗂  Chaînes…", fg_color="gray35",
                       command=lambda: self._browse_edit_channels(v)).pack(side="left")
 
+        # — Sous-titres —
+        ctk.CTkLabel(self.browse_detail, text="Sous-titres", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        # Conteneur listant les pistes existantes (rempli en arrière-plan)
+        self.browse_subs = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        self.browse_subs.pack(fill="x", padx=4)
+        ctk.CTkLabel(self.browse_subs, text="Chargement…", text_color="gray",
+                     font=ctk.CTkFont(size=11)).pack(anchor="w")
+        # Bouton d'ajout d'un fichier .vtt / .srt
+        ctk.CTkButton(self.browse_detail, text="➕  Ajouter un sous-titre (.vtt / .srt)",
+                      fg_color="gray35",
+                      command=lambda: self._sub_add_dialog(v)).pack(anchor="w", padx=4, pady=(6, 0))
+        # Chargement des pistes de cette vidéo en arrière-plan
+        self._run(self._sub_load, v)
+
         # — Suppression —
         ctk.CTkLabel(self.browse_detail, text="Zone sensible", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold"),
@@ -1720,6 +1736,143 @@ class App(_AppBase):
         self.browse_msg.pack(anchor="w", padx=4, pady=(4, 8))
 
     # ── Actions sur la vidéo sélectionnée ──────────────────────────────────
+
+    # ── Sous-titres (tracks) ───────────────────────────────────────────────
+
+    def _sub_load(self, v):
+        """(Thread) Charge les pistes de sous-titres de la vidéo puis les affiche."""
+        try:
+            tracks = self.api.get_tracks(v)
+            self._ui(self._sub_render, v, tracks)
+        except Exception as e:
+            self._ui(self._sub_render, v, None, str(e))
+
+    def _sub_render(self, v, tracks, err=None):
+        """Affiche la liste des pistes existantes (langue · type · 🗑)."""
+        # Le panneau a pu être reconstruit entre-temps : on vérifie qu'il existe
+        if not hasattr(self, "browse_subs") or not self.browse_subs.winfo_exists():
+            return
+        for w in self.browse_subs.winfo_children():
+            w.destroy()
+        if err:
+            ctk.CTkLabel(self.browse_subs, text=f"❌ {err}", text_color="#ef4444",
+                         font=ctk.CTkFont(size=11)).pack(anchor="w")
+            return
+        if not tracks:
+            ctk.CTkLabel(self.browse_subs, text="Aucun sous-titre.", text_color="gray",
+                         font=ctk.CTkFont(size=11)).pack(anchor="w")
+            return
+        # Dictionnaires code→libellé pour un affichage lisible
+        langs = dict(SUBTITLE_LANGS)
+        kinds = dict(SUBTITLE_KINDS)
+        for t in tracks:
+            row = ctk.CTkFrame(self.browse_subs, fg_color=("gray85", "gray17"),
+                               corner_radius=6)
+            row.pack(fill="x", pady=2)
+            lang = langs.get(t.get("lang"), t.get("lang"))
+            kind = kinds.get(t.get("kind"), t.get("kind"))
+            ctk.CTkLabel(row, text=f"{lang} · {kind}", anchor="w",
+                         font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=5,
+                                                         fill="x", expand=True)
+            ctk.CTkButton(row, text="🗑", width=34, fg_color="#b91c1c",
+                          hover_color="#991b1b",
+                          command=lambda tt=t: self._sub_delete(v, tt)).pack(side="right", padx=6)
+
+    def _sub_add_dialog(self, v):
+        """Fenêtre d'ajout : choix langue + type + fichier .vtt/.srt."""
+        if not self.api:
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Ajouter un sous-titre")
+        win.geometry("440x300")
+        _focus_toplevel(win, self)
+
+        ctk.CTkLabel(win, text=f"Vidéo : {(v.get('title') or '')[:50]}",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(padx=16, pady=(16, 10), anchor="w")
+
+        # Menu Langue
+        ctk.CTkLabel(win, text="Langue :").pack(padx=16, anchor="w")
+        lang_labels = [f"{lbl} ({code})" for code, lbl in SUBTITLE_LANGS]
+        lang_menu = ctk.CTkOptionMenu(win, values=lang_labels, width=260)
+        lang_menu.set("Français (fr)")
+        lang_menu.pack(padx=16, pady=(0, 8), anchor="w")
+
+        # Menu Type
+        ctk.CTkLabel(win, text="Type :").pack(padx=16, anchor="w")
+        kind_menu = ctk.CTkOptionMenu(
+            win, values=[lbl for _c, lbl in SUBTITLE_KINDS], width=260)
+        kind_menu.set("Sous-titres")
+        kind_menu.pack(padx=16, pady=(0, 8), anchor="w")
+
+        # Sélection du fichier
+        path_var = {"p": None}
+        path_lbl = ctk.CTkLabel(win, text="Aucun fichier choisi.", text_color="gray",
+                                font=ctk.CTkFont(size=11), wraplength=400, justify="left")
+
+        def choose():
+            # Boîte de sélection limitée aux formats acceptés
+            p = filedialog.askopenfilename(
+                title="Choisir un fichier de sous-titres",
+                filetypes=[("Sous-titres", "*.vtt *.srt"), ("Tous", "*.*")])
+            if p:
+                path_var["p"] = p
+                path_lbl.configure(text=os.path.basename(p), text_color="white")
+
+        ctk.CTkButton(win, text="📄  Choisir un fichier .vtt / .srt",
+                      command=choose, fg_color="gray35").pack(padx=16, pady=(4, 2), anchor="w")
+        path_lbl.pack(padx=16, anchor="w")
+
+        def valider():
+            # Résolution des codes à partir des libellés choisis
+            lang_code = SUBTITLE_LANGS[lang_labels.index(lang_menu.get())][0]
+            kind_code = next(c for c, lbl in SUBTITLE_KINDS
+                             if lbl == kind_menu.get())
+            path = path_var["p"]
+            if not path:
+                path_lbl.configure(text="⚠️ Choisissez d'abord un fichier.",
+                                   text_color="#f59e0b")
+                return
+            # Garde-fou d'extension (la conversion gère .srt, sinon .vtt attendu)
+            if not path.lower().endswith((".vtt", ".srt")):
+                path_lbl.configure(text="⚠️ Le fichier doit être .vtt ou .srt.",
+                                   text_color="#f59e0b")
+                return
+            win.destroy()
+            self._run(self._sub_do_add, v, lang_code, kind_code, path)
+
+        ctk.CTkButton(win, text="Ajouter", fg_color="#16a34a", hover_color="#15803d",
+                      command=valider).pack(pady=14)
+
+    def _sub_do_add(self, v, lang, kind, path):
+        """(Thread) Téléverse le fichier et crée la piste, puis rafraîchit la liste."""
+        try:
+            self.api.add_subtitle(v, lang, kind, path)   # conversion .srt incluse
+            self._ui(self._log, f"➕ Sous-titre ajouté ({lang}/{kind}) à {v.get('slug')}")
+            self._ui(self._browse_set_msg, "✅  Sous-titre ajouté.", "#22c55e")
+            self._run(self._sub_load, v)                 # recharge la liste
+        except Exception as e:
+            self._ui(self._log, f"❌ Ajout sous-titre {v.get('slug')} : {e}")
+            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+
+    def _sub_delete(self, v, track):
+        """Supprime une piste après confirmation."""
+        langs = dict(SUBTITLE_LANGS)
+        lib = langs.get(track.get("lang"), track.get("lang"))
+        if not messagebox.askyesno(
+                "Supprimer le sous-titre",
+                f"Supprimer la piste « {lib} » de cette vidéo ?"):
+            return
+        self._run(self._sub_do_delete, v, track)
+
+    def _sub_do_delete(self, v, track):
+        """(Thread) DELETE de la piste, puis rafraîchit la liste."""
+        try:
+            self.api.delete_track(track)
+            self._ui(self._log, f"🗑 Sous-titre supprimé ({track.get('lang')}) de {v.get('slug')}")
+            self._run(self._sub_load, v)
+        except Exception as e:
+            self._ui(self._log, f"❌ Suppression sous-titre : {e}")
+            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
 
     def _browse_rename(self, v):
         new = self.browse_title_entry.get().strip()

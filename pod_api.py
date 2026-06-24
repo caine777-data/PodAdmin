@@ -27,6 +27,7 @@ __license__     = "Usage interne — Université de Toulouse"
 
 
 import os
+import re
 import requests
 from typing import Callable, Optional
 
@@ -431,6 +432,108 @@ class PodAPI:
         ep = theme if str(theme).startswith("http") else f"/themes/{theme}/"
         return self._delete(ep)
 
+    # ── C-bis. Sous-titres (tracks + files + folders) ─────────────────────
+    # Diagnostic (sondes) : l'API expose /rest/tracks/ (POST autorisé) dont le
+    # champ `src` pointe vers un fichier /rest/files/<id>/. Déposer un sous-titre
+    # se fait donc en 3 temps :
+    #   1) trouver (ou créer) le DOSSIER de la vidéo  -> /rest/folders/ (name = slug)
+    #   2) TÉLÉVERSER le .vtt dans ce dossier         -> /rest/files/ (multipart)
+    #   3) créer la PISTE qui pointe vers ce fichier  -> /rest/tracks/
+    # Valeurs confirmées : kind ∈ {subtitles, captions} ; lang = code ISO 2 lettres.
+    # Le fichier déposé doit être du WebVTT ; un .srt est converti à la volée.
+
+    def get_tracks(self, video) -> list[dict]:
+        """Liste les pistes de sous-titres/légendes d'une vidéo.
+        `video` = dict vidéo (ou URL/id). On filtre sur l'URL de la vidéo."""
+        vurl = str(self._video_endpoint(video)).rstrip("/")
+        out = []
+        # /tracks/ ne propose pas forcément de filtre serveur : on parcourt et on trie.
+        for t in self._paginate("/tracks/"):
+            if str(t.get("video")).rstrip("/") == vurl:
+                out.append(t)
+        return out
+
+    def find_or_create_folder(self, name: str, owner_url: str) -> str:
+        """Renvoie l'URL du dossier `name` (= slug de la vidéo) appartenant à
+        `owner_url`. Le crée s'il n'existe pas. Les fichiers d'une vidéo sont
+        rangés dans un dossier portant son slug, propriété de son propriétaire."""
+        owner_n = str(owner_url).rstrip("/")
+        # Recherche : on parcourt les dossiers et on compare nom + propriétaire.
+        for f in self._paginate("/folders/"):
+            if f.get("name") == name and str(f.get("owner")).rstrip("/") == owner_n:
+                return f.get("url")
+        # Absent -> création (POST /folders/ : name + owner suffisent)
+        created = self._post("/folders/", json={"name": name, "owner": owner_url})
+        return created.get("url")
+
+    def upload_subtitle_file(self, folder_url: str, name: str, vtt_bytes: bytes,
+                             filename: str, created_by_url: str) -> dict:
+        """Téléverse un fichier .vtt (en mémoire) dans un dossier, via POST
+        multipart sur /rest/files/. Renvoie le fichier créé (avec son `url`)."""
+        # multipart : le binaire dans `files`, les champs relationnels dans `data`
+        files = {"file": (filename, vtt_bytes, "text/vtt")}
+        data = {"folder": folder_url, "name": name, "created_by": created_by_url}
+        r = self.session.post(self._abs("/files/"), data=data, files=files,
+                              headers={"Accept": "application/json"},
+                              timeout=120, verify=self.verify_ssl)
+        return self._json(r)
+
+    def add_track(self, video, lang: str, kind: str = "subtitles",
+                  file_url: Optional[str] = None) -> dict:
+        """Crée une piste sur /rest/tracks/ liant une vidéo à un fichier de
+        sous-titres. kind ∈ {subtitles, captions} ; lang = code ISO (fr, en…)."""
+        payload: dict = {
+            "video": self._video_endpoint(video),   # URL absolue de la vidéo
+            "lang": lang,
+            "kind": kind,
+        }
+        if file_url:
+            payload["src"] = file_url                # URL du fichier /files/<id>/
+        return self._post("/tracks/", json=payload)
+
+    def delete_track(self, track) -> bool:
+        """⚠️ Supprime une piste de sous-titres (DELETE /rest/tracks/<id>/).
+        `track` = id, URL ou dict track."""
+        if isinstance(track, dict):
+            track = track.get("url") or track.get("id")
+        ep = track if str(track).startswith("http") else f"/tracks/{track}/"
+        return self._delete(ep)
+
+    def add_subtitle(self, video: dict, lang: str, kind: str, file_path: str) -> dict:
+        """Orchestration complète : ajoute un sous-titre à une vidéo à partir
+        d'un fichier .vtt OU .srt (converti automatiquement).
+        Enchaîne : lecture/conversion -> dossier -> upload -> création de piste.
+        Renvoie la piste (track) créée. `video` doit contenir 'slug' et 'owner'."""
+        # 1) Lecture du fichier. 'utf-8-sig' retire un éventuel BOM en tête.
+        with open(file_path, "rb") as fh:
+            raw = fh.read()
+        text = raw.decode("utf-8-sig", errors="replace")
+
+        # Conversion / validation selon l'extension
+        if file_path.lower().endswith(".srt"):
+            text = srt_to_vtt(text)                       # SRT -> WebVTT
+        elif not text.lstrip().startswith("WEBVTT"):
+            # Garde-fou : un .vtt valide commence par l'en-tête WEBVTT
+            raise PodAPIError("Fichier .vtt invalide : il doit commencer par "
+                              "l'en-tête « WEBVTT ».")
+        vtt_bytes = text.encode("utf-8")
+
+        # 2) Dossier de la vidéo (= son slug), appartenant à SON propriétaire
+        slug = video.get("slug") or "video"
+        owner_url = video.get("owner")
+        if not owner_url:
+            raise PodAPIError("Propriétaire de la vidéo introuvable (champ 'owner').")
+        folder_url = self.find_or_create_folder(slug, owner_url)
+
+        # 3) Téléversement du .vtt (nom à la convention Pod : subtitle_<lang>_<horodatage>)
+        from datetime import datetime
+        name = f"subtitle_{lang}_{datetime.now():%Y%m%d-%H%M%S}"
+        f = self.upload_subtitle_file(folder_url, name, vtt_bytes,
+                                      name + ".vtt", owner_url)
+
+        # 4) Création de la piste qui référence le fichier téléversé
+        return self.add_track(video, lang, kind, f.get("url"))
+
     # ── D. Découverte de schéma (OPTIONS) ─────────────────────────────────
     # Pour s'adapter à l'instance plutôt que supposer (réflexe « diagnostic »).
 
@@ -456,3 +559,34 @@ CONTRIBUTOR_ROLES = [
     "author", "actor", "designer", "consultant",
     "editor", "speaker", "soundman", "writer", "publisher",
 ]
+
+
+# ── Sous-titres : conversion SRT -> WebVTT ────────────────────────────────
+def srt_to_vtt(text: str) -> str:
+    """Convertit un sous-titrage SRT en WebVTT.
+    Deux seules différences en pratique :
+      1) on ajoute l'en-tête « WEBVTT » en première ligne ;
+      2) les millisecondes SRT utilisent une virgule (00:00:01,000) là où le
+         VTT utilise un point (00:00:01.000)."""
+    # Normalise les fins de ligne (Windows/Mac -> Unix)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Virgule -> point dans les codes temps (hh:mm:ss,mmm -> hh:mm:ss.mmm)
+    text = re.sub(r"(\d\d:\d\d:\d\d),(\d{3})", r"\1.\2", text)
+    # Ajoute l'en-tête WEBVTT s'il manque
+    if not text.lstrip().startswith("WEBVTT"):
+        text = "WEBVTT\n\n" + text.lstrip("\n")
+    return text
+
+
+# ── Sous-titres : langues acceptées par l'API (code ISO -> libellé) ───────
+# Sous-ensemble usuel (l'API en accepte beaucoup plus ; voir verifier_tracks.py).
+SUBTITLE_LANGS = [
+    ("fr", "Français"), ("en", "Anglais"), ("es", "Espagnol"),
+    ("de", "Allemand"), ("it", "Italien"), ("pt", "Portugais"),
+    ("ar", "Arabe"), ("zh", "Chinois"), ("ru", "Russe"),
+    ("ja", "Japonais"), ("nl", "Hollandais"), ("ca", "Catalan"),
+    ("oc", "Occitan"),
+]
+
+# Types de piste acceptés par l'API (champ `kind`)
+SUBTITLE_KINDS = [("subtitles", "Sous-titres"), ("captions", "Légendes")]

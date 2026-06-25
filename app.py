@@ -1483,15 +1483,20 @@ class App(_AppBase):
         self.browse_type.set("Tous types")
         self.browse_type.pack(side="left", padx=6)
 
-        # — Barre « en masse » : affecter un type à toutes les vidéos affichées —
-        massbar = ctk.CTkFrame(frame, fg_color="transparent")
-        massbar.pack(fill="x", pady=(0, 4))
-        ctk.CTkLabel(massbar, text="En masse — Type :",
-                     font=ctk.CTkFont(size=11), text_color="gray70").pack(side="left", padx=(0, 6))
+        # — Action « en masse » : modifier le type des vidéos AFFICHÉES —
+        # On la détache nettement des filtres ci-dessus (séparateur + cadre
+        # encadré + libellé d'action) pour qu'on ne la confonde pas avec un filtre.
+        ctk.CTkFrame(frame, height=1, fg_color="gray30").pack(fill="x", pady=(6, 0))
+        massbar = ctk.CTkFrame(frame, fg_color=("gray90", "gray16"),
+                               corner_radius=8, border_width=1, border_color="gray30")
+        massbar.pack(fill="x", pady=(4, 4))
+        ctk.CTkLabel(massbar, text="✏️  Modifier en masse — appliquer ce type aux vidéos affichées :",
+                     font=ctk.CTkFont(size=11), text_color="gray70"
+                     ).pack(side="left", padx=(10, 8), pady=6)
         self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=170, values=["(aucun type)"])
-        self.browse_mass_type.pack(side="left")
-        ctk.CTkButton(massbar, text="Appliquer aux vidéos affichées", width=210,
-                      fg_color="gray35", command=self._browse_mass_set_type).pack(side="left", padx=8)
+        self.browse_mass_type.pack(side="left", pady=6)
+        ctk.CTkButton(massbar, text="Appliquer", width=110,
+                      command=self._browse_mass_set_type).pack(side="left", padx=8, pady=6)
 
         # — Corps : liste (gauche) + détail (droite) —
         body = ctk.CTkFrame(frame, fg_color="transparent")

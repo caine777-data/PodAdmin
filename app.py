@@ -3198,6 +3198,8 @@ class App(_AppBase):
                           command=lambda c=ch: self._ct_rename_channel(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🎬 Vidéos", width=80, fg_color="gray35",
                           command=lambda c=ch: self._ct_manage_videos(c)).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="👤 Admins", width=80, fg_color="gray35",
+                          command=lambda c=ch: self._ct_manage_owners(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color="gray35",
                           command=lambda c=ch: self._ct_toggle_visible(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🗑", width=34, fg_color="#b91c1c", hover_color="#991b1b",
@@ -3510,6 +3512,55 @@ class App(_AppBase):
         self._ui(self._log,
                  f"Thème « {theme.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {forced} forcé(s) en chaîne, {fail} échec(s).")
+
+    def _ct_manage_owners(self, ch):
+        """Ouvre un sélecteur de comptes pour gérer les ADMINISTRATEURS (owners)
+        de la chaîne. Les owners sont des comptes individuels (pas des groupes)
+        qui peuvent administrer la chaîne. Pré-coche les administrateurs actuels."""
+        if not self.api:
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        if not self.all_users:
+            self.ct_status.configure(text="⏳  Chargement des comptes…", text_color="gray")
+            self._run(lambda: (self._reload_users_for_admin(),
+                               self._ui(lambda: self._ct_open_owner_picker(ch))))
+            return
+        self._ct_open_owner_picker(ch)
+
+    def _ct_open_owner_picker(self, ch):
+        """Construit la pré-sélection (owners actuels) et ouvre OwnerPicker."""
+        owners = ch.get("owners") or []
+        if isinstance(owners, str):
+            owners = [owners]
+        # Table URL de compte → libellé lisible (à partir des comptes chargés)
+        label_by_url = {str(u.get("url", "")).rstrip("/"): self._user_label(u)
+                        for u in (self.all_users or [])}
+        pre = {}
+        for o in owners:
+            ourl = o.get("url") if isinstance(o, dict) else o
+            pre[ourl] = label_by_url.get(str(ourl).rstrip("/"), ourl)
+        OwnerPicker(self,
+                    on_done=lambda urls, labels: self._ct_apply_owners(ch, urls),
+                    title=f"Administrateurs de « {ch.get('title')} »",
+                    preselected=pre)
+
+    def _ct_apply_owners(self, ch, urls):
+        """Callback : applique la nouvelle liste d'administrateurs en arrière-plan."""
+        self._run(self._do_ct_apply_owners, ch, list(urls))
+
+    def _do_ct_apply_owners(self, ch, urls):
+        """(Thread) PATCH du champ `owners` de la chaîne (liste d'URLs de comptes)."""
+        try:
+            self.api.patch_channel(ch.get("url"), {"owners": urls})
+            ch["owners"] = urls                       # MAJ cache local
+            self._ui(self.ct_status.configure,
+                     text=f"✅  Chaîne « {ch.get('title')} » : "
+                          f"{len(urls)} administrateur(s).", text_color="#22c55e")
+            self._ui(self._log,
+                     f"Chaîne « {ch.get('title')} » : {len(urls)} administrateur(s) défini(s).")
+        except Exception as e:
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
 
     def _ct_toggle_visible(self, ch):
         # Inverse la visibilité de la chaîne

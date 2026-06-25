@@ -639,7 +639,7 @@ class App(_AppBase):
 
         search = ctk.CTkFrame(frame, fg_color="transparent")
         search.pack(fill="x")
-        self.ca_search = ctk.CTkEntry(search, placeholder_text="🔍  Titre de la vidéo…", width=360)
+        self.ca_search = ctk.CTkEntry(search, placeholder_text="🔍 titre de la vidéo…", width=360)
         self.ca_search.pack(side="left", padx=(0, 8))
         self.ca_search.bind("<Return>", lambda e: self._run(self._ca_search_videos))
         ctk.CTkButton(search, text="Rechercher", width=120,
@@ -815,10 +815,9 @@ class App(_AppBase):
                      text_color="gray70", font=ctk.CTkFont(size=11)).grid(
             row=1, column=0, columnspan=3, padx=12, pady=(0, 6), sticky="w")
 
-        ctk.CTkLabel(agent_box, text="Filtrer :", width=90, anchor="e").grid(row=2, column=0, padx=8, pady=8)
         self.agent_filter = ctk.CTkEntry(agent_box, width=300,
-                                         placeholder_text="taper un nom / identifiant pour filtrer la liste…")
-        self.agent_filter.grid(row=2, column=1, padx=8, pady=8, sticky="ew")
+                                         placeholder_text="🔍 nom / identifiant…")
+        self.agent_filter.grid(row=2, column=0, columnspan=2, padx=8, pady=8, sticky="ew")
         self.agent_filter.bind("<KeyRelease>", lambda e: self._render_users())
         ctk.CTkButton(agent_box, text="🔄  Recharger", width=130,
                       command=lambda: self._run(self._load_all_users)).grid(row=2, column=2, padx=8, pady=8)
@@ -1018,11 +1017,11 @@ class App(_AppBase):
 
         if len(matches) > CAP:
             ctk.CTkLabel(self.agent_results,
-                         text=f"… et {len(matches) - CAP} autres. Affinez le filtre pour réduire.",
+                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
         elif not matches:
             ctk.CTkLabel(self.agent_results,
-                         text="Aucun utilisateur ne correspond au filtre.",
+                         text="Aucun résultat ne correspond au filtre.",
                          text_color="gray").pack(pady=8)
 
     def _pick_agent(self, user: dict):
@@ -1223,7 +1222,7 @@ class App(_AppBase):
                     side="right", padx=8)
         if len(vids) > CAP:
             ctk.CTkLabel(self.encode_list,
-                         text=f"… +{len(vids) - CAP}. Affinez le filtre.",
+                         text=f"… +{len(vids) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
 
     # ── Relance de l'encodage ────────────────────────────────────────────────
@@ -1289,9 +1288,8 @@ class App(_AppBase):
 
         bar = ctk.CTkFrame(frame, fg_color="transparent")
         bar.pack(fill="x")
-        ctk.CTkLabel(bar, text="Filtrer :", width=70, anchor="e").pack(side="left", padx=(0, 6))
         self.comptes_filter = ctk.CTkEntry(
-            bar, placeholder_text="nom / prénom / identifiant…")
+            bar, placeholder_text="🔍 nom / prénom / identifiant…")
         self.comptes_filter.pack(side="left", fill="x", expand=True)
         self.comptes_filter.bind("<KeyRelease>", lambda e: self._render_comptes())
         # Filtre par statut équipe (is_staff)
@@ -1389,11 +1387,11 @@ class App(_AppBase):
 
         if len(matches) > CAP:
             ctk.CTkLabel(self.comptes_results,
-                         text=f"… et {len(matches) - CAP} autres. Affinez le filtre.",
+                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
         elif not matches:
             ctk.CTkLabel(self.comptes_results,
-                         text="Aucun compte ne correspond au filtre.",
+                         text="Aucun résultat ne correspond au filtre.",
                          text_color="gray").pack(pady=8)
 
     def _on_staff_toggle(self, user: dict, var):
@@ -1461,7 +1459,7 @@ class App(_AppBase):
         # — Ligne : filtres —
         filt = ctk.CTkFrame(frame, fg_color="transparent")
         filt.pack(fill="x", pady=(8, 4))
-        self.browse_text = ctk.CTkEntry(filt, placeholder_text="rechercher : titre / slug / propriétaire…")
+        self.browse_text = ctk.CTkEntry(filt, placeholder_text="🔍 titre / slug / propriétaire…")
         self.browse_text.pack(side="left", fill="x", expand=True)
         self.browse_text.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
         self.browse_statut = ctk.CTkOptionMenu(
@@ -1622,7 +1620,7 @@ class App(_AppBase):
                 command=lambda vv=v: self._browse_select(vv)).pack(fill="x", pady=1)
         if len(self.browse_filtered) > CAP:
             ctk.CTkLabel(self.browse_list,
-                         text=f"… +{len(self.browse_filtered) - CAP}. Affinez la recherche.",
+                         text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
 
     def _browse_select(self, v):
@@ -2049,7 +2047,7 @@ class App(_AppBase):
         ctk.CTkLabel(box, text=title, font=ctk.CTkFont(weight="bold")).pack(
             anchor="w", padx=10, pady=(8, 2))
         # Champ de filtre → filtrage CLIENT instantané (aucun appel serveur)
-        fe = ctk.CTkEntry(box, placeholder_text="filtrer : nom / identifiant…")
+        fe = ctk.CTkEntry(box, placeholder_text="🔍 nom / identifiant…")
         fe.pack(fill="x", padx=10, pady=(0, 6))
         # Liste défilante des comptes correspondant au filtre
         res = ctk.CTkScrollableFrame(box, height=150)
@@ -2096,7 +2094,7 @@ class App(_AppBase):
         # Indications de fin de liste
         if len(matches) > CAP:
             ctk.CTkLabel(state["results"],
-                         text=f"… +{len(matches) - CAP}. Affinez le filtre.",
+                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
         elif not matches:
             ctk.CTkLabel(state["results"], text="Aucun compte.", text_color="gray").pack(pady=6)
@@ -2372,7 +2370,7 @@ class App(_AppBase):
         # Filtre texte libre (titre / slug / propriétaire)
         ctk.CTkLabel(crit, text="Filtre :").pack(side="left", padx=(0, 4))
         self.clean_text = ctk.CTkEntry(crit, width=200,
-                                       placeholder_text="titre / slug / propriétaire…")
+                                       placeholder_text="🔍 titre / slug / propriétaire…")
         self.clean_text.pack(side="left", fill="x", expand=True)
         self.clean_text.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
 
@@ -3402,7 +3400,7 @@ class OwnerPicker(ctk.CTkToplevel):
 
         bar = ctk.CTkFrame(self, fg_color="transparent")
         bar.pack(fill="x", padx=14)
-        self.filter = ctk.CTkEntry(bar, placeholder_text="filtrer par nom ou identifiant…")
+        self.filter = ctk.CTkEntry(bar, placeholder_text="🔍 nom / identifiant…")
         self.filter.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.filter.bind("<KeyRelease>", lambda e: self._render())
         ctk.CTkButton(bar, text="🔄", width=40, command=self._reload).pack(side="left")
@@ -3537,7 +3535,7 @@ class VideoPicker(ctk.CTkToplevel):
                                 "(décochez pour les retirer).",
                      justify="left", wraplength=480).pack(padx=14, pady=(14, 8), anchor="w")
 
-        self.filter = ctk.CTkEntry(self, placeholder_text="filtrer : titre / slug…")
+        self.filter = ctk.CTkEntry(self, placeholder_text="🔍 titre / slug…")
         self.filter.pack(fill="x", padx=14)
         self.filter.bind("<KeyRelease>", lambda e: self._render())
 
@@ -3576,7 +3574,7 @@ class VideoPicker(ctk.CTkToplevel):
                           font=ctk.CTkFont(size=12),
                           command=lambda vv=v: self._toggle(vv)).pack(fill="x", pady=1)
         if len(matches) > CAP:
-            ctk.CTkLabel(self.listbox, text=f"… +{len(matches) - CAP}. Affinez le filtre.",
+            ctk.CTkLabel(self.listbox, text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
         elif not matches:
             ctk.CTkLabel(self.listbox, text="Aucune vidéo.", text_color="gray").pack(pady=8)
@@ -3623,7 +3621,7 @@ class ChannelPicker(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="Cochez les chaînes où la vidéo doit apparaître.",
                      justify="left").pack(padx=14, pady=(14, 8), anchor="w")
 
-        self.filter = ctk.CTkEntry(self, placeholder_text="filtrer par titre…")
+        self.filter = ctk.CTkEntry(self, placeholder_text="🔍 titre…")
         self.filter.pack(fill="x", padx=14)
         self.filter.bind("<KeyRelease>", lambda e: self._render())
 

@@ -928,6 +928,8 @@ class App(_AppBase):
             titles = list(self.type_map.keys()) or ["(aucun type)"]
             self._ui(self.type_combo.configure, values=titles)
             self._ui(self.type_combo.set, titles[0])
+            # Met aussi à jour les menus de type de l'onglet Vidéos
+            self._ui(self._browse_refresh_type_menu)
         except Exception as e:
             self._ui(self._log, f"Impossible de charger les types : {e}")
         # Sites (champ requis à l'upload sur instance multi-établissements)
@@ -1476,6 +1478,20 @@ class App(_AppBase):
                                              command=lambda _c: self._browse_apply_filter())
         self.browse_chan.set("Toutes chaînes")
         self.browse_chan.pack(side="left", padx=6)
+        self.browse_type = ctk.CTkOptionMenu(filt, width=150, values=["Tous types"],
+                                             command=lambda _c: self._browse_apply_filter())
+        self.browse_type.set("Tous types")
+        self.browse_type.pack(side="left", padx=6)
+
+        # — Barre « en masse » : affecter un type à toutes les vidéos affichées —
+        massbar = ctk.CTkFrame(frame, fg_color="transparent")
+        massbar.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(massbar, text="En masse — Type :",
+                     font=ctk.CTkFont(size=11), text_color="gray70").pack(side="left", padx=(0, 6))
+        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=170, values=["(aucun type)"])
+        self.browse_mass_type.pack(side="left")
+        ctk.CTkButton(massbar, text="Appliquer aux vidéos affichées", width=210,
+                      fg_color="gray35", command=self._browse_mass_set_type).pack(side="left", padx=8)
 
         # — Corps : liste (gauche) + détail (droite) —
         body = ctk.CTkFrame(frame, fg_color="transparent")
@@ -1540,6 +1556,20 @@ class App(_AppBase):
         vals = ["Toutes chaînes"] + sorted(self.browse_chan_by_url.values(), key=str.lower)
         self.browse_chan.configure(values=vals)
         self.browse_chan.set("Toutes chaînes")
+        self._browse_refresh_type_menu()
+
+    def _browse_refresh_type_menu(self):
+        """Remplit le filtre par type et le menu « en masse » avec les types chargés.
+        Sans danger si appelé avant que les types soient chargés."""
+        titles = sorted((self.type_map or {}).keys(), key=str.lower)
+        if hasattr(self, "browse_type"):
+            self.browse_type.configure(values=["Tous types"] + titles)
+            if self.browse_type.get() not in (["Tous types"] + titles):
+                self.browse_type.set("Tous types")
+        if hasattr(self, "browse_mass_type"):
+            self.browse_mass_type.configure(values=titles or ["(aucun type)"])
+            if titles and self.browse_mass_type.get() not in titles:
+                self.browse_mass_type.set(titles[0])
 
     # ── Filtrage ───────────────────────────────────────────────────────────
 
@@ -1585,6 +1615,15 @@ class App(_AppBase):
                 cs = [str(c).rstrip("/") for c in cs]
                 return any(w in cs for w in wanted)
             vids = [v for v in vids if in_chan(v)]
+        # Filtre type (valeur unique : on compare l'URL du type)
+        ty = self.browse_type.get() if hasattr(self, "browse_type") else "Tous types"
+        if ty and ty != "Tous types":
+            turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
+            def has_type(v):
+                vt = v.get("type")
+                vt = vt.get("url") if isinstance(vt, dict) else vt
+                return str(vt).rstrip("/") == turl
+            vids = [v for v in vids if has_type(v)]
         # Filtre texte (titre / slug / propriétaire)
         txt = self.browse_text.get().strip().lower()
         if txt:
@@ -1694,6 +1733,26 @@ class App(_AppBase):
                                f"accès → {'restreint (connexion requise)' if val else 'public'}")
         ctk.CTkSwitch(sw, text="Connexion requise", variable=restr_var,
                       command=_toggle_restr).pack(side="left")
+
+        # — Type (catégorie ; valeur unique) —
+        ctk.CTkLabel(self.browse_detail, text="Type", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        # Titre du type courant de la vidéo (résolu depuis son URL)
+        cur_url = v.get("type")
+        cur_url = cur_url.get("url") if isinstance(cur_url, dict) else cur_url
+        url_to_title = {str(u).rstrip("/"): t for t, u in (self.type_map or {}).items()}
+        cur_title = url_to_title.get(str(cur_url).rstrip("/"), "(non défini)")
+        titles = sorted((self.type_map or {}).keys(), key=str.lower) or ["(aucun type)"]
+        type_menu = ctk.CTkOptionMenu(self.browse_detail, width=220, values=titles)
+        type_menu.set(cur_title if cur_title in titles else titles[0])
+        type_menu.pack(anchor="w", padx=4)
+        def _apply_type(choice):
+            # Change le type de la vidéo (PATCH valeur unique = URL du type)
+            new_url = (self.type_map or {}).get(choice)
+            if new_url and str(new_url).rstrip("/") != str(cur_url).rstrip("/"):
+                v["type"] = new_url
+                self._browse_patch(v, {"type": new_url}, f"type → {choice}")
+        type_menu.configure(command=_apply_type)
 
         # — Co-propriétaires & chaînes —
         ctk.CTkLabel(self.browse_detail, text="Relations", anchor="w",
@@ -1871,6 +1930,50 @@ class App(_AppBase):
         except Exception as e:
             self._ui(self._log, f"❌ Suppression sous-titre : {e}")
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+
+    def _browse_mass_set_type(self):
+        """Affecte le type choisi à TOUTES les vidéos actuellement affichées
+        (résultat du filtre courant). Double confirmation, puis exécution."""
+        choice = self.browse_mass_type.get()
+        new_url = (self.type_map or {}).get(choice)
+        vids = list(self.browse_filtered)
+        if not new_url or not vids:
+            self._browse_set_msg("Rien à appliquer (aucun type ou aucune vidéo affichée).",
+                                 "#f59e0b")
+            return
+        if not messagebox.askyesno(
+                "Type en masse",
+                f"Affecter le type « {choice} » à {len(vids)} vidéo(s) affichée(s) ?\n\n"
+                "Cette action écrase le type actuel de chacune."):
+            return
+        self._run(self._do_browse_mass_set_type, vids, new_url, choice)
+
+    def _do_browse_mass_set_type(self, vids, new_url, choice):
+        """(Thread) Applique le type à chaque vidéo affichée, avec bilan."""
+        new_n = str(new_url).rstrip("/")
+        ok = fail = skip = 0
+        for i, v in enumerate(vids, 1):
+            cur = v.get("type")
+            cur = cur.get("url") if isinstance(cur, dict) else cur
+            if str(cur).rstrip("/") == new_n:
+                skip += 1                              # déjà ce type : on n'appelle pas l'API
+                continue
+            try:
+                self.api.patch_video(v, {"type": new_url})
+                v["type"] = new_url                    # MAJ cache local
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ {v.get('slug')} : {e}")
+            self._ui(self.browse_status.configure,
+                     text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+        self._ui(self.browse_status.configure,
+                 text=f"✅  Type « {choice} » : {ok} modifiée(s), {skip} déjà OK, {fail} échec(s).",
+                 text_color="#22c55e" if not fail else "#f59e0b")
+        self._ui(self._log,
+                 f"Type en masse « {choice} » : {ok} modifiée(s), {skip} inchangée(s), "
+                 f"{fail} échec(s).")
+        self._ui(self._browse_apply_filter)            # rafraîchit l'affichage
 
     def _browse_rename(self, v):
         new = self.browse_title_entry.get().strip()

@@ -3180,39 +3180,100 @@ class App(_AppBase):
                       {"title": new.strip()}, f"Thème renommé : {new.strip()}")
 
     def _ct_manage_videos(self, ch):
-        """Ouvre un sélecteur de vidéos pour gérer celles présentes dans la chaîne.
-        Scanne les vidéos au besoin (en arrière-plan) puis ouvre la fenêtre."""
+        """Ouvre la gestion des vidéos d'une chaîne. Si la chaîne a des thèmes,
+        propose de gérer la chaîne entière OU l'un de ses thèmes (Option 1).
+        Scanne les vidéos au besoin (en arrière-plan)."""
         if not self.api:
             self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
         self.ct_status.configure(text="⏳  Chargement des vidéos…", text_color="gray")
-        self._run(self._do_ct_open_video_picker, ch)
+        self._run(self._do_ct_prepare_organizer, ch)
 
-    def _do_ct_open_video_picker(self, ch):
-        """(Thread) Scanne les vidéos si nécessaire, pré-coche celles déjà dans la
-        chaîne, puis ouvre le sélecteur de vidéos dans le thread principal."""
+    def _do_ct_prepare_organizer(self, ch):
+        """(Thread) Scanne les vidéos puis ouvre soit le sélecteur de chaîne
+        (si aucun thème), soit le petit menu chaîne/thèmes."""
         try:
             if not self.ct_videos:
                 self.ct_videos = self.api.get_all_videos()
             curl = str(ch.get("url", "")).rstrip("/")
-            # Pré-sélection = vidéos dont le champ `channel` contient cette chaîne
-            pre = {}
-            for v in self.ct_videos:
-                chans = v.get("channel") or []
-                if isinstance(chans, str):
-                    chans = [chans]
-                if curl in [str(c).rstrip("/") for c in chans]:
-                    pre[v.get("slug")] = v.get("title", "?")
+            # Thèmes appartenant à CETTE chaîne (cohérence : on ne propose que ceux-là)
+            themes = [t for t in self.ct_themes
+                      if str(t.get("channel")).rstrip("/") == curl]
             self._ui(self.ct_status.configure,
                      text=f"{len(self.ct_videos)} vidéos chargées.", text_color="gray")
-            # Ouverture de la fenêtre dans le thread UI
-            self._ui(lambda: VideoPicker(
-                self, self.ct_videos,
-                on_done=lambda slugs: self._ct_apply_channel_videos(ch, slugs),
-                title=f"Vidéos de « {ch.get('title')} »", preselected=pre))
+            if themes:
+                self._ui(lambda: self._ct_organizer_dialog(ch, themes))
+            else:
+                # Pas de thème : on va directement au sélecteur de la chaîne entière
+                self._ui(lambda: self._ct_open_channel_picker(ch))
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Chargement vidéos (chaîne) : {e}")
+
+    def _ct_organizer_dialog(self, ch, themes):
+        """Petit menu : gérer les vidéos de la chaîne entière ou d'un de ses thèmes."""
+        win = ctk.CTkToplevel(self)
+        win.title(f"Organiser « {ch.get('title')} »")
+        win.geometry("440x420")
+        _focus_toplevel(win, self)
+
+        ctk.CTkLabel(win, text=f"Chaîne : {ch.get('title')}",
+                     font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 4), anchor="w")
+        ctk.CTkLabel(win, text="Choisissez ce que vous voulez organiser :",
+                     text_color="gray70", font=ctk.CTkFont(size=12)).pack(padx=16, anchor="w")
+
+        # La chaîne entière (appartenance vidéo ↔ chaîne)
+        row = ctk.CTkFrame(win, fg_color=("gray85", "gray17"), corner_radius=6)
+        row.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(row, text="📁  La chaîne entière", anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=8, fill="x", expand=True)
+        ctk.CTkButton(row, text="Gérer", width=80,
+                      command=lambda: (win.destroy(), self._ct_open_channel_picker(ch))
+                      ).pack(side="right", padx=8)
+
+        # Un bloc par thème de la chaîne
+        ctk.CTkLabel(win, text="Thèmes (rubriques de la chaîne) :",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(padx=16, pady=(10, 2), anchor="w")
+        holder = ctk.CTkScrollableFrame(win, height=200)
+        holder.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        for t in themes:
+            r = ctk.CTkFrame(holder, fg_color=("gray85", "gray17"), corner_radius=6)
+            r.pack(fill="x", pady=2)
+            ctk.CTkLabel(r, text=f"🏷  {t.get('title')}", anchor="w",
+                         font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=6,
+                                                         fill="x", expand=True)
+            ctk.CTkButton(r, text="Gérer", width=80,
+                          command=lambda th=t: (win.destroy(),
+                                                self._ct_open_theme_picker(ch, th))
+                          ).pack(side="right", padx=8)
+
+    def _videos_in_relation(self, field, url):
+        """Dict {slug: titre} des vidéos dont le champ relation (`channel`/`theme`)
+        contient l'URL donnée. Sert à pré-cocher le sélecteur."""
+        target = str(url).rstrip("/")
+        pre = {}
+        for v in self.ct_videos:
+            rel = v.get(field) or []
+            if isinstance(rel, str):
+                rel = [rel]
+            urls = [str(x.get("url") if isinstance(x, dict) else x).rstrip("/") for x in rel]
+            if target in urls:
+                pre[v.get("slug")] = v.get("title", "?")
+        return pre
+
+    def _ct_open_channel_picker(self, ch):
+        """Ouvre le sélecteur pour gérer l'appartenance à la chaîne entière."""
+        pre = self._videos_in_relation("channel", ch.get("url"))
+        VideoPicker(self, self.ct_videos,
+                    on_done=lambda slugs: self._ct_apply_channel_videos(ch, slugs),
+                    title=f"Vidéos de « {ch.get('title')} »", preselected=pre)
+
+    def _ct_open_theme_picker(self, ch, theme):
+        """Ouvre le sélecteur pour ranger des vidéos dans un thème de la chaîne."""
+        pre = self._videos_in_relation("theme", theme.get("url"))
+        VideoPicker(self, self.ct_videos,
+                    on_done=lambda slugs: self._ct_apply_theme_videos(ch, theme, slugs),
+                    title=f"Vidéos du thème « {theme.get('title')} »", preselected=pre)
 
     def _ct_apply_channel_videos(self, ch, selected_slugs):
         """Callback du sélecteur : applique les ajouts/retraits en arrière-plan."""
@@ -3267,6 +3328,85 @@ class App(_AppBase):
         self._ui(self._log,
                  f"Chaîne « {ch.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {fail} échec(s).")
+
+    def _ct_apply_theme_videos(self, ch, theme, selected_slugs):
+        """Callback du sélecteur de thème : applique les changements en arrière-plan."""
+        self._run(self._do_ct_apply_theme_videos, ch, theme, set(selected_slugs))
+
+    def _do_ct_apply_theme_videos(self, ch, theme, desired):
+        """(Thread) Range les vidéos dans un thème (champ `theme`).
+        GARDE-FOU DE COHÉRENCE : l'API n'empêche pas de mettre une vidéo dans un
+        thème sans qu'elle soit dans la chaîne parente. On le corrige donc nous-
+        mêmes : toute vidéo ajoutée à un thème est AUSSI ajoutée à la chaîne
+        parente du thème si elle n'y est pas déjà. Le retrait d'un thème ne
+        touche pas la chaîne (la vidéo reste dans la chaîne, hors rubrique)."""
+        turl = theme.get("url", "")
+        turl_n = str(turl).rstrip("/")
+        curl = ch.get("url", "")
+        curl_n = str(curl).rstrip("/")
+        by_slug = {v.get("slug"): v for v in self.ct_videos}
+
+        def norm(rel):
+            """Normalise un champ relation en liste d'URLs (str)."""
+            if not rel:
+                return []
+            if isinstance(rel, str):
+                rel = [rel]
+            return [str(x.get("url") if isinstance(x, dict) else x) for x in rel]
+
+        # Membres actuels du thème (d'après le cache)
+        current = set()
+        for v in self.ct_videos:
+            if turl_n in [u.rstrip("/") for u in norm(v.get("theme"))]:
+                current.add(v.get("slug"))
+
+        to_add = desired - current        # à ranger dans le thème
+        to_remove = current - desired     # à sortir du thème
+        ok = fail = forced = 0
+
+        for slug in (to_add | to_remove):
+            v = by_slug.get(slug)
+            if not v:
+                continue
+            themes = norm(v.get("theme"))
+            themes_n = [u.rstrip("/") for u in themes]
+            chans = norm(v.get("channel"))
+            chans_n = [u.rstrip("/") for u in chans]
+            payload = {}
+
+            if slug in to_add:
+                if turl_n not in themes_n:
+                    themes.append(turl)                       # ajout du thème
+                    payload["theme"] = themes
+                # COHÉRENCE : forcer l'appartenance à la chaîne parente
+                if curl_n not in chans_n:
+                    chans.append(curl)
+                    payload["channel"] = chans
+                    forced += 1
+            if slug in to_remove:
+                themes = [u for u in themes if u.rstrip("/") != turl_n]  # retrait du thème
+                payload["theme"] = themes
+                # On NE touche PAS à la chaîne au retrait (la vidéo y reste)
+
+            if not payload:
+                continue
+            try:
+                self.api.patch_video(v, payload)              # PATCH theme (+ channel si forcé)
+                v.update(payload)                             # MAJ cache local
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ {slug} : {e}")
+
+        msg = (f"✅  Thème « {theme.get('title')} » : "
+               f"+{len(to_add)} / -{len(to_remove)} vidéo(s).")
+        if forced:
+            msg += f"  ({forced} ajoutée(s) aussi à la chaîne pour cohérence.)"
+        self._ui(self.ct_status.configure,
+                 text=msg, text_color="#22c55e" if not fail else "#f59e0b")
+        self._ui(self._log,
+                 f"Thème « {theme.get('title')} » : {len(to_add)} ajout(s), "
+                 f"{len(to_remove)} retrait(s), {forced} forcé(s) en chaîne, {fail} échec(s).")
 
     def _ct_toggle_visible(self, ch):
         # Inverse la visibilité de la chaîne

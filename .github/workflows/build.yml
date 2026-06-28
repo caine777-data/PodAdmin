@@ -1,17 +1,25 @@
-name: Build executables
+name: Build installers
 
-# Compile PodAdmin en .exe (Windows) et .app/.zip (macOS) automatiquement.
-# Déclencheurs : push d'un tag "v*" (ex : v0.1.0) → crée une Release,
-#                ou lancement manuel via le bouton "Run workflow".
+# Compile PodAdmin et fabrique TOUS les livrables en un seul run :
+#   Windows :
+#     • PodAdmin.exe          — exécutable portable (sans installation)
+#     • PodAdmin-Setup.exe    — installeur Inno Setup (menu Démarrer, désinstalleur)
+#   macOS :
+#     • PodAdmin.dmg          — image disque (glisser dans Applications)
+#     • PodAdmin-macOS.zip    — archive .app (comme avant, pour compatibilité)
+#
+# Déclencheurs :
+#   • Bouton "Run workflow" dans l'onglet Actions (build manuel)
+#   • Push d'un tag v* (ex : v0.1.0) → crée automatiquement une Release GitHub
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:        # bouton "Run workflow" dans l'onglet Actions
+  workflow_dispatch:
 
 jobs:
-  # ────────────────────────────── WINDOWS ──────────────────────────────
+  # ─────────────────────────────── WINDOWS ───────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -21,16 +29,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Installer les dépendances
+      - name: Installer les dépendances Python
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Compiler PodAdmin.exe
+      # Génère une icône .ico carrée à partir du logo PNG (pour l'exe et l'installeur).
+      # Si le logo est absent ou illisible, on continue sans icône (non bloquant).
+      - name: Générer l'icône Windows
+        continue-on-error: true
         run: |
+          python -c "from PIL import Image; im=Image.open('assets/logo_ut.png').convert('RGBA'); s=max(im.size); bg=Image.new('RGBA',(s,s),(0,0,0,0)); bg.paste(im,((s-im.size[0])//2,(s-im.size[1])//2)); bg.save('assets/podadmin.ico', sizes=[(256,256),(64,64),(48,48),(32,32),(16,16)])"
+
+      - name: Compiler PodAdmin.exe (portable)
+        run: |
+          $icon = (Test-Path "assets/podadmin.ico") ? "--icon=assets/podadmin.ico" : ""
           pyinstaller --onefile --windowed --name "PodAdmin" `
             --version-file version.txt `
+            $icon `
             --collect-all customtkinter `
             --collect-all keyring `
             --collect-all tkinterdnd2 `
@@ -38,13 +55,64 @@ jobs:
             --add-data "assets;assets" `
             app.py
 
-      - name: Publier l'artefact Windows
+      - name: Publier l'exe portable Windows
         uses: actions/upload-artifact@v4
         with:
-          name: PodAdmin-Windows
+          name: PodAdmin-Windows-portable
           path: dist/PodAdmin.exe
 
-  # ─────────────────────────────── macOS ───────────────────────────────
+      # Installe Inno Setup (compilateur d'installeurs Windows) via Chocolatey.
+      - name: Installer Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Génère le script .iss puis compile l'installeur.
+      # Installation SANS droits administrateur (dans le profil utilisateur),
+      # avec raccourcis menu Démarrer + Bureau et désinstalleur.
+      - name: Fabriquer l'installeur (Inno Setup)
+        run: |
+          $iss = @"
+          [Setup]
+          AppName=PodAdmin
+          AppVersion=0.1.0
+          AppPublisher=Universite de Toulouse
+          DefaultDirName={localappdata}\Programs\PodAdmin
+          DefaultGroupName=PodAdmin
+          PrivilegesRequired=lowest
+          OutputDir=installer
+          OutputBaseFilename=PodAdmin-Setup
+          Compression=lzma
+          SolidCompression=yes
+          SetupIconFile=assets\podadmin.ico
+          WizardStyle=modern
+
+          [Languages]
+          Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+
+          [Files]
+          Source: "dist\PodAdmin.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+          [Icons]
+          Name: "{group}\PodAdmin"; Filename: "{app}\PodAdmin.exe"
+          Name: "{group}\Désinstaller PodAdmin"; Filename: "{uninstallexe}"
+          Name: "{userdesktop}\PodAdmin"; Filename: "{app}\PodAdmin.exe"
+
+          [Run]
+          Filename: "{app}\PodAdmin.exe"; Description: "Lancer PodAdmin"; Flags: nowait postinstall skipifsilent
+          "@
+          # Si l'icône n'a pas été générée, on retire la ligne SetupIconFile.
+          if (-not (Test-Path "assets/podadmin.ico")) {
+            $iss = $iss -replace "SetupIconFile=assets\\podadmin.ico`r?`n", ""
+          }
+          Set-Content -Path "PodAdmin.iss" -Value $iss -Encoding UTF8
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "PodAdmin.iss"
+
+      - name: Publier l'installeur Windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAdmin-Windows-Setup
+          path: installer/PodAdmin-Setup.exe
+
+  # ──────────────────────────────── macOS ────────────────────────────────
   build-macos:
     runs-on: macos-latest
     steps:
@@ -54,7 +122,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Installer les dépendances
+      - name: Installer les dépendances Python
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -64,7 +132,6 @@ jobs:
         run: |
           # --onefile : build macOS leger (~20-30 Mo) au prix d'un avertissement
           # de depreciation PyInstaller (tolere aujourd'hui, bloquant en v7.0).
-          # Choix assume : taille reduite > suppression de l'avertissement.
           pyinstaller --onefile --windowed --name "PodAdmin" \
             --collect-all customtkinter \
             --collect-all keyring \
@@ -73,16 +140,30 @@ jobs:
             --add-data "assets:assets" \
             app.py
 
-      - name: Compresser le .app
+      - name: Compresser le .app (archive, comme avant)
         run: |
           cd dist
           zip -r PodAdmin-macOS.zip PodAdmin.app || zip -r PodAdmin-macOS.zip PodAdmin
 
-      - name: Publier l'artefact macOS
+      - name: Publier l'archive macOS
         uses: actions/upload-artifact@v4
         with:
-          name: PodAdmin-macOS
+          name: PodAdmin-macOS-zip
           path: dist/PodAdmin-macOS.zip
+
+      - name: Fabriquer le DMG (glisser-déposer vers Applications)
+        run: |
+          mkdir -p dmg_stage
+          cp -R "dist/PodAdmin.app" dmg_stage/ 2>/dev/null || cp -R "dist/PodAdmin" dmg_stage/
+          ln -s /Applications dmg_stage/Applications
+          hdiutil create -volname "PodAdmin" -srcfolder dmg_stage \
+            -ov -format UDZO "dist/PodAdmin.dmg"
+
+      - name: Publier le DMG macOS
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAdmin-macOS-DMG
+          path: dist/PodAdmin.dmg
 
   # ──────────────────── Release GitHub (si tag v*) ─────────────────────
   release:
@@ -91,9 +172,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v4
-      - name: Créer la release et joindre les binaires
+      - name: Créer la release et joindre tous les livrables
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            PodAdmin-Windows/PodAdmin.exe
-            PodAdmin-macOS/PodAdmin-macOS.zip
+            PodAdmin-Windows-Setup/PodAdmin-Setup.exe
+            PodAdmin-Windows-portable/PodAdmin.exe
+            PodAdmin-macOS-DMG/PodAdmin.dmg
+            PodAdmin-macOS-zip/PodAdmin-macOS.zip

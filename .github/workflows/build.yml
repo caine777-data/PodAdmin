@@ -35,12 +35,10 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      # Génère une icône .ico carrée à partir du logo PNG (pour l'exe et l'installeur).
-      # Si le logo est absent ou illisible, on continue sans icône (non bloquant).
-      - name: Générer l'icône Windows
-        continue-on-error: true
-        run: |
-          python -c "from PIL import Image; im=Image.open('assets/logo_ut.png').convert('RGBA'); s=max(im.size); bg=Image.new('RGBA',(s,s),(0,0,0,0)); bg.paste(im,((s-im.size[0])//2,(s-im.size[1])//2)); bg.save('assets/podadmin.ico', sizes=[(256,256),(64,64),(48,48),(32,32),(16,16)])"
+      # L'icône de l'application est fournie dans assets/icon.ico (dessin original).
+      # On la copie sous le nom attendu par l'étape de compilation.
+      - name: Préparer l'icône Windows
+        run: copy assets\icon.ico assets\podadmin.ico
 
       - name: Compiler PodAdmin.exe (portable)
         run: |
@@ -128,11 +126,24 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # Génère l'icône macOS (.icns) à partir du PNG master, via les outils
+      # Apple sips/iconutil (présents uniquement sur les runners macOS).
+      - name: Générer l'icône macOS (.icns)
+        run: |
+          mkdir -p icon.iconset
+          for s in 16 32 64 128 256 512; do
+            sips -z $s $s assets/icon_master.png --out "icon.iconset/icon_${s}x${s}.png"
+            d=$((s*2))
+            sips -z $d $d assets/icon_master.png --out "icon.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns icon.iconset -o assets/icon.icns
+
       - name: Compiler PodAdmin.app
         run: |
           # --onefile : build macOS leger (~20-30 Mo) au prix d'un avertissement
           # de depreciation PyInstaller (tolere aujourd'hui, bloquant en v7.0).
           pyinstaller --onefile --windowed --name "PodAdmin" \
+            --icon assets/icon.icns \
             --collect-all customtkinter \
             --collect-all keyring \
             --collect-all tkinterdnd2 \

@@ -116,6 +116,7 @@ class App(_AppBase):
         self.types: list[dict] = []
         self.type_map: dict[str, str] = {}     # titre → url
         self.site_urls: list[str] = []         # sites (requis à l'upload)
+        self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
         self.items: list[UploadItem] = []
         self.all_users: list[dict] = []        # liste complète Pod (pour sélection owner)
         self.additional_owner_urls: list[str] = []
@@ -943,6 +944,17 @@ class App(_AppBase):
                 self._ui(self._log, "⚠️ Aucun site retourné par /rest/sites/ — l'upload pourrait échouer.")
         except Exception as e:
             self._ui(self._log, f"Impossible de charger les sites : {e}")
+        # Groupes d'accès (pour la restriction de visibilité par groupe).
+        # La reconstruction sonde /accessgroups/<id>/ → on le fait en tâche de
+        # fond pour ne pas ralentir la connexion ; échec silencieux si absent.
+        try:
+            self.access_groups = self.api.get_access_groups()
+            if self.access_groups:
+                self._ui(self._log,
+                         f"{len(self.access_groups)} groupe(s) d'accès détecté(s).")
+        except Exception as e:
+            self.access_groups = []
+            self._ui(self._log, f"Groupes d'accès non chargés : {e}")
 
     def _load_all_users(self):
         """(Thread) Charge tous les comptes Pod (paginé) et rafraîchit les vues qui en dépendent."""
@@ -1747,7 +1759,48 @@ class App(_AppBase):
             self._browse_patch(v, payload, f"statut → {choice.lower()}")
         status_seg.configure(command=_apply_status)
 
-        # — Type (catégorie ; valeur unique) —
+        # — Restreindre à des groupes d'accès —
+        # Cocher au moins un groupe force le statut « Restreint » (couplage voulu).
+        # Tout décocher retire la restriction par groupe (et repasse en public).
+        ctk.CTkLabel(self.browse_detail, text="Restreindre à des groupes", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        if not self.access_groups:
+            ctk.CTkLabel(self.browse_detail,
+                         text="(aucun groupe d'accès chargé)",
+                         font=ctk.CTkFont(size=11), text_color="gray60").pack(anchor="w", padx=6)
+        else:
+            # URLs des groupes actuellement appliqués à la vidéo (normalisées)
+            cur = v.get("restrict_access_to_groups") or []
+            if isinstance(cur, str):
+                cur = [cur]
+            cur_urls = {str(g.get("url") if isinstance(g, dict) else g).rstrip("/")
+                        for g in cur}
+            grp_box = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+            grp_box.pack(fill="x", padx=4)
+            grp_vars = {}    # url → BooleanVar
+            for g in self.access_groups:
+                gurl = g.get("url", "")
+                var = ctk.BooleanVar(value=str(gurl).rstrip("/") in cur_urls)
+                grp_vars[gurl] = var
+                ctk.CTkCheckBox(grp_box, text=g.get("code_name", "?"), variable=var,
+                                font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
+
+            def _apply_groups():
+                # Liste des URLs cochées
+                urls = [u for u, var in grp_vars.items() if var.get()]
+                v["restrict_access_to_groups"] = urls
+                # Couplage statut : restreint si au moins un groupe, sinon public
+                v["is_restricted"] = bool(urls)
+                if urls:
+                    v["is_draft"] = False
+                    status_seg.set("Restreint")
+                self._browse_patch(
+                    v, {"restrict_access_to_groups": urls, "is_restricted": bool(urls)},
+                    f"groupes → {len(urls)} groupe(s)")
+            ctk.CTkButton(self.browse_detail, text="Appliquer les groupes", width=180,
+                          height=26, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
+
+
         ctk.CTkLabel(self.browse_detail, text="Type", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
         # Titre du type courant de la vidéo (résolu depuis son URL)
@@ -3349,6 +3402,8 @@ class App(_AppBase):
                           command=lambda c=ch: self._ct_manage_videos(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="👤 Admins", width=80, fg_color="gray35",
                           command=lambda c=ch: self._ct_manage_owners(c)).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🔒 Restreindre", width=100, fg_color="gray35",
+                          command=lambda c=ch: self._ct_manage_groups(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color="gray35",
                           command=lambda c=ch: self._ct_toggle_visible(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🗑", width=34, fg_color="#b91c1c", hover_color="#991b1b",
@@ -3710,6 +3765,99 @@ class App(_AppBase):
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
+
+    def _ct_manage_groups(self, ch):
+        """Ouvre une fenêtre pour restreindre TOUTES les vidéos d'une chaîne à
+        un ou plusieurs groupes d'accès (propagation). Une chaîne n'a pas de
+        champ de restriction propre : on applique donc la restriction à chacune
+        de ses vidéos (couplée à is_restricted)."""
+        if not self.api:
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        if not self.access_groups:
+            self.ct_status.configure(text="Aucun groupe d'accès chargé.", text_color="#f59e0b")
+            return
+        win = ctk.CTkToplevel(self)
+        win.title(f"Restreindre « {ch.get('title')} »")
+        win.geometry("440x460")
+        _focus_toplevel(win, self)
+
+        ctk.CTkLabel(win, text=f"Chaîne : {ch.get('title')}",
+                     font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 2), anchor="w")
+        ctk.CTkLabel(win, text="Cochez les groupes autorisés. La restriction sera appliquée\n"
+                               "à TOUTES les vidéos de la chaîne (statut « Restreint »).\n"
+                               "Sans groupe coché, les vidéos repassent en public.",
+                     text_color="gray70", font=ctk.CTkFont(size=11),
+                     justify="left").pack(padx=16, anchor="w")
+
+        holder = ctk.CTkScrollableFrame(win, height=260, label_text="Groupes d'accès")
+        holder.pack(fill="both", expand=True, padx=16, pady=10)
+        gvars = {}
+        for g in self.access_groups:
+            var = ctk.BooleanVar(value=False)
+            gvars[g.get("url", "")] = var
+            ctk.CTkCheckBox(holder, text=g.get("code_name", "?"), variable=var).pack(anchor="w", pady=2)
+
+        bar = ctk.CTkFrame(win, fg_color="transparent")
+        bar.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkButton(bar, text="Appliquer à la chaîne", fg_color="#16a34a",
+                      hover_color="#15803d",
+                      command=lambda: (
+                          win.destroy(),
+                          self._ct_apply_groups(ch, [u for u, v in gvars.items() if v.get()]))
+                      ).pack(side="left")
+        ctk.CTkButton(bar, text="Annuler", fg_color="gray35",
+                      command=win.destroy).pack(side="left", padx=8)
+
+    def _ct_apply_groups(self, ch, group_urls):
+        """Confirme puis propage la restriction (en arrière-plan)."""
+        n_groups = len(group_urls)
+        verb = (f"restreindre à {n_groups} groupe(s)" if n_groups
+                else "retirer toute restriction de groupe")
+        if not messagebox.askyesno(
+                "Restreindre la chaîne",
+                f"Appliquer « {verb} » à TOUTES les vidéos de « {ch.get('title')} » ?"):
+            return
+        self.ct_status.configure(text="⏳  Application en cours…", text_color="gray")
+        self._run(self._do_ct_apply_groups, ch, list(group_urls))
+
+    def _do_ct_apply_groups(self, ch, group_urls):
+        """(Thread) Applique la restriction par groupe à chaque vidéo de la chaîne."""
+        try:
+            if not self.ct_videos:
+                self.ct_videos = self.api.get_all_videos()
+            curl = str(ch.get("url", "")).rstrip("/")
+            # Vidéos appartenant à cette chaîne
+            def in_chan(v):
+                chans = v.get("channel") or []
+                if isinstance(chans, str):
+                    chans = [chans]
+                urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
+                        for c in chans]
+                return curl in urls
+            vids = [v for v in self.ct_videos if in_chan(v)]
+            ok = fail = 0
+            for i, v in enumerate(vids, 1):
+                try:
+                    self.api.set_video_groups(v, group_urls)
+                    v["restrict_access_to_groups"] = list(group_urls)
+                    v["is_restricted"] = bool(group_urls)
+                    ok += 1
+                except Exception as e:
+                    fail += 1
+                    self._ui(self._log, f"❌ {v.get('slug')} : {e}")
+                self._ui(self.ct_status.configure,
+                         text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+            msg = (f"✅  « {ch.get('title')} » : {ok} vidéo(s) "
+                   f"{'restreinte(s)' if group_urls else 'rendue(s) publiques'}.")
+            self._ui(self.ct_status.configure,
+                     text=msg, text_color="#22c55e" if not fail else "#f59e0b")
+            self._ui(self._log,
+                     f"Restriction chaîne « {ch.get('title')} » : {ok} OK, {fail} échec(s), "
+                     f"{len(group_urls)} groupe(s).")
+        except Exception as e:
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Restriction chaîne : {e}")
 
     def _ct_toggle_visible(self, ch):
         # Inverse la visibilité de la chaîne

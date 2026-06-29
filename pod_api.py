@@ -352,6 +352,50 @@ class PodAPI:
     def set_video_restricted(self, video, value: bool) -> dict:
         return self.patch_video(video, {"is_restricted": bool(value)})
 
+    def get_access_groups(self, max_id: int = 60) -> list[dict]:
+        """Récupère les groupes d'accès AVEC leur URL adressable.
+
+        Particularité de l'API Pod : la liste /accessgroups/ n'expose ni `id`
+        ni `url` (seulement code_name/display_name). Or le champ
+        `restrict_access_to_groups` d'une vidéo attend une URL par id
+        (/rest/accessgroups/<id>/). On reconstruit donc la correspondance en
+        sondant les routes de détail numériques /accessgroups/<n>/ : chacune qui
+        répond donne {code_name, url}. On renvoie une liste de dicts
+        {code_name, display_name, url} triée par nom.
+        """
+        groups = []
+        for n in range(1, max_id + 1):
+            url = f"{self.rest}/accessgroups/{n}/"
+            try:
+                r = self.session.get(url, headers={"Accept": "application/json"},
+                                     timeout=15, verify=self.verify_ssl)
+            except Exception:
+                continue
+            if r.status_code != 200:
+                continue
+            try:
+                g = r.json()
+            except ValueError:
+                continue
+            if isinstance(g, dict) and g.get("code_name"):
+                groups.append({
+                    "code_name": g.get("code_name"),
+                    "display_name": g.get("display_name") or g.get("code_name"),
+                    "url": url,
+                })
+        groups.sort(key=lambda x: (x.get("code_name") or "").lower())
+        return groups
+
+    def set_video_groups(self, video, group_urls: list[str]) -> dict:
+        """Restreint une vidéo à une liste de groupes d'accès (URLs
+        /accessgroups/<id>/). Couple le statut : `is_restricted` passe à True
+        s'il y a au moins un groupe, à False si la liste est vide."""
+        urls = list(group_urls)
+        return self.patch_video(video, {
+            "restrict_access_to_groups": urls,
+            "is_restricted": bool(urls),
+        })
+
     def assign_video_to_channels(self, video, channel_urls: list[str],
                                  theme_urls: Optional[list[str]] = None) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""

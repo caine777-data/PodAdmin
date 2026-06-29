@@ -382,6 +382,8 @@ class PodAPI:
                     "code_name": g.get("code_name"),
                     "display_name": g.get("display_name") or g.get("code_name"),
                     "url": url,
+                    "users": g.get("users") or [],     # membres (URLs /owners/)
+                    "sites": g.get("sites") or [],
                 })
         groups.sort(key=lambda x: (x.get("code_name") or "").lower())
         return groups

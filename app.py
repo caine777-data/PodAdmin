@@ -199,6 +199,7 @@ class App(_AppBase):
             ("🗂   Explorateur",   "clean"),
             ("📊   Inventaire",    "stats"),
             ("🗂   Chaînes",       "ct"),
+            ("🔐   Groupes d'accès", "groups"),
             ("👥   Co-auteurs",    "coauthors"),
             ("⚙️   Configuration", "config"),
             ("📋   Journal",       "log"),
@@ -227,6 +228,7 @@ class App(_AppBase):
         self._build_tab_clean()
         self._build_tab_stats()
         self._build_tab_ct()
+        self._build_tab_groups()
         self._build_tab_coauthors()
         self._build_tab_config()
         self._build_tab_log()
@@ -238,6 +240,9 @@ class App(_AppBase):
         self.tabs[key].pack(fill="both", expand=True)
         for k, b in self.nav_btns.items():
             b.configure(fg_color=("gray75", "gray24") if k == key else "transparent")
+        # Chargement paresseux à la première ouverture de l'onglet Groupes
+        if key == "groups":
+            self._show_groups_tab_hook()
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET TÉLÉVERSEMENT
@@ -756,6 +761,239 @@ class App(_AppBase):
             self._ui(self._log, f"Contributeur ajouté : {name} ({role})")
         except Exception as e:
             self._ui(self.ca_msg.configure, text=f"❌  {e}", text_color="#ef4444")
+
+    # ═════════════════════════════════════════════════════════════════════
+    #  ONGLET GROUPES D'ACCÈS
+    # ═════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _is_manual_group(g: dict) -> bool:
+        """Un groupe est « manuel » (modifiable) s'il commence par 'grp_'.
+        Les autres (student, staff, employee…) sont synchronisés par l'annuaire
+        SSO et ne doivent pas être modifiés via l'API (risque d'écrasement)."""
+        return str(g.get("code_name", "")).lower().startswith("grp_")
+
+    def _build_tab_groups(self):
+        """Onglet de gestion des groupes d'accès : lister, créer, gérer les
+        membres et supprimer. Seuls les groupes manuels (préfixe 'grp_') sont
+        modifiables ; les groupes SSO sont affichés en lecture seule."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["groups"] = frame
+
+        ctk.CTkLabel(frame, text="🔐  Groupes d'accès",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            frame,
+            text="Gérez les groupes qui peuvent accéder aux vidéos restreintes. "
+                 "Seuls les groupes manuels (préfixe « grp_ ») sont modifiables ici ; "
+                 "les groupes synchronisés par l'annuaire (student, staff…) sont en "
+                 "lecture seule pour éviter qu'ils soient écrasés à la synchro.",
+            text_color="gray70", font=ctk.CTkFont(size=12),
+            justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
+
+        # — Barre d'actions —
+        bar = ctk.CTkFrame(frame, fg_color="transparent")
+        bar.pack(fill="x")
+        ctk.CTkButton(bar, text="🔄  Recharger", width=130, fg_color="#2563eb",
+                      hover_color="#1d4ed8", command=self._groups_reload).pack(side="left")
+        ctk.CTkButton(bar, text="➕  Nouveau groupe manuel", width=200, fg_color="gray35",
+                      command=self._groups_create_dialog).pack(side="left", padx=8)
+        self.groups_status = ctk.CTkLabel(bar, text="", text_color="gray",
+                                          font=ctk.CTkFont(size=11))
+        self.groups_status.pack(side="left", padx=10)
+
+        # — Liste des groupes —
+        self.groups_list = ctk.CTkScrollableFrame(frame, label_text="Groupes d'accès")
+        self.groups_list.pack(fill="both", expand=True, pady=(8, 0))
+
+        self.groups_owners_map = {}   # url compte → url owner (chargé à la demande)
+
+    def _show_groups_tab_hook(self):
+        """Charge les groupes la première fois qu'on ouvre l'onglet."""
+        if self.api and not self.access_groups:
+            self._groups_reload()
+
+    def _groups_reload(self):
+        """Recharge la liste des groupes d'accès (avec leurs URLs) en arrière-plan."""
+        if not self.api:
+            self.groups_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        self.groups_status.configure(text="⏳  Chargement…", text_color="gray")
+        self._run(self._do_groups_reload)
+
+    def _do_groups_reload(self):
+        """(Thread) Recharge groupes + table owners, puis réaffiche la liste."""
+        try:
+            self.access_groups = self.api.get_access_groups()
+            # Table compte→owner (pour convertir lors de l'ajout de membres)
+            self.groups_owners_map = self.api.get_owners_map()
+            self._ui(self.groups_status.configure,
+                     text=f"{len(self.access_groups)} groupe(s).", text_color="gray")
+            self._ui(self._render_groups_list)
+        except Exception as e:
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+
+    def _render_groups_list(self):
+        """Affiche une ligne par groupe (manuel = modifiable, SSO = verrouillé)."""
+        for w in self.groups_list.winfo_children():
+            w.destroy()
+        if not self.access_groups:
+            ctk.CTkLabel(self.groups_list, text="Aucun groupe. Cliquez sur « Recharger ».",
+                         text_color="gray").pack(anchor="w", padx=8, pady=8)
+            return
+        for g in self.access_groups:
+            manual = self._is_manual_group(g)
+            n_members = len(g.get("users") or [])
+            row = ctk.CTkFrame(self.groups_list,
+                               fg_color=("gray90", "gray17") if manual else ("gray85", "gray14"),
+                               corner_radius=6)
+            row.pack(fill="x", pady=2)
+            tag = "✏️ manuel" if manual else "🔒 annuaire"
+            ctk.CTkLabel(row, text=f"{g.get('code_name')}   ({n_members} membre·s)  ·  {tag}",
+                         anchor="w", font=ctk.CTkFont(size=12)).pack(
+                side="left", padx=10, pady=8, fill="x", expand=True)
+            if manual:
+                ctk.CTkButton(row, text="👥 Membres", width=90, fg_color="gray35",
+                              command=lambda gg=g: self._groups_manage_members(gg)
+                              ).pack(side="right", padx=4)
+                ctk.CTkButton(row, text="🗑", width=36, fg_color="#b91c1c",
+                              hover_color="#991b1b",
+                              command=lambda gg=g: self._groups_delete(gg)).pack(side="right", padx=4)
+            else:
+                ctk.CTkLabel(row, text="lecture seule", text_color="gray60",
+                             font=ctk.CTkFont(size=11)).pack(side="right", padx=12)
+
+    # — Création d'un groupe manuel —
+    def _groups_create_dialog(self):
+        if not self.api:
+            self.groups_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        if not self.site_urls:
+            self.groups_status.configure(
+                text="Aucun site chargé (requis pour créer un groupe).", text_color="#f59e0b")
+            return
+        win = ctk.CTkToplevel(self)
+        win.title("Nouveau groupe manuel")
+        win.geometry("420x230")
+        _focus_toplevel(win, self)
+        ctk.CTkLabel(win, text="Créer un groupe d'accès manuel",
+                     font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 6), anchor="w")
+        ctk.CTkLabel(win, text="Nom du groupe (le préfixe « grp_ » est ajouté\n"
+                               "automatiquement s'il manque) :",
+                     font=ctk.CTkFont(size=11), text_color="gray70",
+                     justify="left").pack(padx=16, anchor="w")
+        name_entry = ctk.CTkEntry(win, width=360, placeholder_text="ex. eformation  →  grp_eformation")
+        name_entry.pack(padx=16, pady=8)
+        msg = ctk.CTkLabel(win, text="", font=ctk.CTkFont(size=11), text_color="#ef4444")
+        msg.pack(padx=16, anchor="w")
+
+        def _do_create():
+            raw = name_entry.get().strip()
+            if not raw:
+                msg.configure(text="Indiquez un nom."); return
+            code = raw if raw.lower().startswith("grp_") else f"grp_{raw}"
+            # Refuser les doublons
+            if any(g.get("code_name") == code for g in self.access_groups):
+                msg.configure(text=f"« {code} » existe déjà."); return
+            win.destroy()
+            self.groups_status.configure(text=f"⏳  Création de {code}…", text_color="gray")
+            self._run(self._do_groups_create, code)
+
+        ctk.CTkButton(win, text="Créer", fg_color="#16a34a", hover_color="#15803d",
+                      command=_do_create).pack(padx=16, pady=10, anchor="w")
+
+    def _do_groups_create(self, code):
+        """(Thread) Crée le groupe puis recharge la liste."""
+        try:
+            self.api.create_access_group(code, self.site_urls, display_name=code)
+            self._ui(self.groups_status.configure,
+                     text=f"✅  Groupe « {code} » créé.", text_color="#22c55e")
+            self._ui(self._log, f"Groupe d'accès créé : {code}")
+            self._do_groups_reload()
+        except Exception as e:
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Création groupe {code} : {e}")
+
+    # — Suppression d'un groupe manuel —
+    def _groups_delete(self, g):
+        code = g.get("code_name")
+        if not messagebox.askyesno(
+                "Supprimer le groupe",
+                f"Supprimer définitivement le groupe « {code} » ?\n\n"
+                "Les vidéos restreintes à ce groupe perdront cette restriction."):
+            return
+        self._run(self._do_groups_delete, g)
+
+    def _do_groups_delete(self, g):
+        """(Thread) DELETE du groupe puis rechargement."""
+        try:
+            self.api.delete_access_group(g.get("url"))
+            self._ui(self.groups_status.configure,
+                     text=f"✅  Groupe « {g.get('code_name')} » supprimé.", text_color="#22c55e")
+            self._ui(self._log, f"Groupe d'accès supprimé : {g.get('code_name')}")
+            self._do_groups_reload()
+        except Exception as e:
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Suppression groupe : {e}")
+
+    # — Gestion des membres d'un groupe manuel —
+    def _groups_manage_members(self, g):
+        """Ouvre un sélecteur de comptes pré-coché sur les membres actuels.
+        À la validation, convertit les comptes choisis en URLs /owners/ et
+        remplace la liste des membres du groupe."""
+        if not self.all_users:
+            self.groups_status.configure(text="⏳  Chargement des comptes…", text_color="gray")
+            self._run(lambda: (self._reload_users_for_admin(),
+                               self._ui(lambda: self._groups_open_member_picker(g))))
+            return
+        self._groups_open_member_picker(g)
+
+    def _groups_open_member_picker(self, g):
+        # Pré-sélection : convertir les membres actuels (URLs /owners/) en URLs
+        # de comptes /users/ pour les retrouver dans le sélecteur de comptes.
+        owner_to_user = {str(ov).rstrip("/"): uu
+                         for uu, ov in self.groups_owners_map.items()}
+        cur_owner_urls = [str(x.get("url") if isinstance(x, dict) else x).rstrip("/")
+                          for x in (g.get("users") or [])]
+        label_by_url = {str(u.get("url", "")).rstrip("/"): self._user_label(u)
+                        for u in (self.all_users or [])}
+        pre = {}
+        for ourl in cur_owner_urls:
+            uurl = owner_to_user.get(ourl)
+            if uurl:
+                pre[uurl] = label_by_url.get(str(uurl).rstrip("/"), uurl)
+        OwnerPicker(self,
+                    on_done=lambda urls, labels: self._groups_apply_members(g, urls),
+                    title=f"Membres de « {g.get('code_name')} »",
+                    preselected=pre)
+
+    def _groups_apply_members(self, g, user_urls):
+        """Convertit les comptes choisis en URLs /owners/ puis applique."""
+        owner_urls = []
+        missing = []
+        for uurl in user_urls:
+            ourl = self.groups_owners_map.get(str(uurl).rstrip("/"))
+            if ourl:
+                owner_urls.append(ourl)
+            else:
+                missing.append(uurl)
+        if missing:
+            self._log(f"⚠️ {len(missing)} compte(s) sans owner correspondant (ignoré·s).")
+        self._run(self._do_groups_apply_members, g, owner_urls)
+
+    def _do_groups_apply_members(self, g, owner_urls):
+        """(Thread) PATCH des membres du groupe puis rechargement."""
+        try:
+            self.api.set_access_group_members(g.get("url"), owner_urls)
+            self._ui(self.groups_status.configure,
+                     text=f"✅  « {g.get('code_name')} » : {len(owner_urls)} membre·s.",
+                     text_color="#22c55e")
+            self._ui(self._log,
+                     f"Groupe « {g.get('code_name')} » : {len(owner_urls)} membre·s définis.")
+            self._do_groups_reload()
+        except Exception as e:
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Membres groupe « {g.get('code_name')} » : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET CONFIGURATION

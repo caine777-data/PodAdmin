@@ -396,6 +396,79 @@ class PodAPI:
             "is_restricted": bool(urls),
         })
 
+    # — Gestion complète des groupes d'accès (création / membres / suppression) —
+
+    def get_owners_map(self, max_pages: int = 80) -> dict:
+        """Table de correspondance URL de compte (/users/<id>/) → URL d'owner
+        (/owners/<id>/). Les groupes d'accès référencent leurs membres par des
+        URLs /owners/, alors que partout ailleurs on manipule des /users/.
+        Cette table permet de convertir un compte choisi par l'utilisateur en
+        l'URL /owners/ attendue par le champ `users` d'un groupe."""
+        mapping, url, params, pages = {}, f"{self.rest}/owners/", {"limit": 100}, 0
+        while url and pages < max_pages:
+            r = self.session.get(url, params=(params if pages == 0 else None),
+                                 headers={"Accept": "application/json"},
+                                 timeout=30, verify=self.verify_ssl)
+            d = self._json(r)
+            items = d.get("results", []) if isinstance(d, dict) else (d or [])
+            for o in items:
+                user_url = o.get("user")
+                if user_url:
+                    mapping[str(user_url).rstrip("/")] = o.get("url")
+            url = d.get("next") if isinstance(d, dict) else None
+            pages += 1
+        return mapping
+
+    def get_access_group(self, code_name: str, max_id: int = 80) -> Optional[dict]:
+        """Récupère un groupe d'accès complet (avec son URL adressable) par son
+        code_name, en sondant les routes de détail /accessgroups/<id>/."""
+        for n in range(1, max_id + 1):
+            url = f"{self.rest}/accessgroups/{n}/"
+            try:
+                r = self.session.get(url, headers={"Accept": "application/json"},
+                                     timeout=15, verify=self.verify_ssl)
+            except Exception:
+                continue
+            if r.status_code != 200:
+                continue
+            try:
+                g = r.json()
+            except ValueError:
+                continue
+            if isinstance(g, dict) and g.get("code_name") == code_name:
+                g["url"] = url
+                return g
+        return None
+
+    def create_access_group(self, code_name: str, site_urls: list[str],
+                            display_name: str = "",
+                            owner_urls: Optional[list[str]] = None) -> dict:
+        """Crée un groupe d'accès (POST). `code_name` et `sites` sont requis ;
+        `users` (au format /owners/) peuvent être fournis dès la création."""
+        body = {
+            "code_name": code_name,
+            "display_name": display_name or code_name,
+            "sites": list(site_urls),
+        }
+        if owner_urls:
+            body["users"] = list(owner_urls)
+        r = self.session.post(f"{self.rest}/accessgroups/", json=body,
+                              headers={"Accept": "application/json"},
+                              timeout=30, verify=self.verify_ssl)
+        return self._json(r)
+
+    def set_access_group_members(self, group_url: str, owner_urls: list[str]) -> dict:
+        """Remplace la liste des membres d'un groupe (PATCH du champ `users`,
+        au format /owners/<id>/)."""
+        r = self.session.patch(group_url, json={"users": list(owner_urls)},
+                               headers={"Accept": "application/json"},
+                               timeout=30, verify=self.verify_ssl)
+        return self._json(r)
+
+    def delete_access_group(self, group_url: str) -> bool:
+        """⚠️ Supprime définitivement un groupe d'accès (DELETE)."""
+        return self._delete(group_url)
+
     def assign_video_to_channels(self, video, channel_urls: list[str],
                                  theme_urls: Optional[list[str]] = None) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""

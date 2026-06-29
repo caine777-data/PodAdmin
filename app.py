@@ -950,18 +950,27 @@ class App(_AppBase):
 
     def _groups_open_member_picker(self, g):
         # Pré-sélection : convertir les membres actuels (URLs /owners/) en URLs
-        # de comptes /users/ pour les retrouver dans le sélecteur de comptes.
-        owner_to_user = {str(ov).rstrip("/"): uu
-                         for uu, ov in self.groups_owners_map.items()}
+        # de comptes /users/ pour les retrouver dans le sélecteur.
+        # IMPORTANT : OwnerPicker compare les URLs *brutes* (avec slash final),
+        # donc les clés de `pre` doivent être l'URL brute du compte, pas sa
+        # version normalisée — sinon rien n'apparaît coché.
+        owner_to_norm_user = {str(ov).rstrip("/"): str(uu).rstrip("/")
+                              for uu, ov in self.groups_owners_map.items()}
+        # URL brute + libellé indexés par URL de compte normalisée
+        raw_by_norm = {str(u.get("url", "")).rstrip("/"): u.get("url", "")
+                       for u in (self.all_users or [])}
+        label_by_norm = {str(u.get("url", "")).rstrip("/"): self._user_label(u)
+                         for u in (self.all_users or [])}
         cur_owner_urls = [str(x.get("url") if isinstance(x, dict) else x).rstrip("/")
                           for x in (g.get("users") or [])]
-        label_by_url = {str(u.get("url", "")).rstrip("/"): self._user_label(u)
-                        for u in (self.all_users or [])}
         pre = {}
         for ourl in cur_owner_urls:
-            uurl = owner_to_user.get(ourl)
-            if uurl:
-                pre[uurl] = label_by_url.get(str(uurl).rstrip("/"), uurl)
+            unorm = owner_to_norm_user.get(ourl)
+            if not unorm:
+                continue
+            raw = raw_by_norm.get(unorm)
+            if raw:                                   # clé = URL brute (avec slash)
+                pre[raw] = label_by_norm.get(unorm, raw)
         OwnerPicker(self,
                     on_done=lambda urls, labels: self._groups_apply_members(g, urls),
                     title=f"Membres de « {g.get('code_name')} »",
@@ -4005,16 +4014,53 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
 
     def _ct_manage_groups(self, ch):
-        """Ouvre une fenêtre pour restreindre TOUTES les vidéos d'une chaîne à
-        un ou plusieurs groupes d'accès (propagation). Une chaîne n'a pas de
-        champ de restriction propre : on applique donc la restriction à chacune
-        de ses vidéos (couplée à is_restricted)."""
+        """Restreint toutes les vidéos d'une chaîne à des groupes d'accès.
+        Charge d'abord les vidéos (en arrière-plan) pour pré-cocher les groupes
+        déjà appliqués, puis ouvre la fenêtre de sélection."""
         if not self.api:
             self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
         if not self.access_groups:
             self.ct_status.configure(text="Aucun groupe d'accès chargé.", text_color="#f59e0b")
             return
+        self.ct_status.configure(text="⏳  Lecture des restrictions…", text_color="gray")
+        self._run(self._do_ct_prepare_groups, ch)
+
+    def _do_ct_prepare_groups(self, ch):
+        """(Thread) Calcule les groupes COMMUNS à toutes les vidéos de la chaîne
+        (= la restriction uniforme actuelle), puis ouvre la fenêtre."""
+        try:
+            if not self.ct_videos:
+                self.ct_videos = self.api.get_all_videos()
+            curl = str(ch.get("url", "")).rstrip("/")
+
+            def in_chan(v):
+                chans = v.get("channel") or []
+                if isinstance(chans, str):
+                    chans = [chans]
+                urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
+                        for c in chans]
+                return curl in urls
+
+            vids = [v for v in self.ct_videos if in_chan(v)]
+            # Groupes communs à TOUTES les vidéos (intersection) = restriction
+            # uniforme en vigueur ; sert de pré-cochage.
+            common = None
+            for v in vids:
+                gs = set(str(x.get("url") if isinstance(x, dict) else x).rstrip("/")
+                         for x in (v.get("restrict_access_to_groups") or []))
+                common = gs if common is None else (common & gs)
+            common = common or set()
+            self._ui(self.ct_status.configure,
+                     text=f"{len(vids)} vidéo(s) dans la chaîne.", text_color="gray")
+            self._ui(lambda: self._ct_groups_dialog(ch, common))
+        except Exception as e:
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Lecture restrictions chaîne : {e}")
+
+    def _ct_groups_dialog(self, ch, current_norm):
+        """Fenêtre de sélection des groupes, pré-cochée sur `current_norm`
+        (URLs normalisées des groupes déjà appliqués à toute la chaîne)."""
         win = ctk.CTkToplevel(self)
         win.title(f"Restreindre « {ch.get('title')} »")
         win.geometry("440x460")
@@ -4032,8 +4078,10 @@ class App(_AppBase):
         holder.pack(fill="both", expand=True, padx=16, pady=10)
         gvars = {}
         for g in self.access_groups:
-            var = ctk.BooleanVar(value=False)
-            gvars[g.get("url", "")] = var
+            gurl = g.get("url", "")
+            # Pré-coché si déjà appliqué uniformément à la chaîne
+            var = ctk.BooleanVar(value=str(gurl).rstrip("/") in current_norm)
+            gvars[gurl] = var
             ctk.CTkCheckBox(holder, text=g.get("code_name", "?"), variable=var).pack(anchor="w", pady=2)
 
         bar = ctk.CTkFrame(win, fg_color="transparent")

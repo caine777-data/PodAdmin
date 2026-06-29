@@ -195,7 +195,7 @@ class App(_AppBase):
             ("👤   Comptes",       "comptes"),
             ("🎞️   Vidéos",        "browse"),
             ("🔄   Réaffectation", "reassign"),
-            ("🧹   Nettoyage",     "clean"),
+            ("🗂   Explorateur",   "clean"),
             ("📊   Inventaire",    "stats"),
             ("🗂   Chaînes",       "ct"),
             ("👥   Co-auteurs",    "coauthors"),
@@ -1720,24 +1720,32 @@ class App(_AppBase):
         # bonne valeur même si la réponse réseau tarde.
         ctk.CTkLabel(self.browse_detail, text="Statut", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(10, 2))
-        sw = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
-        sw.pack(fill="x", padx=4)
-        draft_var = ctk.BooleanVar(value=bool(v.get("is_draft")))
-        def _toggle_draft():
-            val = draft_var.get()
-            v["is_draft"] = val          # mise à jour locale immédiate
-            self._browse_patch(v, {"is_draft": val},
-                               f"statut → {'brouillon' if val else 'public'}")
-        ctk.CTkSwitch(sw, text="Brouillon (sinon public)", variable=draft_var,
-                      command=_toggle_draft).pack(side="left", padx=(0, 16))
-        restr_var = ctk.BooleanVar(value=bool(v.get("is_restricted")))
-        def _toggle_restr():
-            val = restr_var.get()
-            v["is_restricted"] = val     # mise à jour locale immédiate
-            self._browse_patch(v, {"is_restricted": val},
-                               f"accès → {'restreint (connexion requise)' if val else 'public'}")
-        ctk.CTkSwitch(sw, text="Connexion requise", variable=restr_var,
-                      command=_toggle_restr).pack(side="left")
+        # Les trois statuts sont EXCLUSIFS (et non des cases indépendantes) :
+        #   Brouillon  = is_draft True
+        #   Public     = is_draft False ET is_restricted False
+        #   Restreint  = is_draft False ET is_restricted True
+        # Un bouton segmenté garantit qu'on ne peut en choisir qu'un, et chaque
+        # choix envoie les DEUX booléens cohérents d'un coup (corrige le bug où
+        # l'ancien statut restait actif).
+        def _status_of(vid):
+            if vid.get("is_draft"):
+                return "Brouillon"
+            return "Restreint" if vid.get("is_restricted") else "Public"
+        status_seg = ctk.CTkSegmentedButton(
+            self.browse_detail, values=["Brouillon", "Public", "Restreint"])
+        status_seg.set(_status_of(v))
+        status_seg.pack(fill="x", padx=4, pady=(0, 2))
+        ctk.CTkLabel(self.browse_detail,
+                     text="Restreint = visible mais connexion requise.",
+                     font=ctk.CTkFont(size=10), text_color="gray60").pack(anchor="w", padx=6)
+        def _apply_status(choice):
+            # Calcule les deux booléens à partir du statut choisi
+            payload = {"Brouillon": {"is_draft": True},
+                       "Public":    {"is_draft": False, "is_restricted": False},
+                       "Restreint": {"is_draft": False, "is_restricted": True}}[choice]
+            v.update(payload)                       # MAJ cache local immédiate
+            self._browse_patch(v, payload, f"statut → {choice.lower()}")
+        status_seg.configure(command=_apply_status)
 
         # — Type (catégorie ; valeur unique) —
         ctk.CTkLabel(self.browse_detail, text="Type", anchor="w",
@@ -2423,13 +2431,14 @@ class App(_AppBase):
     #  SUPPRIMER). La suppression demande une DOUBLE confirmation.
     #  Par sécurité, les cases sont DÉCOCHÉES par défaut (opt-in explicite).
 
-    # Libellé d'action (menu) → code interne utilisé par _do_clean_apply
+    # Libellé d'action (menu) → (genre, payload) utilisé par _do_clean_apply.
+    # Les statuts envoient les DEUX booléens cohérents (même logique que le
+    # détail vidéo) pour éviter qu'un ancien statut reste actif.
     _CLEAN_ACTIONS = {
-        "Mettre en brouillon":          "draft_on",
-        "Publier (retirer brouillon)":  "draft_off",
-        "Restreindre l'accès":          "restrict_on",
-        "Lever la restriction":         "restrict_off",
-        "🗑  Supprimer définitivement": "delete",
+        "Mettre en brouillon":          ("patch", {"is_draft": True}),
+        "Rendre public":                ("patch", {"is_draft": False, "is_restricted": False}),
+        "Rendre restreint":             ("patch", {"is_draft": False, "is_restricted": True}),
+        "🗑  Supprimer définitivement": ("delete", None),
     }
 
     def _build_tab_clean(self):
@@ -2437,13 +2446,13 @@ class App(_AppBase):
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["clean"] = frame
 
-        ctk.CTkLabel(frame, text="🧹  Nettoyage / Modération",
+        ctk.CTkLabel(frame, text="🗂  Explorateur",
                      font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
         ctk.CTkLabel(
             frame,
-            text="Scannez l'instance, isolez une catégorie de vidéos (jamais encodées, "
-                 "brouillons, doublons…), cochez celles à traiter, puis appliquez une action. "
-                 "La suppression est définitive et demande une double confirmation.",
+            text="Scannez l'instance, filtrez finement les vidéos (statut, encodage, "
+                 "type, propriétaire, chaîne, dates…), cochez celles à traiter, puis "
+                 "appliquez une action en masse. La suppression est définitive.",
             text_color="gray70", font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
@@ -2456,31 +2465,68 @@ class App(_AppBase):
                                            font=ctk.CTkFont(size=11))
         self.clean_scan_lbl.pack(side="left", padx=10)
 
-        # — Ligne 2 : critères de détection —
-        crit = ctk.CTkFrame(frame, fg_color="transparent")
-        crit.pack(fill="x", pady=(8, 2))
-        ctk.CTkLabel(crit, text="Catégorie :").pack(side="left", padx=(0, 4))
-        # Menu déroulant des catégories ; tout changement relance le filtrage
-        self.clean_category = ctk.CTkOptionMenu(
-            crit, width=190,
-            values=["Toutes", "Jamais encodées", "Brouillons",
-                    "Vieux brouillons", "Doublons de titre"],
-            command=lambda _choice: self._apply_clean_filter())
-        self.clean_category.set("Toutes")
-        self.clean_category.pack(side="left")
-        # Ancienneté (en mois) utilisée par la catégorie « Vieux brouillons »
-        ctk.CTkLabel(crit, text="  brouillons > ").pack(side="left")
-        self.clean_months = ctk.CTkEntry(crit, width=46)
-        self.clean_months.insert(0, "6")
-        self.clean_months.pack(side="left")
-        self.clean_months.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
-        ctk.CTkLabel(crit, text="mois").pack(side="left", padx=(2, 10))
-        # Filtre texte libre (titre / slug / propriétaire)
-        ctk.CTkLabel(crit, text="Filtre :").pack(side="left", padx=(0, 4))
-        self.clean_text = ctk.CTkEntry(crit, width=200,
-                                       placeholder_text="🔍 titre / slug / propriétaire…")
+        # — Ligne 2 : recherche texte —
+        f_txt = ctk.CTkFrame(frame, fg_color="transparent")
+        f_txt.pack(fill="x", pady=(8, 2))
+        self.clean_text = ctk.CTkEntry(
+            f_txt, placeholder_text="🔍 titre / slug / propriétaire…")
         self.clean_text.pack(side="left", fill="x", expand=True)
         self.clean_text.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
+
+        # — Ligne 3 : filtres déroulants (statut, encodage, type) —
+        f1 = ctk.CTkFrame(frame, fg_color="transparent")
+        f1.pack(fill="x", pady=2)
+        self.clean_statut = ctk.CTkOptionMenu(
+            f1, width=150, values=["Tous statuts", "Brouillon", "Public", "Restreint"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_statut.set("Tous statuts"); self.clean_statut.pack(side="left", padx=(0, 6))
+        self.clean_encode = ctk.CTkOptionMenu(
+            f1, width=160, values=["Tout encodage", "Encodées", "En cours", "Non encodées"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_encode.set("Tout encodage"); self.clean_encode.pack(side="left", padx=6)
+        self.clean_type = ctk.CTkOptionMenu(
+            f1, width=160, values=["Tous types"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_type.set("Tous types"); self.clean_type.pack(side="left", padx=6)
+
+        # — Ligne 4 : filtres déroulants (propriétaire, chaîne, détection spéciale) —
+        f2 = ctk.CTkFrame(frame, fg_color="transparent")
+        f2.pack(fill="x", pady=2)
+        self.clean_owner = ctk.CTkOptionMenu(
+            f2, width=200, values=["Tous propriétaires"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_owner.set("Tous propriétaires"); self.clean_owner.pack(side="left", padx=(0, 6))
+        self.clean_chan = ctk.CTkOptionMenu(
+            f2, width=180, values=["Toutes chaînes"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_chan.set("Toutes chaînes"); self.clean_chan.pack(side="left", padx=6)
+        self.clean_category = ctk.CTkOptionMenu(
+            f2, width=180,
+            values=["Aucune détection", "Doublons de titre", "Vieux brouillons"],
+            command=lambda _c: self._apply_clean_filter())
+        self.clean_category.set("Aucune détection"); self.clean_category.pack(side="left", padx=6)
+        ctk.CTkLabel(f2, text=">").pack(side="left")
+        self.clean_months = ctk.CTkEntry(f2, width=40)
+        self.clean_months.insert(0, "6")
+        self.clean_months.pack(side="left", padx=(2, 2))
+        self.clean_months.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
+        ctk.CTkLabel(f2, text="mois").pack(side="left")
+
+        # — Ligne 5 : plage de dates (sur la date d'ajout AAAA-MM-JJ) —
+        f3 = ctk.CTkFrame(frame, fg_color="transparent")
+        f3.pack(fill="x", pady=2)
+        ctk.CTkLabel(f3, text="Ajoutées entre", font=ctk.CTkFont(size=11),
+                     text_color="gray70").pack(side="left", padx=(0, 4))
+        self.clean_date_from = ctk.CTkEntry(f3, width=110, placeholder_text="AAAA-MM-JJ")
+        self.clean_date_from.pack(side="left")
+        self.clean_date_from.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
+        ctk.CTkLabel(f3, text="et", font=ctk.CTkFont(size=11),
+                     text_color="gray70").pack(side="left", padx=4)
+        self.clean_date_to = ctk.CTkEntry(f3, width=110, placeholder_text="AAAA-MM-JJ")
+        self.clean_date_to.pack(side="left")
+        self.clean_date_to.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
+        ctk.CTkButton(f3, text="Réinitialiser les filtres", width=170, height=26,
+                      fg_color="gray35", command=self._clean_reset_filters).pack(side="left", padx=12)
 
         # Compteur de la sélection courante
         self.clean_count_lbl = ctk.CTkLabel(frame, text="", text_color="gray",
@@ -2488,19 +2534,19 @@ class App(_AppBase):
         self.clean_count_lbl.pack(anchor="w", pady=(6, 2))
 
         # — Liste des vidéos (cases à cocher) —
-        self.clean_results = ctk.CTkScrollableFrame(frame, label_text="Vidéos détectées")
+        self.clean_results = ctk.CTkScrollableFrame(frame, label_text="Vidéos")
         self.clean_results.pack(fill="both", expand=True, pady=(0, 4))
 
         # — Ligne d'action en masse —
         act = ctk.CTkFrame(frame, fg_color="transparent")
         act.pack(fill="x", pady=(4, 0))
-        ctk.CTkLabel(act, text="Action :").pack(side="left", padx=(0, 4))
+        ctk.CTkLabel(act, text="Action sur les vidéos cochées :").pack(side="left", padx=(0, 4))
         self.clean_action = ctk.CTkOptionMenu(act, width=230,
                                               values=list(self._CLEAN_ACTIONS.keys()))
         self.clean_action.set("Mettre en brouillon")
         self.clean_action.pack(side="left")
         self.clean_apply_btn = ctk.CTkButton(
-            act, text="▶  Appliquer l'action", fg_color="#16a34a", hover_color="#15803d",
+            act, text="▶  Appliquer", fg_color="#16a34a", hover_color="#15803d",
             command=self._clean_apply)
         self.clean_apply_btn.pack(side="left", padx=10)
         self.clean_progress = ctk.CTkLabel(act, text="", text_color="gray",
@@ -2512,6 +2558,55 @@ class App(_AppBase):
         self.clean_filtered = []   # sous-ensemble affiché après filtrage
         self.clean_rowvars = {}    # slug → BooleanVar (cochée = à traiter)
         self.clean_rowlbls = {}    # slug → label de statut ✔/✗
+        self.clean_owner_map = {}  # libellé → identifiant propriétaire
+        self.clean_chan_map = {}   # titre chaîne → URL
+
+    def _clean_reset_filters(self):
+        """Remet tous les filtres de l'Explorateur à leur valeur par défaut."""
+        self.clean_text.delete(0, "end")
+        self.clean_statut.set("Tous statuts")
+        self.clean_encode.set("Tout encodage")
+        self.clean_type.set("Tous types")
+        self.clean_owner.set("Tous propriétaires")
+        self.clean_chan.set("Toutes chaînes")
+        self.clean_category.set("Aucune détection")
+        self.clean_date_from.delete(0, "end")
+        self.clean_date_to.delete(0, "end")
+        self._apply_clean_filter()
+
+    def _clean_populate_filters(self):
+        """Remplit les menus type / propriétaire / chaîne à partir du scan."""
+        # Types (depuis la table déjà chargée à la connexion)
+        types = sorted((self.type_map or {}).keys(), key=str.lower)
+        self.clean_type.configure(values=["Tous types"] + types)
+        # Propriétaires présents dans le scan (libellé lisible → identifiant)
+        owner_map = {}
+        for v in self.clean_videos:
+            oid = str(self._video_owner_id(v))
+            if not oid:
+                continue
+            # libellé : on tente un compte connu, sinon l'identifiant brut
+            label = oid
+            for u in (self.all_users or []):
+                if str(u.get("url", "")).rstrip("/") == oid.rstrip("/"):
+                    label = self._user_label(u); break
+            owner_map[label] = oid
+        self.clean_owner_map = owner_map
+        self.clean_owner.configure(
+            values=["Tous propriétaires"] + sorted(owner_map.keys(), key=str.lower))
+        # Chaînes présentes dans le scan (titre → URL)
+        chan_map = {}
+        for v in self.clean_videos:
+            chans = v.get("channel") or []
+            if isinstance(chans, str):
+                chans = [chans]
+            for c in chans:
+                curl = str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
+                title = self.browse_chan_by_url.get(curl) or curl
+                chan_map[title] = curl
+        self.clean_chan_map = chan_map
+        self.clean_chan.configure(
+            values=["Toutes chaînes"] + sorted(chan_map.keys(), key=str.lower))
 
     # ── Scan de l'instance (lecture seule) ─────────────────────────────────
 
@@ -2533,6 +2628,7 @@ class App(_AppBase):
             self.clean_videos = vids
             self._ui(self.clean_scan_lbl.configure,
                      text=f"✅  {len(vids)} vidéos chargées.", text_color="#22c55e")
+            self._ui(self._clean_populate_filters)
             self._ui(self._apply_clean_filter)
             self._ui(self._log, f"Scan nettoyage : {len(vids)} vidéos.")
         except Exception as e:
@@ -2572,7 +2668,8 @@ class App(_AppBase):
         return dups
 
     def _apply_clean_filter(self, *_):
-        """Construit self.clean_filtered selon la catégorie + le filtre texte."""
+        """Construit self.clean_filtered en appliquant TOUS les filtres en cascade
+        (texte, statut, encodage, type, propriétaire, chaîne, détection, dates)."""
         # Pas encore scanné
         if not self.clean_videos:
             self.clean_count_lbl.configure(
@@ -2582,28 +2679,81 @@ class App(_AppBase):
             self.clean_filtered = []
             return
 
-        cat = self.clean_category.get()
         vids = self.clean_videos
 
-        # Filtre par catégorie de détection
-        if cat == "Jamais encodées":
-            vids = [v for v in vids if PodAPI.is_unencoded(v)]
-        elif cat == "Brouillons":
-            vids = [v for v in vids if v.get("is_draft")]
-        elif cat == "Vieux brouillons":
-            cutoff = self._months_ago_iso(self._clean_months_value())
-            vids = [v for v in vids if PodAPI.is_stale_draft(v, cutoff)]
-        elif cat == "Doublons de titre":
-            vids = self._duplicate_title_videos(vids)
-        # "Toutes" → aucun filtre de catégorie
-
-        # Filtre texte (titre / slug / propriétaire)
+        # 1) Texte (titre / slug / propriétaire)
         txt = self.clean_text.get().strip().lower()
         if txt:
             def hay(v):
                 return (f"{v.get('title','')} {v.get('slug','')} "
                         f"{self._video_owner_id(v)}").lower()
             vids = [v for v in vids if txt in hay(v)]
+
+        # 2) Statut (exclusif : brouillon / public / restreint)
+        st = self.clean_statut.get()
+        if st == "Brouillon":
+            vids = [v for v in vids if v.get("is_draft")]
+        elif st == "Public":
+            vids = [v for v in vids if not v.get("is_draft") and not v.get("is_restricted")]
+        elif st == "Restreint":
+            vids = [v for v in vids if not v.get("is_draft") and v.get("is_restricted")]
+
+        # 3) Encodage
+        en = self.clean_encode.get()
+        en_map = {"Encodées": "ok", "En cours": "running", "Non encodées": "failed"}
+        if en in en_map:
+            if en == "Non encodées":
+                # « non encodées » = pas encore encodées (échec ou jamais lancé),
+                # on s'appuie sur l'helper dédié pour couvrir les deux cas.
+                vids = [v for v in vids if PodAPI.is_unencoded(v)]
+            else:
+                vids = [v for v in vids if self._encode_state(v) == en_map[en]]
+
+        # 4) Type (valeur unique : URL)
+        ty = self.clean_type.get()
+        if ty and ty != "Tous types":
+            turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
+            def has_type(v):
+                vt = v.get("type")
+                vt = vt.get("url") if isinstance(vt, dict) else vt
+                return str(vt).rstrip("/") == turl
+            vids = [v for v in vids if has_type(v)]
+
+        # 5) Propriétaire
+        ow = self.clean_owner.get()
+        if ow and ow != "Tous propriétaires":
+            oid = str(self.clean_owner_map.get(ow, "")).rstrip("/")
+            vids = [v for v in vids
+                    if str(self._video_owner_id(v)).rstrip("/") == oid]
+
+        # 6) Chaîne
+        ch = self.clean_chan.get()
+        if ch and ch != "Toutes chaînes":
+            curl = str(self.clean_chan_map.get(ch, "")).rstrip("/")
+            def in_chan(v):
+                chans = v.get("channel") or []
+                if isinstance(chans, str):
+                    chans = [chans]
+                urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
+                        for c in chans]
+                return curl in urls
+            vids = [v for v in vids if in_chan(v)]
+
+        # 7) Détection spéciale (doublons / vieux brouillons)
+        cat = self.clean_category.get()
+        if cat == "Doublons de titre":
+            vids = self._duplicate_title_videos(vids)
+        elif cat == "Vieux brouillons":
+            cutoff = self._months_ago_iso(self._clean_months_value())
+            vids = [v for v in vids if PodAPI.is_stale_draft(v, cutoff)]
+
+        # 8) Plage de dates (sur date_added, format AAAA-MM-JJ)
+        d_from = self.clean_date_from.get().strip()
+        d_to = self.clean_date_to.get().strip()
+        if d_from:
+            vids = [v for v in vids if str(v.get("date_added", ""))[:10] >= d_from]
+        if d_to:
+            vids = [v for v in vids if str(v.get("date_added", ""))[:10] <= d_to]
 
         self.clean_filtered = vids
         self._render_clean_list()
@@ -2617,9 +2767,8 @@ class App(_AppBase):
         self.clean_rowvars = {}
         self.clean_rowlbls = {}
 
-        cat = self.clean_category.get()
         self.clean_count_lbl.configure(
-            text=f"{len(self.clean_filtered)} vidéo(s) — catégorie « {cat} ». "
+            text=f"{len(self.clean_filtered)} vidéo(s) après filtrage. "
                  f"Cochez celles à traiter.")
 
         if not self.clean_filtered:
@@ -2676,7 +2825,7 @@ class App(_AppBase):
             self.clean_progress.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
         label = self.clean_action.get()
-        action = self._CLEAN_ACTIONS.get(label)
+        kind, payload = self._CLEAN_ACTIONS.get(label, ("patch", {}))
         # Vidéos cochées
         todo = [v for v in self.clean_filtered
                 if self.clean_rowvars.get(v.get("slug"))
@@ -2686,7 +2835,7 @@ class App(_AppBase):
             return
 
         # Confirmation — renforcée pour la suppression définitive
-        if action == "delete":
+        if kind == "delete":
             if not messagebox.askyesno(
                     "⚠️  Suppression définitive",
                     f"Supprimer DÉFINITIVEMENT {len(todo)} vidéo(s) ?\n\n"
@@ -2705,28 +2854,23 @@ class App(_AppBase):
 
         # Désactiver le bouton pendant le traitement
         self.clean_apply_btn.configure(state="disabled")
-        self._run(self._do_clean_apply, action, todo)
+        self._run(self._do_clean_apply, kind, payload, todo)
 
-    def _do_clean_apply(self, action, todo):
-        """(Thread) Applique l'action choisie à chaque vidéo cochée."""
+    def _do_clean_apply(self, kind, payload, todo):
+        """(Thread) Applique l'action choisie à chaque vidéo cochée.
+        kind = 'patch' (statut, payload = booléens cohérents) ou 'delete'."""
         ok = fail = 0
         for i, v in enumerate(todo, 1):
             slug = v.get("slug", "")
             try:
-                # Aiguillage selon l'action ; on met aussi à jour le cache local
-                if action == "draft_on":
-                    self.api.set_video_draft(v, True);        v["is_draft"] = True
-                elif action == "draft_off":
-                    self.api.set_video_draft(v, False);       v["is_draft"] = False
-                elif action == "restrict_on":
-                    self.api.set_video_restricted(v, True);   v["is_restricted"] = True
-                elif action == "restrict_off":
-                    self.api.set_video_restricted(v, False);  v["is_restricted"] = False
-                elif action == "delete":
+                if kind == "delete":
                     self.api.delete_video(v)
-                    # Retirer du cache pour que les filtres suivants soient cohérents
                     if v in self.clean_videos:
                         self.clean_videos.remove(v)
+                else:
+                    # Statut : PATCH des deux booléens d'un coup (cohérent)
+                    self.api.patch_video(v, payload)
+                    v.update(payload)            # MAJ cache local
                 ok += 1
                 self._ui(self._mark_clean_row, slug, True)
             except Exception as e:
@@ -2741,7 +2885,7 @@ class App(_AppBase):
                  text=f"Terminé : {ok} OK, {fail} échec(s).",
                  text_color="#22c55e" if not fail else "#f59e0b")
         self._ui(self._log,
-                 f"Nettoyage « {self.clean_action.get()} » : {ok} OK, {fail} échec(s).")
+                 f"Explorateur « {self.clean_action.get()} » : {ok} OK, {fail} échec(s).")
         self._ui(self.clean_apply_btn.configure, state="normal")
 
     def _mark_clean_row(self, slug, success: bool):

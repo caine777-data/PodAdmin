@@ -203,6 +203,7 @@ class App(_AppBase):
             ("👥   Co-auteurs",    "coauthors"),
             ("⚙️   Configuration", "config"),
             ("📋   Journal",       "log"),
+            ("ℹ️   À propos",      "about"),
         ]:
             b = ctk.CTkButton(self.sidebar, text=label, anchor="w", height=40,
                               fg_color="transparent", text_color=("gray10", "gray90"),
@@ -232,6 +233,7 @@ class App(_AppBase):
         self._build_tab_coauthors()
         self._build_tab_config()
         self._build_tab_log()
+        self._build_tab_about()
 
     def _show_tab(self, key: str):
         """Affiche l'onglet `key` et met en surbrillance son bouton de navigation."""
@@ -1999,7 +2001,7 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=10), text_color="gray60").pack(anchor="w", padx=6)
         def _apply_status(choice):
             # Calcule les deux booléens à partir du statut choisi
-            payload = {"Brouillon": {"is_draft": True},
+            payload = {"Brouillon": {"is_draft": True, "is_restricted": False},
                        "Public":    {"is_draft": False, "is_restricted": False},
                        "Restreint": {"is_draft": False, "is_restricted": True}}[choice]
             v.update(payload)                       # MAJ cache local immédiate
@@ -2735,7 +2737,7 @@ class App(_AppBase):
     # Les statuts envoient les DEUX booléens cohérents (même logique que le
     # détail vidéo) pour éviter qu'un ancien statut reste actif.
     _CLEAN_ACTIONS = {
-        "Mettre en brouillon":          ("patch", {"is_draft": True}),
+        "Mettre en brouillon":          ("patch", {"is_draft": True, "is_restricted": False}),
         "Rendre public":                ("patch", {"is_draft": False, "is_restricted": False}),
         "Rendre restreint":             ("patch", {"is_draft": False, "is_restricted": True}),
         "🗑  Supprimer définitivement": ("delete", None),
@@ -3853,7 +3855,14 @@ class App(_AppBase):
 
         to_add = desired - current        # à rattacher à la chaîne
         to_remove = current - desired     # à détacher de la chaîne
-        ok = fail = 0
+        ok = fail = theme_cleaned = 0
+
+        # URLs des thèmes appartenant à CETTE chaîne (pour purge à la cohérence) :
+        # retirer une vidéo de la chaîne doit aussi la retirer des thèmes de
+        # cette chaîne, sinon elle resterait dans un thème orphelin (incohérent).
+        chan_theme_urls = {str(t.get("url")).rstrip("/")
+                           for t in self.ct_themes
+                           if str(t.get("channel")).rstrip("/") == curl_n}
 
         for slug in (to_add | to_remove):
             v = by_slug.get(slug)
@@ -3864,26 +3873,42 @@ class App(_AppBase):
                 chans = [chans]
             chans = [str(c) for c in chans]
             chans_n = [c.rstrip("/") for c in chans]
+            theme_urls = None     # None = ne pas toucher au champ theme
+
             if slug in to_add and curl_n not in chans_n:
                 chans.append(curl)                                     # ajout de cette chaîne
             if slug in to_remove:
-                chans = [c for c in chans if c.rstrip("/") != curl_n]  # retrait
+                chans = [c for c in chans if c.rstrip("/") != curl_n]  # retrait de la chaîne
+                # COHÉRENCE : purger les thèmes de cette chaîne sur la vidéo
+                themes = v.get("theme") or []
+                if isinstance(themes, str):
+                    themes = [themes]
+                themes = [str(t.get("url") if isinstance(t, dict) else t) for t in themes]
+                kept = [t for t in themes if t.rstrip("/") not in chan_theme_urls]
+                if len(kept) != len(themes):
+                    theme_urls = kept            # on devra patcher le champ theme
+                    theme_cleaned += 1
             try:
-                # PATCH du champ channel (liste complète d'URLs) — préserve les autres
-                self.api.assign_video_to_channels(v, chans)
+                # PATCH channel (+ theme si purge nécessaire) — préserve le reste
+                self.api.assign_video_to_channels(v, chans, theme_urls=theme_urls)
                 v["channel"] = chans                                   # MAJ cache local
+                if theme_urls is not None:
+                    v["theme"] = theme_urls
                 ok += 1
             except Exception as e:
                 fail += 1
                 self._ui(self._log, f"❌ {slug} : {e}")
 
+        msg = (f"✅  Chaîne « {ch.get('title')} » : "
+               f"+{len(to_add)} / -{len(to_remove)} vidéo(s).")
+        if theme_cleaned:
+            msg += f"  ({theme_cleaned} retirée(s) aussi des thèmes pour cohérence.)"
         self._ui(self.ct_status.configure,
-                 text=f"✅  Chaîne « {ch.get('title')} » : "
-                      f"+{len(to_add)} / -{len(to_remove)} vidéo(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
+                 text=msg, text_color="#22c55e" if not fail else "#f59e0b")
         self._ui(self._log,
                  f"Chaîne « {ch.get('title')} » : {len(to_add)} ajout(s), "
-                 f"{len(to_remove)} retrait(s), {fail} échec(s).")
+                 f"{len(to_remove)} retrait(s), {theme_cleaned} purgé(s) des thèmes, "
+                 f"{fail} échec(s).")
 
     def _ct_apply_theme_videos(self, ch, theme, selected_slugs):
         """Callback du sélecteur de thème : applique les changements en arrière-plan."""
@@ -4202,6 +4227,64 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET JOURNAL
     # ═════════════════════════════════════════════════════════════════════
+
+    def _build_tab_about(self):
+        """Onglet « À propos » : informations sur l'application, sa version,
+        ses auteurs et le contact support (aligné sur Pod Téléverseur)."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["about"] = frame
+
+        # Carte centrale
+        card = ctk.CTkFrame(frame, fg_color=("gray92", "gray16"), corner_radius=12)
+        card.pack(padx=20, pady=20, fill="x")
+
+        # Logo (repli texte si absent), sur bandeau blanc
+        try:
+            logo_path = resource_path(os.path.join("assets", "logo_ut.png"))
+            if os.path.exists(logo_path):
+                from PIL import Image
+                img = Image.open(logo_path)
+                ratio = img.width / img.height if img.height else 3
+                ctkimg = ctk.CTkImage(light_image=img, dark_image=img,
+                                      size=(int(64 * ratio), 64))
+                band = ctk.CTkFrame(card, fg_color="white", corner_radius=8)
+                band.pack(pady=(20, 10))
+                ctk.CTkLabel(band, image=ctkimg, text="").pack(padx=16, pady=8)
+        except Exception:
+            pass
+
+        ctk.CTkLabel(card, text="PodAdmin",
+                     font=ctk.CTkFont(size=26, weight="bold")).pack(pady=(6, 0))
+        ctk.CTkLabel(card, text=f"Version {__version__}",
+                     font=ctk.CTkFont(size=13), text_color="gray60").pack(pady=(0, 10))
+        ctk.CTkLabel(
+            card,
+            text="Console d'administration pour l'instance Esup-Pod de\n"
+                 "l'Université de Toulouse (videos.utoulouse.fr).\n"
+                 "Téléversement, modération, chaînes, thèmes, groupes d'accès.",
+            font=ctk.CTkFont(size=12), text_color=("gray30", "gray75"),
+            justify="center").pack(pady=(0, 14))
+
+        # Séparateur
+        ctk.CTkFrame(card, height=1, fg_color="gray40").pack(fill="x", padx=40, pady=4)
+
+        # Auteurs
+        ctk.CTkLabel(card, text="Développé par",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(12, 2))
+        for nom in ("Cédric MONNA", "Philippe BAQUÉ", "Michel JACOB"):
+            ctk.CTkLabel(card, text=nom, font=ctk.CTkFont(size=12),
+                         text_color=("gray20", "gray85")).pack()
+
+        # Contact + institution
+        ctk.CTkLabel(card, text="Université de Toulouse",
+                     font=ctk.CTkFont(size=12), text_color="gray60").pack(pady=(12, 0))
+        ctk.CTkLabel(card, text="support-pod@utoulouse.fr",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=("#1d4ed8", "#60a5fa")).pack(pady=(0, 14))
+
+        ctk.CTkLabel(card, text="Usage interne — non redistribuable",
+                     font=ctk.CTkFont(size=10, slant="italic"),
+                     text_color="gray50").pack(pady=(0, 18))
 
     def _build_tab_log(self):
         """Construit l'onglet Journal (zone de texte horodatée + bouton Effacer)."""

@@ -2312,6 +2312,7 @@ class App(_AppBase):
         try:
             self.api.patch_video(v, payload)
             v.update(payload)               # met à jour le cache local
+            self._sync_video_caches(v.get("slug"), payload)   # … et les autres onglets
             self._ui(self._log, f"✏ {slug} : {msg}")
             self._ui(self._browse_set_msg, f"✅  {msg}", "#22c55e")
             self._ui(self._browse_render_detail)
@@ -2320,6 +2321,23 @@ class App(_AppBase):
             self._ui(self._log, f"❌ {slug} : {e}")
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
             self._ui(self._browse_render_detail)
+
+    def _sync_video_caches(self, slug, payload=None, removed=False):
+        """Propage une modification de vidéo à TOUS les caches d'onglets
+        (Vidéos, Explorateur, Chaînes), pour éviter qu'un onglet affiche un
+        état périmé après une modif faite ailleurs. Identifie la vidéo par slug.
+        - payload : dict de champs à appliquer (mise à jour) ;
+        - removed : True si la vidéo a été supprimée (on la retire des caches)."""
+        for name in ("browse_videos", "clean_videos", "ct_videos"):
+            cache = getattr(self, name, None)
+            if not cache:
+                continue
+            if removed:
+                cache[:] = [vv for vv in cache if vv.get("slug") != slug]
+            elif payload:
+                for vv in cache:
+                    if vv.get("slug") == slug:
+                        vv.update(payload)
 
     def _browse_set_msg(self, text, color):
         if hasattr(self, "browse_msg") and self.browse_msg.winfo_exists():
@@ -3177,10 +3195,12 @@ class App(_AppBase):
                     self.api.delete_video(v)
                     if v in self.clean_videos:
                         self.clean_videos.remove(v)
+                    self._sync_video_caches(slug, removed=True)
                 else:
                     # Statut : PATCH des deux booléens d'un coup (cohérent)
                     self.api.patch_video(v, payload)
                     v.update(payload)            # MAJ cache local
+                    self._sync_video_caches(slug, payload)
                 ok += 1
                 self._ui(self._mark_clean_row, slug, True)
             except Exception as e:
@@ -3900,8 +3920,11 @@ class App(_AppBase):
                 # PATCH channel (+ theme si purge nécessaire) — préserve le reste
                 self.api.assign_video_to_channels(v, chans, theme_urls=theme_urls)
                 v["channel"] = chans                                   # MAJ cache local
+                sync_payload = {"channel": chans}
                 if theme_urls is not None:
                     v["theme"] = theme_urls
+                    sync_payload["theme"] = theme_urls
+                self._sync_video_caches(slug, sync_payload)
                 ok += 1
             except Exception as e:
                 fail += 1
@@ -3982,6 +4005,7 @@ class App(_AppBase):
             try:
                 self.api.patch_video(v, payload)              # PATCH theme (+ channel si forcé)
                 v.update(payload)                             # MAJ cache local
+                self._sync_video_caches(slug, payload)
                 ok += 1
             except Exception as e:
                 fail += 1
@@ -4161,8 +4185,12 @@ class App(_AppBase):
                     self.api.set_video_groups(v, group_urls)
                     v["restrict_access_to_groups"] = list(group_urls)
                     v["is_restricted"] = bool(group_urls)
+                    sync_payload = {"restrict_access_to_groups": list(group_urls),
+                                    "is_restricted": bool(group_urls)}
                     if group_urls:
                         v["is_draft"] = False     # cohérent avec set_video_groups
+                        sync_payload["is_draft"] = False
+                    self._sync_video_caches(v.get("slug"), sync_payload)
                     ok += 1
                 except Exception as e:
                     fail += 1

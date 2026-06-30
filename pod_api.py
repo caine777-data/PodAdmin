@@ -390,13 +390,21 @@ class PodAPI:
 
     def set_video_groups(self, video, group_urls: list[str]) -> dict:
         """Restreint une vidéo à une liste de groupes d'accès (URLs
-        /accessgroups/<id>/). Couple le statut : `is_restricted` passe à True
-        s'il y a au moins un groupe, à False si la liste est vide."""
+        /accessgroups/<id>/). Couple le statut de façon cohérente :
+        - au moins un groupe → is_restricted=True ET is_draft=False
+          (sinon la vidéo resterait en brouillon, donc invisible malgré
+          la restriction) ;
+        - liste vide → is_restricted=False (la vidéo redevient publique).
+        Le brouillon n'est jamais re-forcé ici : retirer une restriction ne
+        remet pas une vidéo en brouillon."""
         urls = list(group_urls)
-        return self.patch_video(video, {
+        payload = {
             "restrict_access_to_groups": urls,
             "is_restricted": bool(urls),
-        })
+        }
+        if urls:
+            payload["is_draft"] = False     # publier : un brouillon resterait invisible
+        return self.patch_video(video, payload)
 
     # — Gestion complète des groupes d'accès (création / membres / suppression) —
 

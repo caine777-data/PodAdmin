@@ -189,6 +189,16 @@ class App(_AppBase):
 
         ctk.CTkFrame(self.sidebar, height=1, fg_color="gray30").pack(fill="x", padx=12, pady=4)
 
+        # Version épinglée en bas (hors zone défilante)
+        ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
+                     font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=8)
+
+        # Zone de navigation DÉFILANTE : sur petit écran, les onglets défilent
+        # au lieu de déborder hors de la fenêtre (le haut et le bas restent fixes).
+        nav_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent",
+                                            width=200)
+        nav_scroll.pack(side="top", fill="both", expand=True, padx=0, pady=0)
+
         self.nav_btns = {}
         for label, key in [
             ("📂   Téléversement", "upload"),
@@ -205,16 +215,14 @@ class App(_AppBase):
             ("📋   Journal",       "log"),
             ("ℹ️   À propos",      "about"),
         ]:
-            b = ctk.CTkButton(self.sidebar, text=label, anchor="w", height=40,
+            b = ctk.CTkButton(nav_scroll, text=label, anchor="w", height=40,
                               fg_color="transparent", text_color=("gray10", "gray90"),
                               hover_color=("gray75", "gray28"),
                               font=ctk.CTkFont(size=13),
                               command=lambda k=key: self._show_tab(k))
-            b.pack(fill="x", padx=6, pady=2)
+            b.pack(fill="x", padx=4, pady=2)
             self.nav_btns[key] = b
 
-        ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
-                     font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=10)
 
         # Zone principale
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
@@ -2040,12 +2048,12 @@ class App(_AppBase):
                 v["restrict_access_to_groups"] = urls
                 # Couplage statut : restreint si au moins un groupe, sinon public
                 v["is_restricted"] = bool(urls)
+                payload = {"restrict_access_to_groups": urls, "is_restricted": bool(urls)}
                 if urls:
                     v["is_draft"] = False
+                    payload["is_draft"] = False     # publier (sinon brouillon = invisible)
                     status_seg.set("Restreint")
-                self._browse_patch(
-                    v, {"restrict_access_to_groups": urls, "is_restricted": bool(urls)},
-                    f"groupes → {len(urls)} groupe(s)")
+                self._browse_patch(v, payload, f"groupes → {len(urls)} groupe(s)")
             ctk.CTkButton(self.browse_detail, text="Appliquer les groupes", width=180,
                           height=26, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
 
@@ -4153,6 +4161,8 @@ class App(_AppBase):
                     self.api.set_video_groups(v, group_urls)
                     v["restrict_access_to_groups"] = list(group_urls)
                     v["is_restricted"] = bool(group_urls)
+                    if group_urls:
+                        v["is_draft"] = False     # cohérent avec set_video_groups
                     ok += 1
                 except Exception as e:
                     fail += 1

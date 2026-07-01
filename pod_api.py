@@ -27,6 +27,7 @@ __license__     = "Usage interne — Université de Toulouse"
 
 
 import os
+import time
 import re
 import requests
 from typing import Callable, Optional
@@ -191,16 +192,25 @@ class PodAPI:
         additional_owner_urls: Optional[list[str]] = None,
         site_urls: Optional[list[str]] = None,
         progress_cb: Optional[Callable[[int, int], None]] = None,
+        max_retries: int = 3,
+        retry_cb: Optional[Callable[[int, int, str], None]] = None,
     ) -> dict:
         """
         Téléverse une vidéo. Renvoie le dict de la vidéo créée (avec 'slug', 'url').
         progress_cb(bytes_envoyés, bytes_total) est appelé pendant l'envoi.
         N'amorce PAS l'encodage (voir launch_encoding).
+
+        Robustesse : en cas de coupure réseau/SSL (fréquente sur les gros
+        fichiers), l'envoi est réessayé jusqu'à `max_retries` fois. À chaque
+        nouvelle tentative, l'encodeur et le fichier sont reconstruits (le flux
+        précédent est consommé). retry_cb(tentative, total, message) est appelé
+        avant chaque nouvel essai, pour informer l'interface.
         """
         if not os.path.isfile(file_path):
             raise PodAPIError(f"Fichier introuvable : {file_path}")
 
-        fields = [
+        # Champs communs (hors fichier) — reconstruits à chaque tentative
+        base_fields = [
             ("owner", owner_url),
             ("type", type_url),
             ("title", title[:250]),
@@ -209,40 +219,66 @@ class PodAPI:
             ("is_draft", "true" if is_draft else "false"),
         ]
         if description:
-            fields.append(("description", description))
+            base_fields.append(("description", description))
         for url in (additional_owner_urls or []):
-            fields.append(("additional_owners", url))
+            base_fields.append(("additional_owners", url))
         for url in (site_urls or []):
-            fields.append(("sites", url))
-
+            base_fields.append(("sites", url))
         filename = os.path.basename(file_path)
-        f = open(file_path, "rb")
-        try:
-            fields.append(("video", (filename, f, "application/octet-stream")))
 
-            if HAS_TOOLBELT:
-                encoder = MultipartEncoder(fields=fields)
-                total = encoder.len
+        def _one_attempt():
+            """Un seul essai d'envoi ; rouvre le fichier et reconstruit l'encodeur."""
+            f = open(file_path, "rb")
+            try:
+                fields = list(base_fields)
+                fields.append(("video", (filename, f, "application/octet-stream")))
+                if HAS_TOOLBELT:
+                    encoder = MultipartEncoder(fields=fields)
+                    total = encoder.len
 
-                def _cb(monitor):
-                    if progress_cb:
-                        progress_cb(monitor.bytes_read, total)
+                    def _cb(monitor):
+                        if progress_cb:
+                            progress_cb(monitor.bytes_read, total)
 
-                monitor = MultipartEncoderMonitor(encoder, _cb)
-                headers = {"Content-Type": monitor.content_type}
-                r = self.session.post(f"{self.rest}/videos/", data=monitor,
-                                     headers=headers, timeout=None,
-                                     verify=self.verify_ssl)
-            else:
-                # Repli sans streaming (charge en mémoire) si toolbelt absent
-                files = {"video": (filename, f, "application/octet-stream")}
-                data = {k: v for k, v in fields if k != "video"}
-                r = self.session.post(f"{self.rest}/videos/", data=data,
-                                     files=files, timeout=None,
-                                     verify=self.verify_ssl)
-            return self._json(r)
-        finally:
-            f.close()
+                    monitor = MultipartEncoderMonitor(encoder, _cb)
+                    headers = {"Content-Type": monitor.content_type}
+                    r = self.session.post(f"{self.rest}/videos/", data=monitor,
+                                         headers=headers, timeout=None,
+                                         verify=self.verify_ssl)
+                else:
+                    files = {"video": (filename, f, "application/octet-stream")}
+                    data = {k: v for k, v in fields if k != "video"}
+                    r = self.session.post(f"{self.rest}/videos/", data=data,
+                                         files=files, timeout=None,
+                                         verify=self.verify_ssl)
+                return self._json(r)
+            finally:
+                f.close()
+
+        # Erreurs réseau « transitoires » qui justifient un nouvel essai
+        transient = (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.SSLError,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.Timeout,
+        )
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                return _one_attempt()
+            except transient as e:
+                last_err = e
+                if attempt < max_retries:
+                    if retry_cb:
+                        retry_cb(attempt, max_retries, str(e)[:120])
+                    time.sleep(2 * attempt)     # petite pause croissante avant de réessayer
+                    continue
+                # Plus de tentatives : on remonte une erreur explicite
+                raise PodAPIError(
+                    f"Échec après {max_retries} tentatives (coupure réseau/SSL). "
+                    f"Dernière erreur : {e}", 0, str(e))
+        # Ne devrait pas être atteint
+        raise PodAPIError(f"Échec de l'envoi : {last_err}", 0, str(last_err))
 
     # ── 4. Lancer l'encodage ──────────────────────────────────────────────
 

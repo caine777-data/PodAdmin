@@ -120,6 +120,8 @@ class App(_AppBase):
         self.items: list[UploadItem] = []
         self.all_users: list[dict] = []        # liste complète Pod (pour sélection owner)
         self.additional_owner_urls: list[str] = []
+        self.upload_owner_url: str = ""        # propriétaire explicite du lot (obligatoire)
+        self.upload_owner_label: str = ""
         self.additional_owner_map: dict[str, str] = {}   # url → libellé (pour ré-ouverture)
         self.common_contributors: list[dict] = []
 
@@ -305,6 +307,17 @@ class App(_AppBase):
                         variable=self.encode_var).grid(row=2, column=0, columnspan=2,
                                                         padx=12, pady=(0, 6), sticky="w")
 
+        # Propriétaire des vidéos (OBLIGATOIRE — choix explicite avant l'envoi)
+        ctk.CTkLabel(common, text="Propriétaire :").grid(row=4, column=0, padx=(12, 4),
+                                                         pady=8, sticky="e")
+        ctk.CTkButton(common, text="🎯  Choisir le propriétaire…", width=200,
+                      command=self._upload_pick_owner).grid(row=4, column=1, padx=4,
+                                                            pady=8, sticky="w")
+        self.upload_owner_lbl = ctk.CTkLabel(
+            common, text="⚠️  à définir avant l'envoi", text_color="#f59e0b",
+            font=ctk.CTkFont(size=11, weight="bold"))
+        self.upload_owner_lbl.grid(row=4, column=2, columnspan=2, padx=12, pady=8, sticky="w")
+
         # Propriétaires additionnels communs
         ctk.CTkButton(common, text="👥  Propriétaires additionnels…", width=240,
                       fg_color="gray35", hover_color="gray28",
@@ -351,6 +364,15 @@ class App(_AppBase):
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._start_upload)
         self.launch_btn.pack(side="left")
+
+        # Relancer uniquement les vidéos en échec (sans re-sélectionner le lot).
+        # Masqué tant qu'il n'y a pas d'échec à relancer.
+        self.retry_btn = ctk.CTkButton(
+            launch, text="🔄  Relancer les échecs", height=40,
+            fg_color="#f59e0b", hover_color="#d97706",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._retry_failed)
+        # (pas de .pack ici : affiché seulement s'il y a des échecs)
 
         self.global_msg = ctk.CTkLabel(launch, text="", text_color="gray",
                                        font=ctk.CTkFont(size=12))
@@ -533,6 +555,28 @@ class App(_AppBase):
 
     # ── Lancement du téléversement ───────────────────────────────────────
 
+    def _upload_pick_owner(self):
+        """Ouvre le sélecteur de compte (mono) pour définir le propriétaire du
+        lot. L'agent est présélectionné (cas le plus fréquent), mais le choix
+        reste explicite et modifiable."""
+        if not self.api:
+            self.global_msg.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            return
+        # Présélection : l'agent déposant (compte du token), s'il est connu
+        agent_url = self.config_data.get("agent_owner_url", "")
+        agent_lbl = self.config_data.get("agent_owner_label", "")
+        pre = {agent_url: agent_lbl} if agent_url else None
+        OwnerPicker(self, on_done=lambda *a: None, single=True,
+                    on_single=self._upload_set_owner,
+                    title="Propriétaire des vidéos du lot", preselected=pre)
+
+    def _upload_set_owner(self, u: dict):
+        """Enregistre le propriétaire choisi pour le lot."""
+        self.upload_owner_url = u.get("url", "")
+        self.upload_owner_label = self._user_label(u)
+        self.upload_owner_lbl.configure(text=f"✅  {self.upload_owner_label}",
+                                        text_color="#22c55e")
+
     def _start_upload(self):
         """Vérifie les prérequis (connexion, agent, type) puis lance le lot en arrière-plan."""
         if not self.api:
@@ -542,11 +586,14 @@ class App(_AppBase):
         if not self.items:
             self.global_msg.configure(text="Aucune vidéo à téléverser.", text_color="#f59e0b")
             return
-        owner_url = self.config_data.get("agent_owner_url", "")
+        # Propriétaire : choix EXPLICITE obligatoire (plus de détection auto
+        # silencieuse, qui pouvait déposer sur le mauvais compte).
+        owner_url = getattr(self, "upload_owner_url", "")
         if not owner_url:
             self.global_msg.configure(
-                text="Identifiez l'agent déposant (onglet Configuration).", text_color="#f59e0b")
-            self._show_tab("config")
+                text="⚠️  Choisissez d'abord le propriétaire des vidéos.",
+                text_color="#f59e0b")
+            self._upload_pick_owner()      # ouvre le sélecteur (agent présélectionné)
             return
         type_title = self.type_combo.get()
         type_url = self.type_map.get(type_title, "")
@@ -582,6 +629,12 @@ class App(_AppBase):
                 self._ui(self.file_progress_lbl.configure,
                          text=f"{item.filename} — {sent/1024/1024:.0f} / {tot/1024/1024:.0f} Mo")
 
+            def on_retry(attempt, total_try, err, item=it):
+                self._ui(self._log,
+                         f"⟳ Nouvelle tentative {attempt}/{total_try} pour {item.title} "
+                         f"(coupure réseau)…")
+                self._ui(self._set_item_status, item, f"⟳ essai {attempt+1}", "#f59e0b")
+
             try:
                 video = self.api.upload_video(
                     it.path, it.title or it.filename, owner_url, type_url,
@@ -591,6 +644,7 @@ class App(_AppBase):
                     additional_owner_urls=self.additional_owner_urls,
                     site_urls=self.site_urls,
                     progress_cb=progress,
+                    retry_cb=on_retry,
                 )
                 it.slug = video.get("slug", "") if isinstance(video, dict) else ""
                 it.video_url = video.get("url", "") if isinstance(video, dict) else ""
@@ -635,6 +689,49 @@ class App(_AppBase):
         color = "#22c55e" if ok == total else "#f59e0b"
         self.global_msg.configure(text=f"Terminé : {ok}/{total} vidéo(s) téléversée(s).", text_color=color)
         self._log(f"Lot terminé : {ok}/{total} réussis.")
+        # Afficher le bouton « Relancer les échecs » s'il reste des échecs
+        self._update_retry_button()
+
+    def _update_retry_button(self):
+        """Affiche le bouton de relance uniquement s'il y a des vidéos en échec."""
+        n_fail = sum(1 for it in self.items if str(it.status).endswith("échec"))
+        if n_fail:
+            self.retry_btn.configure(text=f"🔄  Relancer les échecs ({n_fail})")
+            if not self.retry_btn.winfo_ismapped():
+                self.retry_btn.pack(side="left", padx=8)
+        else:
+            if self.retry_btn.winfo_ismapped():
+                self.retry_btn.pack_forget()
+
+    def _retry_failed(self):
+        """Relance le téléversement des seules vidéos en échec.
+        Le lot saute automatiquement les vidéos déjà « terminé », donc on peut
+        réutiliser le même parcours : on remet les échecs « en attente » et on
+        relance. Le propriétaire et le type déjà choisis sont réutilisés."""
+        if not self.api:
+            self.global_msg.configure(text="Non connecté.", text_color="#ef4444")
+            return
+        owner_url = getattr(self, "upload_owner_url", "")
+        if not owner_url:
+            self.global_msg.configure(
+                text="⚠️  Choisissez d'abord le propriétaire des vidéos.", text_color="#f59e0b")
+            self._upload_pick_owner()
+            return
+        type_url = self.type_map.get(self.type_combo.get(), "")
+        if not type_url:
+            self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
+            return
+        # Réinitialiser le statut des échecs pour qu'ils soient re-tentés
+        failed = [it for it in self.items if str(it.status).endswith("échec")]
+        if not failed:
+            self.global_msg.configure(text="Aucune vidéo en échec.", text_color="gray")
+            return
+        for it in failed:
+            self._set_item_status(it, "en attente", "gray")
+        self._log(f"Relance de {len(failed)} vidéo(s) en échec…")
+        self.launch_btn.configure(state="disabled")
+        self.retry_btn.pack_forget()
+        self._run(self._do_batch_upload, owner_url, type_url)
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET CO-AUTEURS (sur vidéos existantes)
@@ -1299,6 +1396,7 @@ class App(_AppBase):
         """Enregistre le compte choisi comme propriétaire par défaut des dépôts."""
         self.config_data["agent_username"] = user.get("username", "")
         self.config_data["agent_owner_url"] = user.get("url", "")
+        self.config_data["agent_owner_label"] = self._user_label(user)
         cfg.save_config(self.config_data)
         self.agent_lbl.configure(text=f"Dépôt au nom de :\n{user.get('username','')}")
         self.config_msg.configure(

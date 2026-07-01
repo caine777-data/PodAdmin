@@ -374,6 +374,65 @@ class PodAPI:
         Les relations (owner, channel…) sont des URLs ou des listes d'URLs."""
         return self._patch(self._video_endpoint(video), json=payload)
 
+    def replace_video_file(self, video, file_path: str, *,
+                           progress_cb: Optional[Callable[[int, int], None]] = None,
+                           retry_cb: Optional[Callable[[int, int, str], None]] = None,
+                           max_retries: int = 3) -> dict:
+        """Remplace le fichier source d'une vidéo EXISTANTE (champ `video`,
+        modifiable d'après l'OPTIONS) par PATCH multipart streamé. Garde le
+        slug, le titre, les chaînes, les droits… seul le média change.
+        Réutilise la même robustesse que l'upload : envoi streamé + ré-essais
+        sur coupure réseau/SSL (le fichier est ré-ouvert à chaque tentative).
+        N'amorce PAS l'encodage (appeler launch_encoding ensuite)."""
+        if not os.path.isfile(file_path):
+            raise PodAPIError(f"Fichier introuvable : {file_path}")
+        endpoint = self._video_endpoint(video)
+        target = endpoint if str(endpoint).startswith("http") else f"{self.rest}{endpoint}"
+        filename = os.path.basename(file_path)
+
+        def _one_attempt():
+            f = open(file_path, "rb")
+            try:
+                fields = [("video", (filename, f, "application/octet-stream"))]
+                if HAS_TOOLBELT:
+                    encoder = MultipartEncoder(fields=fields)
+                    total = encoder.len
+
+                    def _cb(monitor):
+                        if progress_cb:
+                            progress_cb(monitor.bytes_read, total)
+
+                    monitor = MultipartEncoderMonitor(encoder, _cb)
+                    headers = {"Content-Type": monitor.content_type}
+                    r = self.session.patch(target, data=monitor, headers=headers,
+                                           timeout=None, verify=self.verify_ssl)
+                else:
+                    files = {"video": (filename, f, "application/octet-stream")}
+                    r = self.session.patch(target, files=files,
+                                           timeout=None, verify=self.verify_ssl)
+                return self._json(r)
+            finally:
+                f.close()
+
+        transient = (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.SSLError,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.Timeout,
+        )
+        for attempt in range(1, max_retries + 1):
+            try:
+                return _one_attempt()
+            except transient as e:
+                if attempt < max_retries:
+                    if retry_cb:
+                        retry_cb(attempt, max_retries, str(e)[:120])
+                    time.sleep(2 * attempt)
+                    continue
+                raise PodAPIError(
+                    f"Échec après {max_retries} tentatives (coupure réseau/SSL). "
+                    f"Dernière erreur : {e}", 0, str(e))
+
     def set_video_owner(self, video, owner_url: str,
                         additional_owner_urls: Optional[list[str]] = None) -> dict:
         """Réaffecte le propriétaire (et, en option, les co-propriétaires)."""

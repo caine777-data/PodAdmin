@@ -2200,6 +2200,18 @@ class App(_AppBase):
         # Chargement des pistes de cette vidéo en arrière-plan
         self._run(self._sub_load, v)
 
+        # — Fichier source (remplacer + ré-encoder) —
+        ctk.CTkLabel(self.browse_detail, text="Fichier source", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(14, 2))
+        ctk.CTkLabel(self.browse_detail,
+                     text="Remplace le fichier vidéo par un nouveau puis relance l'encodage. "
+                          "La vidéo garde son titre, ses chaînes, ses droits… seul le média change.",
+                     text_color="gray70", font=ctk.CTkFont(size=11),
+                     justify="left", wraplength=360).pack(anchor="w", padx=4)
+        ctk.CTkButton(self.browse_detail, text="🎬  Remplacer le fichier & ré-encoder",
+                      fg_color="#b45309", hover_color="#92400e",
+                      command=lambda: self._browse_replace_source(v)).pack(anchor="w", padx=4, pady=(4, 0))
+
         # — Suppression —
         ctk.CTkLabel(self.browse_detail, text="Zone sensible", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold"),
@@ -2469,6 +2481,69 @@ class App(_AppBase):
     def _browse_apply_channels(self, v, urls):
         self._run(self._do_browse_patch, v, {"channel": list(urls)},
                   f"{len(urls)} chaîne(s)")
+
+    def _browse_replace_source(self, v):
+        """Remplace le fichier source d'une vidéo puis relance l'encodage.
+        Demande le fichier + double confirmation (opération destructive)."""
+        if not self.api:
+            self._browse_set_msg("Connectez-vous d'abord.", "#f59e0b")
+            return
+        path = filedialog.askopenfilename(
+            title="Choisir le nouveau fichier vidéo",
+            filetypes=[("Vidéos", "*.mp4 *.mov *.avi *.mkv *.webm *.m4v *.wmv *.flv"),
+                       ("Tous les fichiers", "*.*")])
+        if not path:
+            return
+        import os as _os
+        size_mo = _os.path.getsize(path) / 1024 / 1024
+        if not messagebox.askyesno(
+                "⚠️  Remplacer le fichier source",
+                f"Remplacer le fichier de « {v.get('title')} » par :\n"
+                f"{_os.path.basename(path)}  ({size_mo:.0f} Mo)\n\n"
+                "L'ancien fichier sera écrasé et la vidéo ré-encodée. "
+                "Le titre, les chaînes et les droits sont conservés.\n\n"
+                "Cette action ne peut pas être annulée. Continuer ?"):
+            return
+        self._browse_set_msg("⏳  Envoi du nouveau fichier…", "gray")
+        self._run(self._do_browse_replace_source, v, path)
+
+    def _do_browse_replace_source(self, v, path):
+        """(Thread) PATCH du nouveau fichier (streamé + retry) puis encodage."""
+        slug = v.get("slug", "")
+        import os as _os
+        fname = _os.path.basename(path)
+
+        def progress(sent, tot):
+            frac = sent / tot if tot else 0
+            self._ui(self._browse_set_msg,
+                     f"⏳  Envoi {fname} — {sent/1024/1024:.0f}/{tot/1024/1024:.0f} Mo", "gray")
+
+        def on_retry(attempt, total_try, err):
+            self._ui(self._log,
+                     f"⟳ Nouvelle tentative {attempt}/{total_try} (remplacement {slug})…")
+            self._ui(self._browse_set_msg,
+                     f"⟳  Coupure réseau — nouvelle tentative {attempt}…", "#f59e0b")
+
+        try:
+            self.api.replace_video_file(v, path, progress_cb=progress, retry_cb=on_retry)
+            self._ui(self._log, f"🎬 Fichier remplacé pour {slug} ({fname}).")
+            # Relancer l'encodage sur le nouveau fichier
+            try:
+                self.api.launch_encoding(slug)
+                v["encoded"] = False
+                v["encoding_in_progress"] = True
+                self._sync_video_caches(slug, {"encoded": False, "encoding_in_progress": True})
+                self._ui(self._log, f"⚙ Ré-encodage lancé pour {slug}.")
+                self._ui(self._browse_set_msg,
+                         "✅  Fichier remplacé, ré-encodage lancé.", "#22c55e")
+            except Exception as e:
+                self._ui(self._browse_set_msg,
+                         f"Fichier remplacé, mais encodage non lancé : {e}", "#f59e0b")
+                self._ui(self._log, f"❌ Encodage non lancé ({slug}) : {e}")
+            self._ui(self._browse_render_detail)
+        except Exception as e:
+            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._log, f"❌ Remplacement {slug} : {e}")
 
     def _browse_delete(self, v):
         if not messagebox.askyesno(

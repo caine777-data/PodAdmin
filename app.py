@@ -117,6 +117,7 @@ class App(_AppBase):
         self.type_map: dict[str, str] = {}     # titre → url
         self.site_urls: list[str] = []         # sites (requis à l'upload)
         self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
+        self._auto_loaded: set = set()         # onglets déjà auto-chargés cette session
         self.items: list[UploadItem] = []
         self.all_users: list[dict] = []        # liste complète Pod (pour sélection owner)
         self.additional_owner_urls: list[str] = []
@@ -255,6 +256,20 @@ class App(_AppBase):
         # Chargement paresseux à la première ouverture de l'onglet Groupes
         if key == "groups":
             self._show_groups_tab_hook()
+        # Auto-chargement des onglets à listes, à leur PREMIÈRE ouverture de la
+        # session. Ensuite le cache est réutilisé (affichage instantané) ; le
+        # bouton « 🔄 Rafraîchir » de chaque onglet force une relecture serveur
+        # (utile si des modifs ont été faites via le site web Pod).
+        auto = {
+            "encode": self._encode_scan,
+            "browse": self._browse_load,
+            "clean":  self._clean_scan,
+            "stats":  self._stats_scan,
+            "ct":     self._ct_load,
+        }
+        if key in auto and self.api and key not in self._auto_loaded:
+            self._auto_loaded.add(key)
+            auto[key]()
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET TÉLÉVERSEMENT
@@ -1241,6 +1256,7 @@ class App(_AppBase):
         self.api = api
         self.token = token
         self.config_data["url"] = url
+        self._auto_loaded = set()      # nouvelle connexion → les onglets se rechargeront frais
         cfg.save_token(token)
         cfg.save_config(self.config_data)
         self._set_status(True)
@@ -1461,7 +1477,7 @@ class App(_AppBase):
         # — Ligne : scan + état —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="📡  Scanner", fg_color="#2563eb",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
                       hover_color="#1d4ed8", command=self._encode_scan).pack(side="left")
         self.encode_status = ctk.CTkLabel(top, text="(aucun scan)", text_color="gray",
                                           font=ctk.CTkFont(size=11))
@@ -1518,9 +1534,22 @@ class App(_AppBase):
             videos = self.api.get_all_videos(progress_cb=prog)
             self.encode_videos = videos
             self._ui(self._render_encode)
-            self._ui(self.encode_status.configure,
-                     text=f"✅  {len(videos)} vidéos analysées.", text_color="#22c55e")
-            self._ui(self._log, f"Encodage : {len(videos)} vidéos scannées.")
+            skipped = getattr(self.api, "last_scan_skipped", 0)
+            if skipped:
+                self._ui(self.encode_status.configure,
+                         text=f"✅  {len(videos)} vidéos analysées "
+                              f"(⚠️ {skipped} ignorée·s : illisibles côté serveur)  ·  "
+                              f"{self._loaded_stamp()}",
+                         text_color="#f59e0b")
+                self._ui(self._log,
+                         f"Encodage : {len(videos)} vidéos scannées, {skipped} ignorée·s "
+                         f"(erreur serveur sur ces vidéos — à corriger côté Pod/DSI).")
+            else:
+                self._ui(self.encode_status.configure,
+                         text=f"✅  {len(videos)} vidéos analysées  ·  "
+                              f"chargé à {datetime.now().strftime('%H:%M')}",
+                         text_color="#22c55e")
+                self._ui(self._log, f"Encodage : {len(videos)} vidéos scannées.")
         except Exception as e:
             self._ui(self.encode_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Scan encodage : {e}")
@@ -1819,7 +1848,7 @@ class App(_AppBase):
         # — Ligne : charger + statut —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="📡  Charger les vidéos", fg_color="#2563eb",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
                       hover_color="#1d4ed8", command=self._browse_load).pack(side="left")
         self.browse_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
                                           font=ctk.CTkFont(size=11))
@@ -1916,7 +1945,8 @@ class App(_AppBase):
             self._ui(self._browse_refresh_channel_menu)
             self._ui(self._browse_apply_filter)
             self._ui(self.browse_status.configure,
-                     text=f"✅  {len(videos)} vidéos, {len(channels)} chaîne(s).",
+                     text=f"✅  {len(videos)} vidéos, {len(channels)} chaîne(s)  ·  "
+                          f"chargé à {datetime.now().strftime('%H:%M')}",
                      text_color="#22c55e")
             self._ui(self._log, f"Explorateur vidéos : {len(videos)} vidéos chargées.")
         except Exception as e:
@@ -2070,7 +2100,14 @@ class App(_AppBase):
                 f"chaînes : {chan_names}")
         ctk.CTkLabel(self.browse_detail, text=info, justify="left", anchor="w",
                      text_color="gray80", font=ctk.CTkFont(size=12)).pack(
-            anchor="w", padx=4, pady=(2, 10))
+            anchor="w", padx=4, pady=(2, 4))
+
+        # Prévisualisation : PodAdmin (Tkinter) n'a pas de lecteur vidéo intégré,
+        # on délègue la lecture au navigateur (page publique Pod de la vidéo).
+        ctk.CTkButton(self.browse_detail, text="▶  Ouvrir dans le navigateur",
+                      width=210, height=28, fg_color="#0f766e", hover_color="#115e59",
+                      command=lambda s=slug: self._open_video_in_browser(s)).pack(
+            anchor="w", padx=4, pady=(0, 10))
 
         # — Renommer —
         ren = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
@@ -2449,6 +2486,13 @@ class App(_AppBase):
                     if vv.get("slug") == slug:
                         vv.update(payload)
 
+    def _loaded_stamp(self) -> str:
+        """Renvoie « chargé à HH:MM » pour indiquer la fraîcheur des données
+        affichées dans un onglet (l'utilisateur sait ainsi quand rafraîchir,
+        par exemple après une modification faite via le site web Pod)."""
+        from datetime import datetime
+        return f"chargé à {datetime.now().strftime('%H:%M')}"
+
     def _browse_set_msg(self, text, color):
         if hasattr(self, "browse_msg") and self.browse_msg.winfo_exists():
             self.browse_msg.configure(text=text, text_color=color)
@@ -2481,6 +2525,20 @@ class App(_AppBase):
     def _browse_apply_channels(self, v, urls):
         self._run(self._do_browse_patch, v, {"channel": list(urls)},
                   f"{len(urls)} chaîne(s)")
+
+    def _open_video_in_browser(self, slug):
+        """Ouvre la page publique Pod de la vidéo dans le navigateur par défaut.
+        (PodAdmin n'a pas de lecteur intégré : la lecture est déléguée au web.)"""
+        import webbrowser
+        base = str(self.config_data.get("url", "")).rstrip("/")
+        if not base:
+            base = "https://videos.utoulouse.fr"
+        url = f"{base}/video/{slug}/"
+        try:
+            webbrowser.open(url)
+            self._browse_set_msg(f"Ouverture de {slug} dans le navigateur…", "gray")
+        except Exception as e:
+            self._browse_set_msg(f"Impossible d'ouvrir le navigateur : {e}", "#f59e0b")
 
     def _browse_replace_source(self, v):
         """Remplace le fichier source d'une vidéo puis relance l'encodage.
@@ -2960,7 +3018,7 @@ class App(_AppBase):
         # — Ligne 1 : scan (lecture seule) —
         scan_row = ctk.CTkFrame(frame, fg_color="transparent")
         scan_row.pack(fill="x")
-        ctk.CTkButton(scan_row, text="📡  Scanner les vidéos", fg_color="#2563eb",
+        ctk.CTkButton(scan_row, text="🔄  Rafraîchir", fg_color="#2563eb",
                       hover_color="#1d4ed8", command=self._clean_scan).pack(side="left")
         self.clean_scan_lbl = ctk.CTkLabel(scan_row, text="(aucun scan)", text_color="gray",
                                            font=ctk.CTkFont(size=11))
@@ -3128,7 +3186,8 @@ class App(_AppBase):
             vids = self.api.get_all_videos(progress_cb=prog)
             self.clean_videos = vids
             self._ui(self.clean_scan_lbl.configure,
-                     text=f"✅  {len(vids)} vidéos chargées.", text_color="#22c55e")
+                     text=f"✅  {len(vids)} vidéos chargées  ·  {self._loaded_stamp()}",
+                     text_color="#22c55e")
             self._ui(self._clean_populate_filters)
             self._ui(self._apply_clean_filter)
             self._ui(self._log, f"Scan nettoyage : {len(vids)} vidéos.")
@@ -3422,7 +3481,7 @@ class App(_AppBase):
         # — Ligne d'actions : scan + export —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="📡  Scanner l'instance", fg_color="#2563eb",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
                       hover_color="#1d4ed8", command=self._stats_scan).pack(side="left")
         self.stats_export_btn = ctk.CTkButton(
             top, text="📊  Exporter en Excel (.xlsx)", fg_color="#16a34a",
@@ -3733,7 +3792,7 @@ class App(_AppBase):
         # — Ligne d'action : charger —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="🔄  Charger", fg_color="#2563eb", hover_color="#1d4ed8",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb", hover_color="#1d4ed8",
                       command=self._ct_load).pack(side="left")
         self.ct_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
                                       font=ctk.CTkFont(size=11))
@@ -3801,7 +3860,8 @@ class App(_AppBase):
             self._ui(self._render_ct)
             self._ui(self._refresh_ct_channel_menu)
             self._ui(self.ct_status.configure,
-                     text=f"✅  {len(chans)} chaîne(s), {len(themes)} thème(s).",
+                     text=f"✅  {len(chans)} chaîne(s), {len(themes)} thème(s)  ·  "
+                          f"{self._loaded_stamp()}",
                      text_color="#22c55e")
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")

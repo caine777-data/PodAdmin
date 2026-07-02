@@ -56,6 +56,7 @@ class PodAPI:
         self.rest = f"{self.base_url}/rest"
         self.token = token
         self.verify_ssl = verify_ssl
+        self.last_scan_skipped = 0     # nb d'éléments ignorés au dernier scan (illisibles côté serveur)
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Token {token}"})
 
@@ -117,28 +118,90 @@ class PodAPI:
 
     def _paginate(self, endpoint: str, params: dict | None = None,
                   max_pages: int = 300,
-                  progress_cb: Optional[Callable[[int], None]] = None) -> list[dict]:
-        """Suit le champ 'next' jusqu'au bout. progress_cb(nb_cumulé) optionnel."""
-        items: list[dict] = []
-        url = self._abs(endpoint)
+                  progress_cb: Optional[Callable[[int], None]] = None,
+                  skip_cb: Optional[Callable[[int, int], None]] = None) -> list[dict]:
+        """Récupère tous les éléments d'un endpoint paginé, en étant TOLÉRANT
+        aux pages en erreur (ex. HTTP 500 quand une vidéo « cassée » fait
+        planter la sérialisation côté serveur).
+
+        Stratégie : pagination par `offset`. Si une page de `limit` éléments
+        renvoie une erreur, on balaie cette fenêtre élément par élément
+        (limit=1) pour récupérer les éléments lisibles et SAUTER seulement le(s)
+        fautif(s), au lieu d'interrompre tout le scan. Le nombre d'éléments
+        ignorés est mémorisé dans self.last_scan_skipped et signalé via skip_cb.
+        """
+        base = self._abs(endpoint)
         p = dict(params or {})
-        p.setdefault("limit", 100)
+        limit = int(p.get("limit", 100))
+        p["limit"] = limit
+        items: list[dict] = []
+        skipped = 0
+
+        # Total déclaré (pour savoir quand s'arrêter même si une page plante)
+        count = None
+        try:
+            r0 = self.session.get(base, params={**p, "limit": 1, "offset": 0},
+                                  headers={"Accept": "application/json"},
+                                  timeout=30, verify=self.verify_ssl)
+            d0 = self._json(r0)
+            if isinstance(d0, dict):
+                count = d0.get("count")
+        except PodAPIError:
+            count = None
+
+        offset = 0
         pages = 0
-        while url and pages < max_pages:
-            r = self.session.get(url, params=(p if pages == 0 else None),
-                                 headers={"Accept": "application/json"},
-                                 timeout=30, verify=self.verify_ssl)
-            data = self._json(r)
-            if isinstance(data, dict):
-                items.extend(data.get("results", []))
-                url = data.get("next")     # URL absolue de la page suivante
-            else:
-                items.extend(data or [])
-                url = None
+        while pages < max_pages:
+            if count is not None and offset >= count:
+                break
+            try:
+                r = self.session.get(base, params={**p, "offset": offset},
+                                     headers={"Accept": "application/json"},
+                                     timeout=30, verify=self.verify_ssl)
+                data = self._json(r)          # lève PodAPIError si HTTP >= 400
+                results = data.get("results", []) if isinstance(data, dict) else (data or [])
+                items.extend(results)
+                if isinstance(data, dict) and count is None:
+                    count = data.get("count")
+                # Fin si page vide ou plus de 'next' (cas non-offset)
+                if not results and (count is None or offset >= (count or 0)):
+                    break
+            except PodAPIError:
+                # Page fautive : on balaie la fenêtre élément par élément
+                got, sk = self._sweep_window(base, p, offset, limit, count)
+                items.extend(got)
+                skipped += sk
+                if skip_cb and sk:
+                    skip_cb(offset, sk)
+            offset += limit
             pages += 1
             if progress_cb:
                 progress_cb(len(items))
+
+        self.last_scan_skipped = skipped
         return items
+
+    def _sweep_window(self, base: str, p: dict, start: int, limit: int,
+                      count: int | None) -> tuple[list[dict], int]:
+        """Balaie une fenêtre [start, start+limit[ élément par élément (limit=1)
+        pour récupérer les éléments lisibles et compter ceux qui font échouer le
+        serveur (à sauter). Renvoie (éléments_ok, nb_ignorés)."""
+        got: list[dict] = []
+        skipped = 0
+        end = start + limit
+        if count is not None:
+            end = min(end, count)
+        for off in range(start, end):
+            try:
+                r = self.session.get(base, params={**p, "limit": 1, "offset": off},
+                                     headers={"Accept": "application/json"},
+                                     timeout=30, verify=self.verify_ssl)
+                d = self._json(r)
+                res = d.get("results", []) if isinstance(d, dict) else (d or [])
+                got.extend(res)
+            except PodAPIError:
+                skipped += 1          # cet élément fait planter le serveur : on le saute
+        return got, skipped
 
     # ╔══════════════════════════════════════════════════════════════════╗
     # ║  TÉLÉVERSEUR (conservé tel quel)                                  ║

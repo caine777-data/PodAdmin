@@ -355,6 +355,25 @@ class PodAPI:
         data = self._get("/videos/", params)
         return data.get("results", []) if isinstance(data, dict) else (data or [])
 
+    def get_video_by_slug(self, slug: str):
+        """Retrouve le dict d'une vidéo à partir de son SLUG (None si introuvable).
+        Nécessaire après une création par upload chunké (qui ne renvoie qu'un slug)
+        pour récupérer l'objet complet (avec son 'url') et pouvoir le PATCHer.
+        Stratégie robuste en LECTURE SEULE : filtre serveur ?slug= puis, à défaut,
+        recherche plein-texte ?search= ; correspondance EXACTE du slug dans les deux cas."""
+        slug = str(slug).strip().strip("/")
+        if not slug:
+            return None
+        for params in ({"slug": slug, "limit": 20}, {"search": slug, "limit": 20}):
+            try:
+                results = self.search_videos(params)
+            except Exception:
+                results = []
+            for v in results:
+                if str(v.get("slug", "")).strip("/") == slug:
+                    return v
+        return None
+
     # ── Résolution de l'endpoint d'une vidéo ──────────────────────────────
     # IMPORTANT : l'API indexe les vidéos par ID NUMÉRIQUE (/rest/videos/108/),
     # PAS par slug. On accepte donc une « référence » souple :

@@ -27,6 +27,24 @@ import os
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".podadmin.json")
 KEYRING_SERVICE = "PodAdmin-UToulouse"          # ≠ "PodTeleverseur-UToulouse"
 KEYRING_TOKEN_KEY = "service_token"
+# Identifiants du COMPTE VÉHICULE (local) servant à ouvrir la session web pour
+# le téléversement chunké des gros fichiers. Stockés chiffrés (keyring), dans
+# l'espace de noms de PodAdmin. L'admin les saisit dans l'onglet Configuration.
+KEYRING_USER_KEY = "vehicle_username"
+KEYRING_PASS_KEY = "vehicle_password"
+
+# ── Bascule vers le téléversement par morceaux (chunked) ──────────────────
+# > seuil : session web (véhicule) + chunk, puis PATCH owner vers le propriétaire
+# choisi. ≤ seuil : upload classique par token (inchangé).
+CHUNK_THRESHOLD_BYTES = 500 * 1024 * 1024      # 500 Mo
+CHUNK_SIZE_BYTES      = 2 * 1024 * 1024         # 2 Mo par morceau (validé)
+
+# ── Vérification « lancer puis vérifier » après un 504 de finalisation ────
+# Sur un gros fichier, nginx peut couper (504) avant que Pod ait fini d'assembler
+# — mais Pod termine en arrière-plan. On sonde l'API jusqu'à voir la vidéo.
+# Fenêtre portée à 30 min (des fichiers > 2 Go peuvent dépasser le quart d'heure).
+CHUNK_VERIFY_TIMEOUT_S  = 1800   # 30 minutes
+CHUNK_VERIFY_INTERVAL_S = 15     # intervalle entre deux sondages (secondes)
 
 try:
     import keyring
@@ -58,8 +76,9 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    # On ne sauvegarde jamais le token dans le JSON
-    safe = {k: v for k, v in cfg.items() if k != "token"}
+    # On ne sauvegarde jamais de secret dans le JSON
+    secrets = {"token", "vehicle_username", "vehicle_password", "password"}
+    safe = {k: v for k, v in cfg.items() if k not in secrets}
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(safe, f, indent=2, ensure_ascii=False)
 
@@ -127,6 +146,89 @@ def clear_token() -> None:
             os.remove(path)
         except Exception:
             pass
+
+
+# ── Identifiants du COMPTE VÉHICULE (session chunkée) ─────────────────────
+# Même principe que le token : keyring si possible, sinon fichier local 0600.
+def _secret_file(suffix: str) -> str:
+    return os.path.join(os.path.expanduser("~"), f".podadmin_{suffix}")
+
+
+def _save_secret(key: str, suffix: str, value: str) -> str:
+    if HAS_KEYRING:
+        try:
+            keyring.set_password(KEYRING_SERVICE, key, value)
+            try:
+                p = _secret_file(suffix)
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+            return "keyring"
+        except Exception:
+            pass
+    try:
+        path = _secret_file(suffix)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(value)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+        return "file"
+    except Exception:
+        return ""
+
+
+def _load_secret(key: str, suffix: str) -> str:
+    if HAS_KEYRING:
+        try:
+            v = keyring.get_password(KEYRING_SERVICE, key)
+            if v:
+                return v
+        except Exception:
+            pass
+    path = _secret_file(suffix)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _clear_secret(key: str, suffix: str) -> None:
+    if HAS_KEYRING:
+        try:
+            keyring.delete_password(KEYRING_SERVICE, key)
+        except Exception:
+            pass
+    path = _secret_file(suffix)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
+def save_vehicle_credentials(username: str, password: str) -> str:
+    """Enregistre l'identifiant ET le mot de passe du compte véhicule.
+    Renvoie le moyen de stockage du mot de passe ('keyring', 'file' ou '')."""
+    _save_secret(KEYRING_USER_KEY, "vehicle_user", username or "")
+    return _save_secret(KEYRING_PASS_KEY, "vehicle_pass", password or "")
+
+
+def load_vehicle_credentials() -> tuple[str, str]:
+    """Renvoie (identifiant, mot_de_passe) du compte véhicule — ('','') si absent."""
+    return (_load_secret(KEYRING_USER_KEY, "vehicle_user"),
+            _load_secret(KEYRING_PASS_KEY, "vehicle_pass"))
+
+
+def clear_vehicle_credentials() -> None:
+    """Efface l'identifiant ET le mot de passe du compte véhicule du poste."""
+    _clear_secret(KEYRING_USER_KEY, "vehicle_user")
+    _clear_secret(KEYRING_PASS_KEY, "vehicle_pass")
 
 
 # Extensions vidéo reconnues lors du scan de dossier (onglet Téléversement)

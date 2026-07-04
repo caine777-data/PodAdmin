@@ -32,6 +32,8 @@ from tkinter import filedialog, messagebox
 import config as cfg
 from pod_api import (PodAPI, PodAPIError, CONTRIBUTOR_ROLES,
                      SUBTITLE_LANGS, SUBTITLE_KINDS)
+# Moteur de téléversement par morceaux via session web (gros fichiers > seuil).
+from pod_chunked import PodChunkedSession, PodChunkedError
 
 # Pillow (fourni avec customtkinter) — pour afficher le logo
 try:
@@ -111,6 +113,10 @@ class App(_AppBase):
 
         self.config_data = cfg.load_config()
         self.token = cfg.load_token()
+        # Identifiants du compte VÉHICULE (session web pour le chunké des gros
+        # fichiers) — chargés du coffre-fort. Requis seulement si un fichier > seuil.
+        self.vehicle_username, self.vehicle_password = cfg.load_vehicle_credentials()
+        self.vehicle_owner_url = ""      # URL Pod du véhicule (résolue à la connexion)
         self.api: PodAPI | None = None
 
         self.types: list[dict] = []
@@ -215,6 +221,7 @@ class App(_AppBase):
             ("🔐   Groupes d'accès", "groups"),
             ("👥   Co-auteurs",    "coauthors"),
             ("⚙️   Configuration", "config"),
+            ("❓   Aide",          "help"),
             ("📋   Journal",       "log"),
             ("ℹ️   À propos",      "about"),
         ]:
@@ -243,6 +250,7 @@ class App(_AppBase):
         self._build_tab_groups()
         self._build_tab_coauthors()
         self._build_tab_config()
+        self._build_tab_help()
         self._build_tab_log()
         self._build_tab_about()
 
@@ -616,9 +624,63 @@ class App(_AppBase):
             self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
             return
 
+        # Si un fichier dépasse le seuil, la bascule chunkée exige le compte véhicule.
+        gros = any(self._file_size(it.path) > cfg.CHUNK_THRESHOLD_BYTES for it in self.items)
+        if gros and not (self.vehicle_username and self.vehicle_password):
+            self.global_msg.configure(
+                text=f"⚠️  Un fichier dépasse {cfg.CHUNK_THRESHOLD_BYTES // 1024 // 1024} Mo : "
+                     "renseignez le compte véhicule (onglet Configuration) pour l'upload chunké.",
+                text_color="#f59e0b")
+            return
+
         self.launch_btn.configure(state="disabled")
         self.batch_progress.set(0)
         self._run(self._do_batch_upload, owner_url, type_url)
+
+    @staticmethod
+    def _file_size(path: str) -> int:
+        """Taille d'un fichier en octets (0 si illisible)."""
+        try:
+            return os.path.getsize(path)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _search_term_for(filename: str) -> str:
+        """Terme de recherche pour retrouver une vidéo créée par chunké (Pod la
+        titre d'après le nom de fichier ASCII envoyé)."""
+        base = os.path.splitext(os.path.basename(filename))[0]
+        return PodChunkedSession._ascii_filename(base)
+
+    def _verify_chunked_creation(self, search_term: str, pre_ids: set, creator_owner_url: str):
+        """(Thread) Après un 504 à la finalisation, Pod termine la création côté
+        serveur. On sonde l'API jusqu'à voir une vidéo NOUVELLE (id absent de
+        pre_ids) correspondant au fichier, créée par le compte VÉHICULE. Renvoie
+        le dict vidéo, ou None après expiration de la fenêtre de vérification."""
+        import time as _t
+        deadline = _t.time() + cfg.CHUNK_VERIFY_TIMEOUT_S
+        while _t.time() < deadline:
+            try:
+                cands = self.api.search_videos({"search": search_term, "limit": 25})
+            except Exception:
+                cands = []
+            for v in cands:
+                if v.get("id") in pre_ids:
+                    continue
+                own = v.get("owner")
+                own_str = own if isinstance(own, str) else (
+                    own.get("url", "") if isinstance(own, dict) else "")
+                if creator_owner_url and own_str and creator_owner_url.rstrip("/") not in own_str.rstrip("/"):
+                    continue
+                self._ui(self._log, f"✓ Vidéo apparue après finalisation serveur : {v.get('slug')}")
+                return v
+            remaining = max(0, int(deadline - _t.time()))
+            self._ui(self.global_msg.configure,
+                     text=f"⏳ Finalisation côté serveur (gros fichier)… vérification, "
+                          f"{remaining//60} min {remaining%60}s restantes",
+                     text_color="#f59e0b")
+            _t.sleep(cfg.CHUNK_VERIFY_INTERVAL_S)
+        return None
 
     def _do_batch_upload(self, owner_url: str, type_url: str):
         """(Thread) Téléverse chaque vidéo, ajoute les crédits, lance l'encodage, suit la progression."""
@@ -626,6 +688,7 @@ class App(_AppBase):
         do_encode = self.encode_var.get()
         total = len(self.items)
         ok = 0
+        chunked = None      # session véhicule, ouverte à la 1re nécessité
 
         for idx, it in enumerate(self.items, 1):
             if it.status == "terminé":
@@ -650,19 +713,95 @@ class App(_AppBase):
                          f"(coupure réseau)…")
                 self._ui(self._set_item_status, item, f"⟳ essai {attempt+1}", "#f59e0b")
 
+            big = self._file_size(it.path) > cfg.CHUNK_THRESHOLD_BYTES
             try:
-                video = self.api.upload_video(
-                    it.path, it.title or it.filename, owner_url, type_url,
-                    main_lang=self.config_data.get("main_lang", "fr"),
-                    cursus=self.config_data.get("cursus", "0"),
-                    is_draft=is_draft,
-                    additional_owner_urls=self.additional_owner_urls,
-                    site_urls=self.site_urls,
-                    progress_cb=progress,
-                    retry_cb=on_retry,
-                )
-                it.slug = video.get("slug", "") if isinstance(video, dict) else ""
-                it.video_url = video.get("url", "") if isinstance(video, dict) else ""
+                if big:
+                    # ── Gros fichier : téléversement par MORCEAUX via le VÉHICULE ──
+                    if chunked is None:
+                        chunked = PodChunkedSession(
+                            self.config_data.get("url", ""),
+                            self.vehicle_username, self.vehicle_password)
+                        chunked.login()
+                        self._ui(self._log, "Session véhicule ouverte (upload chunké).")
+                    self._ui(self._log,
+                             f"Gros fichier (> {cfg.CHUNK_THRESHOLD_BYTES//1024//1024} Mo) : "
+                             f"bascule chunkée pour {it.title}.")
+                    # Repères pour la récupération après un éventuel 504.
+                    search_term = self._search_term_for(it.filename)
+                    try:
+                        pre_ids = {v.get("id") for v in
+                                   self.api.search_videos({"search": search_term, "limit": 25})}
+                    except Exception:
+                        pre_ids = set()
+                    # 1) Envoi par morceaux → vidéo créée au nom du VÉHICULE.
+                    video = None
+                    try:
+                        slug = chunked.upload_video_chunked(
+                            it.path, chunk_size=cfg.CHUNK_SIZE_BYTES,
+                            progress_cb=progress, retry_cb=on_retry)
+                    except PodChunkedError as ce:
+                        if ce.status in (502, 503, 504):
+                            self._ui(self._log,
+                                     f"⏳ Finalisation coupée par la passerelle (HTTP {ce.status}) "
+                                     "— Pod termine côté serveur, vérification en cours…")
+                            self._ui(self._set_item_status, it, "⏳ finalisation serveur", "#f59e0b")
+                            video = self._verify_chunked_creation(
+                                search_term, pre_ids, self.vehicle_owner_url)
+                            if not video:
+                                raise
+                            slug = video.get("slug", "")
+                        else:
+                            raise
+                    it.slug = slug
+                    if video is None:
+                        video = self.api.get_video_by_slug(slug)
+                    it.video_url = video.get("url", "") if isinstance(video, dict) else ""
+                    # 2) RÉATTRIBUTION au propriétaire choisi + métadonnées (par token).
+                    #    Point critique : si le PATCH owner échoue, la vidéo reste au
+                    #    nom du véhicule → on le signale FORT (jamais en silence).
+                    if video:
+                        patch = {
+                            "owner": owner_url,                      # ← propriétaire CHOISI
+                            "title": it.title or it.filename,
+                            "type": type_url,
+                            "is_draft": is_draft,
+                            "main_lang": self.config_data.get("main_lang", "fr"),
+                            "cursus": self.config_data.get("cursus", "0"),
+                        }
+                        if self.additional_owner_urls:
+                            patch["additional_owners"] = list(self.additional_owner_urls)
+                        try:
+                            self.api.patch_video(video, patch)
+                        except Exception as e:
+                            # Échec de réattribution : la vidéo existe mais reste au
+                            # nom du véhicule. Erreur BRUYANTE (pas de faux succès).
+                            it.error = f"réattribution échouée : {e}"
+                            self._ui(self._set_item_status, it,
+                                     "⚠️ NON réattribuée", "#ef4444")
+                            self._ui(self._log,
+                                     f"⚠️⚠️ {it.title} : vidéo créée (slug={slug}) mais NON "
+                                     f"réattribuée à {owner_url} — RESTE au nom du véhicule ! "
+                                     f"Réattribuez-la à la main (onglet Réaffectation). Détail : {e}")
+                            self._ui(self.batch_progress.set, idx / total)
+                            continue      # on n'enchaîne pas encodage/crédits sur un état douteux
+                    else:
+                        self._ui(self._log,
+                                 f"⚠️ Vidéo créée (slug={slug}) mais introuvable via l'API pour "
+                                 "réattribution/métadonnées — à vérifier côté web.")
+                else:
+                    # ── Petit fichier : upload classique par TOKEN (inchangé) ──
+                    video = self.api.upload_video(
+                        it.path, it.title or it.filename, owner_url, type_url,
+                        main_lang=self.config_data.get("main_lang", "fr"),
+                        cursus=self.config_data.get("cursus", "0"),
+                        is_draft=is_draft,
+                        additional_owner_urls=self.additional_owner_urls,
+                        site_urls=self.site_urls,
+                        progress_cb=progress,
+                        retry_cb=on_retry,
+                    )
+                    it.slug = video.get("slug", "") if isinstance(video, dict) else ""
+                    it.video_url = video.get("url", "") if isinstance(video, dict) else ""
 
                 # Contributeurs communs
                 for c in self.common_contributors:
@@ -681,8 +820,13 @@ class App(_AppBase):
 
                 ok += 1
                 self._ui(self._set_item_status, it, "✅ terminé", "#22c55e")
-                self._ui(self._log, f"Téléversé : {it.title}  (slug={it.slug})")
+                self._ui(self._log,
+                         f"Téléversé{' (chunké)' if big else ''} : {it.title}  (slug={it.slug})")
 
+            except PodChunkedError as e:
+                it.error = f"{e} — {e.body}"
+                self._ui(self._set_item_status, it, "❌ échec", "#ef4444")
+                self._ui(self._log, f"ÉCHEC chunké {it.title} : {e} | {e.body[:200]}")
             except PodAPIError as e:
                 it.error = f"{e} — {e.body}"
                 self._ui(self._set_item_status, it, "❌ échec", "#ef4444")
@@ -693,6 +837,10 @@ class App(_AppBase):
                 self._ui(self._log, f"ÉCHEC {it.title} : {e}")
 
             self._ui(self.batch_progress.set, idx / total)
+
+        # Fermeture propre de la session véhicule si elle a été ouverte.
+        if chunked is not None:
+            chunked.close()
 
         self._ui(self._on_batch_done, ok, total)
 
@@ -1145,12 +1293,12 @@ class App(_AppBase):
                      font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=3,
                                                            padx=12, pady=(12, 4), sticky="w")
 
-        ctk.CTkLabel(api_box, text="URL :", width=70, anchor="e").grid(row=1, column=0, padx=8, pady=8)
+        ctk.CTkLabel(api_box, text="URL :", width=110, anchor="e").grid(row=1, column=0, padx=8, pady=8)
         self.url_entry = ctk.CTkEntry(api_box, width=430)
         self.url_entry.insert(0, self.config_data.get("url", ""))
         self.url_entry.grid(row=1, column=1, padx=8, pady=8, sticky="ew")
 
-        ctk.CTkLabel(api_box, text="Token :", width=70, anchor="e").grid(row=2, column=0, padx=8, pady=8)
+        ctk.CTkLabel(api_box, text="Token :", width=110, anchor="e").grid(row=2, column=0, padx=8, pady=8)
         self.token_entry = ctk.CTkEntry(api_box, width=430, show="*")
         if self.token:
             self.token_entry.insert(0, self.token)
@@ -1161,8 +1309,34 @@ class App(_AppBase):
                         command=lambda: self.token_entry.configure(
                             show="" if self.show_token.get() else "*")).grid(row=2, column=2, padx=4)
 
+        # — Compte VÉHICULE (local) pour le chunké des gros fichiers —
+        ctk.CTkLabel(api_box,
+                     text=f"Compte véhicule (local) — sert à téléverser les gros fichiers (> "
+                          f"{cfg.CHUNK_THRESHOLD_BYTES // 1024 // 1024} Mo) par morceaux, puis la "
+                          "vidéo est réattribuée au propriétaire choisi :",
+                     text_color="gray70", font=ctk.CTkFont(size=11)).grid(
+            row=3, column=0, columnspan=3, padx=12, pady=(6, 0), sticky="w")
+
+        ctk.CTkLabel(api_box, text="Identifiant :", width=110, anchor="e").grid(row=4, column=0, padx=8, pady=8)
+        self.user_entry = ctk.CTkEntry(api_box, width=430,
+                                       placeholder_text="identifiant local du compte véhicule (optionnel)")
+        if self.vehicle_username:
+            self.user_entry.insert(0, self.vehicle_username)
+        self.user_entry.grid(row=4, column=1, padx=8, pady=8, sticky="ew")
+
+        ctk.CTkLabel(api_box, text="Mot de passe :", width=110, anchor="e").grid(row=5, column=0, padx=8, pady=8)
+        self.pass_entry = ctk.CTkEntry(api_box, width=430, show="*",
+                                       placeholder_text="mot de passe (collage Ctrl+V possible)")
+        if self.vehicle_password:
+            self.pass_entry.insert(0, self.vehicle_password)
+        self.pass_entry.grid(row=5, column=1, padx=8, pady=8, sticky="ew")
+        self.show_pass = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(api_box, text="Afficher", variable=self.show_pass,
+                        command=lambda: self.pass_entry.configure(
+                            show="" if self.show_pass.get() else "*")).grid(row=5, column=2, padx=4)
+
         btn_row = ctk.CTkFrame(api_box, fg_color="transparent")
-        btn_row.grid(row=3, column=1, columnspan=2, padx=8, pady=10, sticky="w")
+        btn_row.grid(row=6, column=1, columnspan=2, padx=8, pady=10, sticky="w")
         ctk.CTkButton(btn_row, text="🔌  Tester & se connecter", fg_color="#16a34a",
                       hover_color="#15803d", command=self._connect).pack(side="left")
         ctk.CTkButton(btn_row, text="🚪  Oublier le token / Se déconnecter", width=260,
@@ -1214,13 +1388,21 @@ class App(_AppBase):
             justify="left", text_color="gray70", wraplength=820).pack(anchor="w", padx=14, pady=(0, 12))
 
     def _forget_token(self):
-        """Efface le token de ce poste et se déconnecte."""
+        """Efface le token ET les identifiants véhicule de ce poste, et se déconnecte."""
         cfg.clear_token()
+        cfg.clear_vehicle_credentials()
         self.token = ""
+        self.vehicle_username = ""
+        self.vehicle_password = ""
+        self.vehicle_owner_url = ""
         self.api = None
         self.all_users = []
         if hasattr(self, "token_entry"):
             self.token_entry.delete(0, "end")
+        if hasattr(self, "user_entry"):
+            self.user_entry.delete(0, "end")
+        if hasattr(self, "pass_entry"):
+            self.pass_entry.delete(0, "end")
         if hasattr(self, "agent_results"):
             self._render_users()
         if hasattr(self, "users_count_lbl"):
@@ -1232,38 +1414,92 @@ class App(_AppBase):
         self._log("Token effacé du poste — déconnexion.")
 
     def _connect(self):
-        """Lit URL + token saisis et lance la connexion en arrière-plan."""
+        """Lit URL + token (+ identifiants véhicule optionnels) et lance la connexion."""
         url = self.url_entry.get().strip()
         token = self.token_entry.get().strip()
         if not url or not token:
             self.config_msg.configure(text="URL et token requis.", text_color="#ef4444")
             return
+        # Identifiants véhicule : OPTIONNELS (requis seulement pour les gros fichiers).
+        v_user = self.user_entry.get().strip() if hasattr(self, "user_entry") else ""
+        v_pass = self.pass_entry.get().rstrip("\r\n") if hasattr(self, "pass_entry") else ""
         self.config_msg.configure(text="⏳  Connexion…", text_color="gray")
-        self._run(self._do_connect, url, token)
+        self._run(self._do_connect, url, token, v_user, v_pass)
 
-    def _do_connect(self, url, token):
-        """(Thread) Teste la connexion à l'instance puis bascule l'UI selon le résultat."""
+    def _do_connect(self, url, token, v_user="", v_pass=""):
+        """(Thread) Teste le token API, puis (si fournis) la session du compte véhicule."""
         try:
             api = PodAPI(url, token)
             count = api.test_connection()
-            self._ui(self._on_connected, api, url, token, count)
         except Exception as e:
             self._ui(self.config_msg.configure, text=f"❌  Échec : {e}", text_color="#ef4444")
             self._ui(self._set_status, False)
+            return
+        # Test de la session véhicule seulement si des identifiants sont saisis.
+        vehicle_ok = None
+        if v_user and v_pass:
+            try:
+                chk = PodChunkedSession(url, v_user, v_pass)
+                chk.login()
+                chk.close()
+                vehicle_ok = True
+            except Exception as e:
+                vehicle_ok = False
+                self._ui(self._log, f"⚠️ Session véhicule en échec : {e}")
+        self._ui(self._on_connected, api, url, token, v_user, v_pass, vehicle_ok, count)
 
-    def _on_connected(self, api, url, token, count):
-        """Connexion réussie : mémorise le client, enregistre le token, charge types et comptes."""
+    def _on_connected(self, api, url, token, v_user, v_pass, vehicle_ok, count):
+        """Connexion réussie : mémorise le client, enregistre token + véhicule, charge types/comptes."""
         self.api = api
         self.token = token
+        self.vehicle_username = v_user
+        self.vehicle_password = v_pass
         self.config_data["url"] = url
         self._auto_loaded = set()      # nouvelle connexion → les onglets se rechargeront frais
         cfg.save_token(token)
+        cfg.save_vehicle_credentials(v_user, v_pass)
         cfg.save_config(self.config_data)
         self._set_status(True)
-        self.config_msg.configure(text=f"✅  Connecté — {count} vidéo(s) accessibles.",
-                                  text_color="#22c55e")
+        # Message selon l'état de la session véhicule
+        if vehicle_ok is True:
+            extra = " Compte véhicule OK (gros fichiers activés)."
+            color = "#22c55e"
+        elif vehicle_ok is False:
+            extra = " ⚠️ Compte véhicule invalide (les gros fichiers échoueront)."
+            color = "#f59e0b"
+        else:
+            extra = " (Compte véhicule non saisi : gros fichiers indisponibles.)"
+            color = "#22c55e"
+        self.config_msg.configure(text=f"✅  Connecté — {count} vidéo(s) accessibles.{extra}",
+                                  text_color=color)
         self._run(self._load_types)
         self._run(self._load_all_users)
+        if v_user:
+            self._run(self._resolve_vehicle_owner)   # URL Pod du véhicule (pour la vérif post-504)
+
+    def _resolve_vehicle_owner(self):
+        """(Thread) Résout l'URL Pod du compte véhicule (correspondance EXACTE de
+        l'identifiant), pour pouvoir, après un 504, reconnaître la vidéo qu'il
+        vient de créer. Aucun repli sur un autre compte (jamais d'à-peu-près)."""
+        uname = (self.vehicle_username or "").strip()
+        if not (self.api and uname):
+            return
+        try:
+            found = None
+            for u in (self.api.search_users(uname) or []):
+                if (u.get("username", "") or "").strip().lower() == uname.lower():
+                    found = u
+                    break
+            if found and found.get("url"):
+                self.vehicle_owner_url = found["url"]
+                self._ui(self._log, f"Compte véhicule résolu : {found.get('username')}")
+            else:
+                self.vehicle_owner_url = ""
+                self._ui(self._log,
+                         f"⚠️ Compte véhicule « {uname} » non résolu (username exact introuvable). "
+                         "La récupération après 504 sera moins précise.")
+        except Exception as e:
+            self._ui(self._log, f"⚠️ Résolution du compte véhicule impossible : {e}")
 
     def _auto_connect(self):
         """(Thread) Reconnexion automatique au démarrage si un token est déjà enregistré."""
@@ -1283,6 +1519,8 @@ class App(_AppBase):
             self.agent_lbl.configure(text=f"Dépôt au nom de :\n{u}")
         self._run(self._load_types)
         self._run(self._load_all_users)
+        if self.vehicle_username:
+            self._run(self._resolve_vehicle_owner)
 
     def _set_status(self, ok: bool):
         """Met à jour l'indicateur de connexion (pastille + libellé) de la barre latérale."""
@@ -2997,6 +3235,7 @@ class App(_AppBase):
         "Mettre en brouillon":          ("patch", {"is_draft": True, "is_restricted": False}),
         "Rendre public":                ("patch", {"is_draft": False, "is_restricted": False}),
         "Rendre restreint":             ("patch", {"is_draft": False, "is_restricted": True}),
+        "🔒  Restreindre au groupe…":   ("restrict_group", None),
         "🗑  Supprimer définitivement": ("delete", None),
     }
 
@@ -3394,6 +3633,28 @@ class App(_AppBase):
             self.clean_progress.configure(text="Aucune vidéo cochée.", text_color="#f59e0b")
             return
 
+        # Action spéciale « Restreindre au groupe… » : on demande le(s) groupe(s),
+        # puis on construit un payload cohérent (restreint + publié + groupes).
+        if kind == "restrict_group":
+            if not self.access_groups:
+                self.clean_progress.configure(
+                    text="Aucun groupe d'accès chargé (voir l'onglet Groupes d'accès).",
+                    text_color="#f59e0b")
+                return
+            urls = self._clean_pick_groups()
+            if urls is None:
+                return                                   # annulé par l'utilisateur
+            if not urls:
+                self.clean_progress.configure(
+                    text="Aucun groupe sélectionné.", text_color="#f59e0b")
+                return
+            # Restreindre à un groupe = accès restreint + sortie de brouillon
+            # (un brouillon reste invisible) + liste des groupes autorisés.
+            payload = {"is_restricted": True, "is_draft": False,
+                       "restrict_access_to_groups": urls}
+            kind = "patch"
+            label = f"Restreindre à {len(urls)} groupe(s)"     # pour la confirmation
+
         # Confirmation — renforcée pour la suppression définitive
         if kind == "delete":
             if not messagebox.askyesno(
@@ -3449,6 +3710,54 @@ class App(_AppBase):
         self._ui(self._log,
                  f"Explorateur « {self.clean_action.get()} » : {ok} OK, {fail} échec(s).")
         self._ui(self.clean_apply_btn.configure, state="normal")
+
+    def _clean_pick_groups(self):
+        """Modale : cocher un ou plusieurs groupes d'accès. Renvoie la liste des
+        URLs sélectionnées, ou None si l'utilisateur annule (fermeture/Annuler)."""
+        win = ctk.CTkToplevel(self)
+        win.title("Restreindre à des groupes")
+        win.geometry("380x440")
+        win.transient(self)
+        win.grab_set()                       # modale : bloque la fenêtre principale
+        ctk.CTkLabel(win, text="Cochez le(s) groupe(s) autorisé(s) :",
+                     font=ctk.CTkFont(size=13, weight="bold")).pack(
+            anchor="w", padx=16, pady=(16, 6))
+        ctk.CTkLabel(win,
+                     text="Les vidéos cochées passeront en « Restreint » et ne seront "
+                          "visibles que par les membres de ces groupes (connexion requise).",
+                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     wraplength=340, justify="left").pack(anchor="w", padx=16, pady=(0, 8))
+
+        scroll = ctk.CTkScrollableFrame(win, height=250)
+        scroll.pack(fill="both", expand=True, padx=16)
+        vars_by_url = {}
+        for g in self.access_groups:
+            gurl = g.get("url", "")
+            var = ctk.BooleanVar(value=False)
+            vars_by_url[gurl] = var
+            texte = g.get("display_name") or g.get("code_name", "?")
+            ctk.CTkCheckBox(scroll, text=texte, variable=var,
+                            font=ctk.CTkFont(size=12)).pack(anchor="w", pady=2)
+
+        result = {"urls": None}              # None = annulé (par défaut)
+
+        def valider():
+            result["urls"] = [u for u, var in vars_by_url.items() if var.get()]
+            win.destroy()
+
+        def annuler():
+            result["urls"] = None
+            win.destroy()
+
+        btns = ctk.CTkFrame(win, fg_color="transparent")
+        btns.pack(fill="x", padx=16, pady=14)
+        ctk.CTkButton(btns, text="Valider", command=valider,
+                      fg_color="#16a34a", hover_color="#15803d").pack(side="left")
+        ctk.CTkButton(btns, text="Annuler", command=annuler,
+                      fg_color="gray35", hover_color="gray25").pack(side="left", padx=10)
+
+        win.wait_window()                    # bloque jusqu'à fermeture de la modale
+        return result["urls"]
 
     def _mark_clean_row(self, slug, success: bool):
         """Pose un ✔ (vert) ou ✗ (rouge) sur la ligne d'une vidéo traitée."""
@@ -4498,6 +4807,119 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET JOURNAL
     # ═════════════════════════════════════════════════════════════════════
+
+    def _build_tab_help(self):
+        """Onglet « Aide » : mode d'emploi intégré de PodAdmin (console
+        d'administration : token superutilisateur, compte véhicule pour le chunké
+        des gros fichiers avec choix du propriétaire, onglets d'admin…)."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["help"] = frame
+
+        ctk.CTkLabel(frame, text="❓  Aide — PodAdmin",
+                     font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=("#1d4ed8", "#60a5fa")).pack(anchor="w", padx=6, pady=(4, 2))
+        ctk.CTkLabel(frame,
+                     text="Mode d'emploi de la console d'administration. "
+                          "Contact : support-pod@utoulouse.fr.",
+                     font=ctk.CTkFont(size=12), text_color="gray60").pack(anchor="w", padx=6, pady=(0, 8))
+
+        scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=2, pady=2)
+
+        def section(titre, corps, couleur_titre=("#1d4ed8", "#60a5fa")):
+            card = ctk.CTkFrame(scroll, fg_color=("gray92", "gray16"), corner_radius=10)
+            card.pack(fill="x", padx=4, pady=6)
+            ctk.CTkLabel(card, text=titre, font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=couleur_titre, justify="left").pack(
+                anchor="w", padx=14, pady=(12, 4))
+            ctk.CTkLabel(card, text=corps.strip(), font=ctk.CTkFont(size=12),
+                         text_color=("gray20", "gray85"), justify="left",
+                         wraplength=760).pack(anchor="w", padx=14, pady=(0, 12))
+
+        section(
+            "🚀  Démarrage rapide",
+            "1. Onglet Configuration : saisissez l'URL et le TOKEN d'un compte "
+            "SUPERUTILISATEUR, puis « Tester & se connecter ».\n"
+            "2. (Facultatif) Renseignez le compte VÉHICULE si vous téléverserez des "
+            "fichiers de plus de 500 Mo.\n"
+            "3. Onglet Téléversement : ajoutez des vidéos, choisissez le propriétaire "
+            "et le type, puis lancez.")
+
+        section(
+            "🔑  Token superutilisateur & compte véhicule",
+            "• TOKEN (obligatoire) : compte superutilisateur. Il donne accès à toute "
+            "l'instance (comptes, vidéos, chaînes…) et sert à toutes les opérations API.\n"
+            "• COMPTE VÉHICULE (facultatif) : un compte LOCAL, servant uniquement à "
+            "ouvrir la session web du téléversement par morceaux (chunké). Requis "
+            "seulement pour les fichiers > 500 Mo.\n\n"
+            "Les deux sont stockés CHIFFRÉS dans le coffre-fort de l'OS, dans un espace "
+            "séparé des autres applis Pod. « Oublier le token » efface tout du poste.")
+
+        section(
+            "📂  Téléverser des vidéos (et gros fichiers)",
+            "• Choisissez le PROPRIÉTAIRE : les vidéos lui appartiendront.\n"
+            "• Bascule automatique par taille : ≤ 500 Mo → envoi classique par token ; "
+            "> 500 Mo → envoi par MORCEAUX via le compte véhicule, puis la vidéo est "
+            "RÉATTRIBUÉE au propriétaire choisi (métadonnées + encodage ensuite). "
+            "Transparent à l'usage.\n"
+            "• Co-propriétaires et crédits (co-auteurs) disponibles comme d'habitude.")
+
+        section(
+            "⚠️  Gros fichiers : réattribution & finalisation serveur",
+            "Deux points à connaître pour les fichiers > 500 Mo :\n"
+            "• La vidéo naît d'abord au nom du compte véhicule, puis est réattribuée "
+            "au propriétaire choisi. Si cette réattribution échoue, l'appli l'affiche "
+            "en ROUGE (« ⚠️ NON réattribuée ») : la vidéo reste alors au véhicule, à "
+            "corriger via l'onglet Réaffectation. Ce n'est jamais silencieux.\n"
+            "• La finalisation d'un très gros fichier peut prendre plusieurs minutes ; "
+            "si la passerelle affiche une erreur 504, l'appli attend (jusqu'à 30 min) "
+            "que la vidéo apparaisse côté serveur, puis poursuit. Laissez-la travailler.",
+            couleur_titre=("#b45309", "#f59e0b"))
+
+        section(
+            "🔒  Visibilité et restriction à un groupe",
+            "La visibilité d'une CHAÎNE et celle d'une VIDÉO sont indépendantes : "
+            "mettre une vidéo dans une chaîne cachée ne restreint PAS la vidéo.\n\n"
+            "Pour restreindre des vidéos à un groupe :\n"
+            "• Une par une : onglet Vidéos → « Restreindre à des groupes ».\n"
+            "• En lot : onglet Explorateur → cocher les vidéos → action « 🔒 Restreindre "
+            "au groupe… » → choisir le(s) groupe(s). Les vidéos passent en « Restreint » "
+            "et sortent de brouillon.")
+
+        section(
+            "🗂  Les onglets d'administration",
+            "• Comptes : recherche et gestion des utilisateurs.\n"
+            "• Réaffectation : changer le propriétaire de vidéos (par lot).\n"
+            "• Explorateur : recherche, actions par lot (brouillon/public/restreint, "
+            "restreindre au groupe, suppression).\n"
+            "• Chaînes : chaînes et thèmes, ajout de vidéos, restriction/visibilité.\n"
+            "• Groupes d'accès : gestion des groupes.\n"
+            "• Co-auteurs : crédits réutilisables.\n"
+            "• Journal : historique horodaté — le premier endroit à consulter en cas de souci.")
+
+        section(
+            "🍎  macOS : « impossible d'ouvrir l'application »",
+            "Blocage normal d'une app non signée (Gatekeeper), pas un bug.\n"
+            "• Terminal : xattr -cr \"/Applications/PodAdmin.app\"\n"
+            "• Ou : Réglages Système → Confidentialité et sécurité → « Ouvrir quand même ».\n"
+            "⚠️ L'app du build est en Apple Silicon (arm64) : pas compatible Mac Intel "
+            "sans build dédié.")
+
+        section(
+            "🛠  Dépannage courant",
+            "• Un .exe déjà compilé ne reflète pas les mises à jour du code : pour "
+            "tester une nouvelle version, lancez « python app.py », ou recompilez.\n"
+            "• Gros fichier refusé : vérifiez que le compte véhicule est renseigné et "
+            "valide (onglet Configuration).\n"
+            "• Erreur réseau pendant un envoi : chaque morceau est ré-essayé "
+            "automatiquement ; utilisez « Relancer les échecs » au besoin.")
+
+        section(
+            "✉️  Support",
+            "Une question, un bug, une amélioration ? Écrivez à "
+            "support-pod@utoulouse.fr en joignant, si possible, le contenu de "
+            "l'onglet Journal au moment du problème.",
+            couleur_titre=("gray40", "gray70"))
 
     def _build_tab_about(self):
         """Onglet « À propos » : informations sur l'application, sa version,

@@ -45,13 +45,16 @@ except ImportError:
 class PodAPIError(Exception):
     """Erreur renvoyée par l'API Pod (avec code HTTP et corps de réponse)."""
     def __init__(self, message: str, status: int = 0, body: str = ""):
+        """Construit l'erreur (status = code HTTP, body = corps de réponse)."""
         super().__init__(message)
         self.status = status
         self.body = body
 
 
 class PodAPI:
+    """Client de l'API REST Esup-Pod, authentifié par token."""
     def __init__(self, base_url: str, token: str, verify_ssl: bool = True):
+        """Initialise le client API : URL de base, token, session HTTP."""
         self.base_url = base_url.rstrip("/")
         self.rest = f"{self.base_url}/rest"
         self.token = token
@@ -70,6 +73,7 @@ class PodAPI:
         return s if s.startswith("http") else f"{self.rest}{s}"
 
     def _json(self, resp: requests.Response):
+        """Transforme une réponse HTTP en données Python ; lève PodAPIError si code >= 400."""
         if resp.status_code >= 400:
             raise PodAPIError(
                 f"HTTP {resp.status_code} sur {resp.url}",
@@ -84,24 +88,28 @@ class PodAPI:
         return None
 
     def _get(self, endpoint: str, params: dict | None = None):
+        """Requête GET (lecture) sur l'API."""
         r = self.session.get(self._abs(endpoint), params=params,
                              headers={"Accept": "application/json"},
                              timeout=30, verify=self.verify_ssl)
         return self._json(r)
 
     def _post(self, endpoint: str, json=None, data=None):
+        """Requête POST (création) sur l'API."""
         r = self.session.post(self._abs(endpoint), json=json, data=data,
                              headers={"Accept": "application/json"},
                              timeout=30, verify=self.verify_ssl)
         return self._json(r)
 
     def _patch(self, endpoint: str, json=None, data=None):
+        """Requête PATCH (mise à jour partielle) sur l'API."""
         r = self.session.patch(self._abs(endpoint), json=json, data=data,
                              headers={"Accept": "application/json"},
                              timeout=30, verify=self.verify_ssl)
         return self._json(r)
 
     def _delete(self, endpoint: str):
+        """Requête DELETE (suppression) sur l'API ; True si 204."""
         r = self.session.delete(self._abs(endpoint),
                              headers={"Accept": "application/json"},
                              timeout=30, verify=self.verify_ssl)
@@ -111,6 +119,7 @@ class PodAPI:
         return True  # 204 No Content attendu en cas de succès
 
     def _options(self, endpoint: str) -> dict:
+        """Requête OPTIONS : renvoie le schéma d'une ressource (champs requis)."""
         r = self.session.options(self._abs(endpoint),
                              headers={"Accept": "application/json"},
                              timeout=20, verify=self.verify_ssl)
@@ -173,10 +182,12 @@ class PodAPI:
     # ── 2. Types / chaînes / sites ────────────────────────────────────────
 
     def get_types(self) -> list[dict]:
+        """Liste les types de vidéo de l'instance."""
         data = self._get("/types/", {"limit": 100})
         return data.get("results", []) if isinstance(data, dict) else (data or [])
 
     def get_channels(self) -> list[dict]:
+        """Liste toutes les chaînes (paginé)."""
         return self._paginate("/channels/", {"limit": 200})
 
     def get_sites(self) -> list[dict]:
@@ -245,6 +256,7 @@ class PodAPI:
                     total = encoder.len
 
                     def _cb(monitor):
+                        """Callback de progression du flux multipart (octets envoyés)."""
                         if progress_cb:
                             progress_cb(monitor.bytes_read, total)
 
@@ -305,6 +317,7 @@ class PodAPI:
 
     def add_contributor(self, video_url: str, name: str, email: str = "",
                        role: str = "author", weblink: str = "") -> dict:
+        """Ajoute un contributeur (crédit libre) à une vidéo."""
         data = {
             "video": video_url,
             "name": name,
@@ -418,6 +431,7 @@ class PodAPI:
         filename = os.path.basename(file_path)
 
         def _one_attempt():
+            """Effectue UNE tentative d'upload (ré-essayée en cas de coupure réseau)."""
             f = open(file_path, "rb")
             try:
                 fields = [("video", (filename, f, "application/octet-stream"))]
@@ -426,6 +440,7 @@ class PodAPI:
                     total = encoder.len
 
                     def _cb(monitor):
+                        """Callback de progression du flux multipart (octets envoyés)."""
                         if progress_cb:
                             progress_cb(monitor.bytes_read, total)
 
@@ -469,9 +484,11 @@ class PodAPI:
         return self.patch_video(video, payload)
 
     def set_video_draft(self, video, value: bool) -> dict:
+        """Bascule une vidéo en brouillon (True) ou non."""
         return self.patch_video(video, {"is_draft": bool(value)})
 
     def set_video_restricted(self, video, value: bool) -> dict:
+        """Bascule l'accès restreint (connexion requise) d'une vidéo."""
         return self.patch_video(video, {"is_restricted": bool(value)})
 
     def get_access_groups(self, max_id: int = 60) -> list[dict]:
@@ -633,6 +650,7 @@ class PodAPI:
     #              via parentId.
 
     def get_themes(self) -> list[dict]:
+        """Liste tous les thèmes (paginé)."""
         return self._paginate("/themes/", {"limit": 300})
 
     def create_channel(self, title: str, theme_urls: Optional[list[str]] = None, *,
@@ -652,6 +670,7 @@ class PodAPI:
         return self._post("/channels/", json=payload)
 
     def patch_channel(self, channel: str, payload: dict) -> dict:
+        """Met à jour une chaîne (réf = URL ou id)."""
         ep = channel if str(channel).startswith("http") else f"/channels/{channel}/"
         return self._patch(ep, json=payload)
 
@@ -668,6 +687,7 @@ class PodAPI:
         return self._post("/themes/", json=payload)
 
     def patch_theme(self, theme: str, payload: dict) -> dict:
+        """Met à jour un thème (réf = URL ou id)."""
         ep = theme if str(theme).startswith("http") else f"/themes/{theme}/"
         return self._patch(ep, json=payload)
 

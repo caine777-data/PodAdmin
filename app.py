@@ -64,6 +64,7 @@ APP_VERSION = "0.1.0"
 # ════════════════════════════════════════════════════════════════════════════
 
 class UploadItem:
+    """Une vidéo dans la file de téléversement (fichier, titre, état, slug, URL)."""
     def __init__(self, path: str):
         """Crée une entrée de la file d'upload à partir d'un chemin de fichier."""
         self.path = path
@@ -88,9 +89,11 @@ class UploadItem:
 # Base conditionnelle : mixe le moteur de glisser-déposer si disponible
 if HAS_DND:
     class _AppBase(ctk.CTk, TkinterDnD.DnDWrapper):
+        """Classe de base de la fenêtre (avec glisser-déposer si disponible)."""
         pass
 else:
     class _AppBase(ctk.CTk):
+        """Classe de base de la fenêtre (avec glisser-déposer si disponible)."""
         pass
 
 
@@ -217,7 +220,7 @@ class App(_AppBase):
             ("🔄   Réaffectation", "reassign"),
             ("🗂   Explorateur",   "clean"),
             ("📊   Inventaire",    "stats"),
-            ("🗂   Chaînes",       "ct"),
+            ("📺   Chaînes",       "ct"),
             ("🔐   Groupes d'accès", "groups"),
             ("👥   Co-auteurs",    "coauthors"),
             ("⚙️   Configuration", "config"),
@@ -702,12 +705,14 @@ class App(_AppBase):
                      text=f"Téléversement {idx}/{total} : {it.title}", text_color="gray")
 
             def progress(sent, tot, item=it):
+                """Callback de progression de l'envoi (met à jour la barre du fichier)."""
                 frac = sent / tot if tot else 0
                 self._ui(self.file_progress.set, frac)
                 self._ui(self.file_progress_lbl.configure,
                          text=f"{item.filename} — {sent/1024/1024:.0f} / {tot/1024/1024:.0f} Mo")
 
             def on_retry(attempt, total_try, err, item=it):
+                """Callback de relance : trace la nouvelle tentative dans le Journal."""
                 self._ui(self._log,
                          f"⟳ Nouvelle tentative {attempt}/{total_try} pour {item.title} "
                          f"(coupure réseau)…")
@@ -1135,6 +1140,7 @@ class App(_AppBase):
 
     # — Création d'un groupe manuel —
     def _groups_create_dialog(self):
+        """Ouvre la fenêtre de création d'un groupe d'accès."""
         if not self.api:
             self.groups_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
@@ -1158,6 +1164,7 @@ class App(_AppBase):
         msg.pack(padx=16, anchor="w")
 
         def _do_create():
+            """Valide le formulaire et crée l'élément."""
             raw = name_entry.get().strip()
             if not raw:
                 msg.configure(text="Indiquez un nom."); return
@@ -1186,6 +1193,7 @@ class App(_AppBase):
 
     # — Suppression d'un groupe manuel —
     def _groups_delete(self, g):
+        """Supprime un groupe d'accès (après confirmation)."""
         code = g.get("code_name")
         if not messagebox.askyesno(
                 "Supprimer le groupe",
@@ -1767,6 +1775,7 @@ class App(_AppBase):
         """(Thread) Récupère toutes les vidéos puis met à jour compteurs + liste."""
         try:
             def prog(n):
+                """Callback de progression (avancement du scan)."""
                 self._ui(self.encode_status.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
             videos = self.api.get_all_videos(progress_cb=prog)
@@ -1975,6 +1984,7 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Erreur chargement comptes : {e}")
 
     def _render_comptes(self):
+        """Affiche la liste filtrée des comptes dans l'onglet Comptes."""
         if not hasattr(self, "comptes_results"):
             return
         flt = self.comptes_filter.get().strip().lower() if hasattr(self, "comptes_filter") else ""
@@ -2047,6 +2057,7 @@ class App(_AppBase):
         self._run(self._do_staff, user, want, var)
 
     def _do_staff(self, user: dict, want: bool, var):
+        """(Thread) Donne ou retire le statut « équipe » (staff) à un compte."""
         uname = user.get("username", "?")
         try:
             self.api.set_user_staff(user.get("url", ""), want)
@@ -2071,6 +2082,7 @@ class App(_AppBase):
     #  chaînes, supprimer. Les actions portent sur UNE vidéo à la fois.
 
     def _build_tab_browse(self):
+        """Construit l'onglet Vidéos (recherche, détail, actions)."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["browse"] = frame
 
@@ -2159,6 +2171,7 @@ class App(_AppBase):
     # ── Chargement (vidéos + chaînes) ──────────────────────────────────────
 
     def _browse_load(self):
+        """(Thread) Charge la liste des vidéos pour l'onglet Vidéos."""
         if not self.api:
             self.browse_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
@@ -2169,6 +2182,7 @@ class App(_AppBase):
         """(Thread) Récupère toutes les vidéos + les chaînes (pour le filtre/sélecteur)."""
         try:
             def prog(n):
+                """Callback de progression (avancement du scan)."""
                 self._ui(self.browse_status.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
             videos = self.api.get_all_videos(progress_cb=prog)
@@ -2222,6 +2236,7 @@ class App(_AppBase):
         return oid or "—"
 
     def _browse_apply_filter(self, *_):
+        """Filtre la liste des vidéos côté client (instantané)."""
         if not self.browse_videos:
             self.browse_count_lbl.configure(text="Cliquez sur « Charger les vidéos ».")
             for w in self.browse_list.winfo_children():
@@ -2249,6 +2264,7 @@ class App(_AppBase):
             # On retrouve l'URL de la chaîne à partir de son titre
             wanted = [u for u, t in self.browse_chan_by_url.items() if t == ch]
             def in_chan(v):
+                """Teste si une vidéo appartient à la chaîne filtrée."""
                 cs = v.get("channel") or []
                 if isinstance(cs, str):
                     cs = [cs]
@@ -2260,6 +2276,7 @@ class App(_AppBase):
         if ty and ty != "Tous types":
             turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
             def has_type(v):
+                """Teste si une vidéo est du type filtré."""
                 vt = v.get("type")
                 vt = vt.get("url") if isinstance(vt, dict) else vt
                 return str(vt).rstrip("/") == turl
@@ -2268,6 +2285,7 @@ class App(_AppBase):
         txt = self.browse_text.get().strip().lower()
         if txt:
             def hay(v):
+                """Concatène les champs d'une vidéo pour la recherche plein-texte."""
                 return f"{v.get('title','')} {v.get('slug','')} {self._browse_owner_label(v)}".lower()
             vids = [v for v in vids if txt in hay(v)]
 
@@ -2275,6 +2293,7 @@ class App(_AppBase):
         self._render_browse_list()
 
     def _render_browse_list(self):
+        """Affiche la liste filtrée des vidéos (plafonnée pour ne pas figer l'interface)."""
         for w in self.browse_list.winfo_children():
             w.destroy()
         self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
@@ -2311,6 +2330,7 @@ class App(_AppBase):
     # ── Panneau de détail / actions ────────────────────────────────────────
 
     def _browse_render_detail(self):
+        """Affiche le panneau de détail de la vidéo sélectionnée."""
         for w in self.browse_detail.winfo_children():
             w.destroy()
         v = self.browse_selected
@@ -2370,6 +2390,7 @@ class App(_AppBase):
         # choix envoie les DEUX booléens cohérents d'un coup (corrige le bug où
         # l'ancien statut restait actif).
         def _status_of(vid):
+            """Renvoie le libellé de statut d'une vidéo (Brouillon/Public/Restreint)."""
             if vid.get("is_draft"):
                 return "Brouillon"
             return "Restreint" if vid.get("is_restricted") else "Public"
@@ -2684,6 +2705,7 @@ class App(_AppBase):
         self._ui(self._browse_apply_filter)            # rafraîchit l'affichage
 
     def _browse_rename(self, v):
+        """Renomme la vidéo sélectionnée (nouveau titre)."""
         new = self.browse_title_entry.get().strip()
         if new and new != v.get("title"):
             self._browse_patch(v, {"title": new}, f"titre → {new}")
@@ -2693,6 +2715,7 @@ class App(_AppBase):
         self._run(self._do_browse_patch, v, payload, msg)
 
     def _do_browse_patch(self, v, payload, msg):
+        """(Thread) Applique un PATCH à une vidéo et rafraîchit l'affichage."""
         slug = v.get("slug", "")
         try:
             self.api.patch_video(v, payload)
@@ -2732,6 +2755,7 @@ class App(_AppBase):
         return f"chargé à {datetime.now().strftime('%H:%M')}"
 
     def _browse_set_msg(self, text, color):
+        """Affiche un message d'état dans l'onglet Vidéos."""
         if hasattr(self, "browse_msg") and self.browse_msg.winfo_exists():
             self.browse_msg.configure(text=text, text_color=color)
 
@@ -2747,6 +2771,7 @@ class App(_AppBase):
                     title="Co-propriétaires de la vidéo", preselected=pre)
 
     def _browse_apply_owners(self, v, urls):
+        """Met à jour les propriétaires additionnels de la vidéo."""
         self._run(self._do_browse_patch, v, {"additional_owners": list(urls)},
                   f"{len(urls)} co-propriétaire(s)")
 
@@ -2761,6 +2786,7 @@ class App(_AppBase):
                       title="Chaînes de la vidéo", preselected=pre)
 
     def _browse_apply_channels(self, v, urls):
+        """Affecte la vidéo aux chaînes choisies."""
         self._run(self._do_browse_patch, v, {"channel": list(urls)},
                   f"{len(urls)} chaîne(s)")
 
@@ -2810,11 +2836,13 @@ class App(_AppBase):
         fname = _os.path.basename(path)
 
         def progress(sent, tot):
+            """Callback de progression de l'envoi (met à jour la barre du fichier)."""
             frac = sent / tot if tot else 0
             self._ui(self._browse_set_msg,
                      f"⏳  Envoi {fname} — {sent/1024/1024:.0f}/{tot/1024/1024:.0f} Mo", "gray")
 
         def on_retry(attempt, total_try, err):
+            """Callback de relance : trace la nouvelle tentative dans le Journal."""
             self._ui(self._log,
                      f"⟳ Nouvelle tentative {attempt}/{total_try} (remplacement {slug})…")
             self._ui(self._browse_set_msg,
@@ -2842,6 +2870,7 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Remplacement {slug} : {e}")
 
     def _browse_delete(self, v):
+        """Supprime la vidéo sélectionnée (après confirmation)."""
         if not messagebox.askyesno(
                 "⚠️  Supprimer la vidéo",
                 f"Supprimer DÉFINITIVEMENT « {v.get('title')} » ?\n\n"
@@ -2853,6 +2882,7 @@ class App(_AppBase):
         self._run(self._do_browse_delete, v)
 
     def _do_browse_delete(self, v):
+        """(Thread) Exécute la suppression de la vidéo côté serveur."""
         slug = v.get("slug", "")
         try:
             self.api.delete_video(v)
@@ -3420,6 +3450,7 @@ class App(_AppBase):
         """(Thread) Récupère toutes les vidéos puis applique le filtre courant."""
         try:
             def prog(n):   # progression du scan paginé
+                """Callback de progression (avancement du scan)."""
                 self._ui(self.clean_scan_lbl.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
             vids = self.api.get_all_videos(progress_cb=prog)
@@ -3460,6 +3491,7 @@ class App(_AppBase):
         triées par titre pour regrouper visuellement les doublons."""
         from collections import Counter
         def norm(v):
+            """Clé de tri normalisée (titre en minuscules)."""
             return (v.get("title") or "").strip().lower()
         counts = Counter(norm(v) for v in vids if norm(v))
         dups = [v for v in vids if norm(v) and counts[norm(v)] > 1]
@@ -3484,6 +3516,7 @@ class App(_AppBase):
         txt = self.clean_text.get().strip().lower()
         if txt:
             def hay(v):
+                """Concatène les champs d'une vidéo pour la recherche plein-texte."""
                 return (f"{v.get('title','')} {v.get('slug','')} "
                         f"{self._video_owner_id(v)}").lower()
             vids = [v for v in vids if txt in hay(v)]
@@ -3513,6 +3546,7 @@ class App(_AppBase):
         if ty and ty != "Tous types":
             turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
             def has_type(v):
+                """Teste si une vidéo est du type filtré."""
                 vt = v.get("type")
                 vt = vt.get("url") if isinstance(vt, dict) else vt
                 return str(vt).rstrip("/") == turl
@@ -3530,6 +3564,7 @@ class App(_AppBase):
         if ch and ch != "Toutes chaînes":
             curl = str(self.clean_chan_map.get(ch, "")).rstrip("/")
             def in_chan(v):
+                """Teste si une vidéo appartient à la chaîne filtrée."""
                 chans = v.get("channel") or []
                 if isinstance(chans, str):
                     chans = [chans]
@@ -3742,10 +3777,12 @@ class App(_AppBase):
         result = {"urls": None}              # None = annulé (par défaut)
 
         def valider():
+            """Valide la sélection et ferme la fenêtre."""
             result["urls"] = [u for u, var in vars_by_url.items() if var.get()]
             win.destroy()
 
         def annuler():
+            """Annule et ferme la fenêtre sans rien sélectionner."""
             result["urls"] = None
             win.destroy()
 
@@ -3775,6 +3812,7 @@ class App(_AppBase):
     #  utilisateur / type / chaîne) et on peut exporter le tout en .xlsx.
 
     def _build_tab_stats(self):
+        """Construit l'onglet Inventaire / statistiques."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["stats"] = frame
 
@@ -3826,6 +3864,7 @@ class App(_AppBase):
     # ── Scan + calcul ──────────────────────────────────────────────────────
 
     def _stats_scan(self):
+        """(Thread) Parcourt les vidéos et calcule les statistiques."""
         if not self.api:
             self.stats_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
@@ -3837,6 +3876,7 @@ class App(_AppBase):
         """(Thread) Récupère vidéos + types + chaînes, puis calcule les agrégats."""
         try:
             def prog(n):
+                """Callback de progression (avancement du scan)."""
                 self._ui(self.stats_status.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
             videos = self.api.get_all_videos(progress_cb=prog)
@@ -4086,6 +4126,7 @@ class App(_AppBase):
     #  Les thèmes sont regroupés sous leur chaîne grâce à leur champ `channel`.
 
     def _build_tab_ct(self):
+        """Construit l'onglet Chaînes & thèmes."""
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["ct"] = frame
 
@@ -4148,6 +4189,7 @@ class App(_AppBase):
     # ── Chargement ─────────────────────────────────────────────────────────
 
     def _ct_load(self):
+        """(Thread) Charge chaînes et thèmes pour l'onglet Chaînes."""
         if not self.api:
             self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
@@ -4189,6 +4231,7 @@ class App(_AppBase):
     # ── Rendu de la liste (chaînes + thèmes imbriqués) ─────────────────────
 
     def _render_ct(self):
+        """Affiche la liste des chaînes et de leurs thèmes."""
         for w in self.ct_list.winfo_children():
             w.destroy()
 
@@ -4244,6 +4287,7 @@ class App(_AppBase):
     # ── Création ───────────────────────────────────────────────────────────
 
     def _ct_create_channel(self):
+        """Crée une nouvelle chaîne à partir du formulaire."""
         title = self.ct_new_chan_title.get().strip()
         if not title:
             self.ct_status.configure(text="Titre de chaîne requis.", text_color="#f59e0b")
@@ -4264,10 +4308,12 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Création chaîne : {e}")
 
     def _ct_clear_new_channel(self):
+        """Vide le formulaire de création de chaîne."""
         self.ct_new_chan_title.delete(0, "end")
         self.ct_new_chan_desc.delete(0, "end")
 
     def _ct_create_theme(self):
+        """Crée un thème dans la chaîne sélectionnée."""
         title = self.ct_new_theme_title.get().strip()
         if not title:
             self.ct_status.configure(text="Titre de thème requis.", text_color="#f59e0b")
@@ -4280,6 +4326,7 @@ class App(_AppBase):
         self._run(self._do_ct_create_theme, title, channel_url)
 
     def _do_ct_create_theme(self, title, channel_url):
+        """(Thread) Crée le thème côté serveur puis rafraîchit."""
         try:
             self.api.create_theme(title, channel_url)
             self._ui(self._log, f"Thème créé : {title}")
@@ -4292,6 +4339,7 @@ class App(_AppBase):
     # ── Modification ───────────────────────────────────────────────────────
 
     def _ct_rename_channel(self, ch):
+        """Renomme une chaîne (boîte de saisie)."""
         dlg = ctk.CTkInputDialog(text=f"Nouveau nom pour « {ch.get('title')} » :",
                                  title="Renommer la chaîne")
         new = dlg.get_input()              # bloque jusqu'à fermeture ; None si annulé
@@ -4300,6 +4348,7 @@ class App(_AppBase):
                       {"title": new.strip()}, f"Chaîne renommée : {new.strip()}")
 
     def _ct_rename_theme(self, th):
+        """Renomme un thème (boîte de saisie)."""
         dlg = ctk.CTkInputDialog(text=f"Nouveau nom pour « {th.get('title')} » :",
                                  title="Renommer le thème")
         new = dlg.get_input()
@@ -4634,6 +4683,7 @@ class App(_AppBase):
             curl = str(ch.get("url", "")).rstrip("/")
 
             def in_chan(v):
+                """Teste si une vidéo appartient à la chaîne filtrée."""
                 chans = v.get("channel") or []
                 if isinstance(chans, str):
                     chans = [chans]
@@ -4714,6 +4764,7 @@ class App(_AppBase):
             curl = str(ch.get("url", "")).rstrip("/")
             # Vidéos appartenant à cette chaîne
             def in_chan(v):
+                """Teste si une vidéo appartient à la chaîne filtrée."""
                 chans = v.get("channel") or []
                 if isinstance(chans, str):
                     chans = [chans]
@@ -4773,6 +4824,7 @@ class App(_AppBase):
     # ── Suppression (double confirmation) ──────────────────────────────────
 
     def _ct_delete_channel(self, ch):
+        """Supprime une chaîne (après confirmation)."""
         if not messagebox.askyesno(
                 "⚠️  Supprimer la chaîne",
                 f"Supprimer la chaîne « {ch.get('title')} » ?\n\n"
@@ -4785,6 +4837,7 @@ class App(_AppBase):
         self._run(self._do_ct_delete, "channel", ch.get("url"), ch.get("title"))
 
     def _ct_delete_theme(self, th):
+        """Supprime un thème (après confirmation)."""
         if not messagebox.askyesno(
                 "Supprimer le thème",
                 f"Supprimer le thème « {th.get('title')} » ?"):
@@ -4827,6 +4880,7 @@ class App(_AppBase):
         scroll.pack(fill="both", expand=True, padx=2, pady=2)
 
         def section(titre, corps, couleur_titre=("#1d4ed8", "#60a5fa")):
+            """Ajoute une carte (titre + texte) à la page d'aide."""
             card = ctk.CTkFrame(scroll, fg_color=("gray92", "gray16"), corner_radius=10)
             card.pack(fill="x", padx=4, pady=6)
             ctk.CTkLabel(card, text=titre, font=ctk.CTkFont(size=14, weight="bold"),
@@ -5036,6 +5090,7 @@ class OwnerPicker(ctk.CTkToplevel):
 
     def __init__(self, master: App, on_done, title="Propriétaires additionnels",
                  preselected: dict | None = None, single: bool = False, on_single=None):
+        """Construit la fenêtre de sélection de propriétaires (liste + filtre)."""
         super().__init__(master)
         self.master_app = master
         self.on_done = on_done
@@ -5089,6 +5144,7 @@ class OwnerPicker(ctk.CTkToplevel):
     def _reload(self):
         """(Thread) Charge la liste des comptes si nécessaire, puis rafraîchit l'affichage."""
         def work():
+            """(Thread) Charge les données nécessaires puis rafraîchit l'affichage."""
             try:
                 if not self.master_app.all_users:
                     users = self.master_app.api.get_all_users()
@@ -5176,6 +5232,7 @@ class VideoPicker(ctk.CTkToplevel):
 
     def __init__(self, master, videos, on_done, title="Vidéos",
                  preselected: dict | None = None):
+        """Construit la fenêtre de sélection de vidéos (liste + filtre)."""
         super().__init__(master)
         self.on_done = on_done
         self.videos = videos or []
@@ -5263,6 +5320,7 @@ class ChannelPicker(ctk.CTkToplevel):
 
     def __init__(self, master, channels, on_done, title="Chaînes",
                  preselected: dict | None = None):
+        """Construit la fenêtre de sélection de chaînes (liste + filtre)."""
         super().__init__(master)
         self.on_done = on_done
         self.channels = channels or []

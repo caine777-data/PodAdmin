@@ -65,6 +65,7 @@ DEFAULTS = {
 
 
 def load_config() -> dict:
+    """Charge la configuration (JSON) en complétant par les valeurs par défaut."""
     cfg = dict(DEFAULTS)
     if os.path.exists(CONFIG_PATH):
         try:
@@ -86,6 +87,7 @@ def save_config(cfg: dict) -> None:
 # ── Token : coffre-fort de l'OS si possible, sinon fichier local ──────────
 
 def _token_file() -> str:
+    """Chemin du fichier de repli pour le token (si keyring indisponible)."""
     return os.path.join(os.path.expanduser("~"), ".podadmin_token")
 
 
@@ -117,6 +119,7 @@ def save_token(token: str) -> str:
 
 
 def load_token() -> str:
+    """Lit le token (keyring puis fichier de repli)."""
     if HAS_KEYRING:
         try:
             t = keyring.get_password(KEYRING_SERVICE, KEYRING_TOKEN_KEY)
@@ -135,6 +138,7 @@ def load_token() -> str:
 
 
 def clear_token() -> None:
+    """Efface le token du poste (keyring et fichier)."""
     if HAS_KEYRING:
         try:
             keyring.delete_password(KEYRING_SERVICE, KEYRING_TOKEN_KEY)
@@ -151,10 +155,12 @@ def clear_token() -> None:
 # ── Identifiants du COMPTE VÉHICULE (session chunkée) ─────────────────────
 # Même principe que le token : keyring si possible, sinon fichier local 0600.
 def _secret_file(suffix: str) -> str:
+    """Chemin du fichier de repli pour un secret donné."""
     return os.path.join(os.path.expanduser("~"), f".podadmin_{suffix}")
 
 
 def _save_secret(key: str, suffix: str, value: str) -> str:
+    """Enregistre un secret (keyring si possible, sinon fichier 0600)."""
     if HAS_KEYRING:
         try:
             keyring.set_password(KEYRING_SERVICE, key, value)
@@ -181,6 +187,7 @@ def _save_secret(key: str, suffix: str, value: str) -> str:
 
 
 def _load_secret(key: str, suffix: str) -> str:
+    """Lit un secret (keyring puis fichier de repli)."""
     if HAS_KEYRING:
         try:
             v = keyring.get_password(KEYRING_SERVICE, key)
@@ -199,6 +206,7 @@ def _load_secret(key: str, suffix: str) -> str:
 
 
 def _clear_secret(key: str, suffix: str) -> None:
+    """Efface un secret du poste (keyring et fichier)."""
     if HAS_KEYRING:
         try:
             keyring.delete_password(KEYRING_SERVICE, key)

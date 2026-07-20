@@ -117,8 +117,15 @@ class App(_AppBase):
         self.config_data = cfg.load_config()
         self.token = cfg.load_token()
         # Identifiants du compte VÉHICULE (session web pour le chunké des gros
-        # fichiers) — chargés du coffre-fort. Requis seulement si un fichier > seuil.
+        # fichiers). Deux sources, dans cet ordre :
+        #   1. ceux saisis dans l'onglet Configuration (coffre-fort de l'OS) —
+        #      prioritaires, pour pouvoir utiliser un autre compte au besoin ;
+        #   2. à défaut, le compte DEPOT embarqué dans config.py → la bascule
+        #      sur les gros fichiers fonctionne SANS aucune saisie préalable.
         self.vehicle_username, self.vehicle_password = cfg.load_vehicle_credentials()
+        if not (self.vehicle_username and self.vehicle_password):
+            self.vehicle_username = getattr(cfg, "VEHICLE_USERNAME", "")
+            self.vehicle_password = getattr(cfg, "VEHICLE_PASSWORD", "")
         self.vehicle_owner_url = ""      # URL Pod du véhicule (résolue à la connexion)
         self.api: PodAPI | None = None
 
@@ -627,12 +634,14 @@ class App(_AppBase):
             self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
             return
 
-        # Si un fichier dépasse le seuil, la bascule chunkée exige le compte véhicule.
-        gros = any(self._file_size(it.path) > cfg.CHUNK_THRESHOLD_BYTES for it in self.items)
-        if gros and not (self.vehicle_username and self.vehicle_password):
+        # Au-delà du seuil, la bascule chunkée se fait automatiquement via le
+        # compte véhicule embarqué (DEPOT) : rien à configurer. On ne bloque donc
+        # que dans le cas improbable où aucun véhicule ne serait disponible.
+        if (any(self._file_size(it.path) > cfg.CHUNK_THRESHOLD_BYTES for it in self.items)
+                and not (self.vehicle_username and self.vehicle_password)):
             self.global_msg.configure(
-                text=f"⚠️  Un fichier dépasse {cfg.CHUNK_THRESHOLD_BYTES // 1024 // 1024} Mo : "
-                     "renseignez le compte véhicule (onglet Configuration) pour l'upload chunké.",
+                text="⚠️  Compte véhicule indisponible : impossible de téléverser un gros "
+                     "fichier. Contactez le support.",
                 text_color="#f59e0b")
             return
 
@@ -1319,9 +1328,11 @@ class App(_AppBase):
 
         # — Compte VÉHICULE (local) pour le chunké des gros fichiers —
         ctk.CTkLabel(api_box,
-                     text=f"Compte véhicule (local) — sert à téléverser les gros fichiers (> "
-                          f"{cfg.CHUNK_THRESHOLD_BYTES // 1024 // 1024} Mo) par morceaux, puis la "
-                          "vidéo est réattribuée au propriétaire choisi :",
+                     text=f"Compte véhicule (local) — utilisé pour les gros fichiers (> "
+                          f"{cfg.CHUNK_THRESHOLD_BYTES // 1024 // 1024} Mo), envoyés par morceaux "
+                          "puis réattribués au propriétaire choisi.\n"
+                          "FACULTATIF : un compte intégré est déjà utilisé par défaut. "
+                          "Ne remplissez ces champs que pour employer un autre compte.",
                      text_color="gray70", font=ctk.CTkFont(size=11)).grid(
             row=3, column=0, columnspan=3, padx=12, pady=(6, 0), sticky="w")
 
@@ -1400,8 +1411,10 @@ class App(_AppBase):
         cfg.clear_token()
         cfg.clear_vehicle_credentials()
         self.token = ""
-        self.vehicle_username = ""
-        self.vehicle_password = ""
+        # On efface le véhicule PERSONNALISÉ, mais on retombe sur le compte
+        # embarqué : les gros fichiers restent gérés après une déconnexion.
+        self.vehicle_username = getattr(cfg, "VEHICLE_USERNAME", "")
+        self.vehicle_password = getattr(cfg, "VEHICLE_PASSWORD", "")
         self.vehicle_owner_url = ""
         self.api = None
         self.all_users = []
@@ -1473,10 +1486,10 @@ class App(_AppBase):
             extra = " Compte véhicule OK (gros fichiers activés)."
             color = "#22c55e"
         elif vehicle_ok is False:
-            extra = " ⚠️ Compte véhicule invalide (les gros fichiers échoueront)."
+            extra = " ⚠️ Le compte véhicule saisi est invalide (les gros fichiers échoueront)."
             color = "#f59e0b"
         else:
-            extra = " (Compte véhicule non saisi : gros fichiers indisponibles.)"
+            extra = " (Gros fichiers : compte véhicule intégré.)"
             color = "#22c55e"
         self.config_msg.configure(text=f"✅  Connecté — {count} vidéo(s) accessibles.{extra}",
                                   text_color=color)
@@ -2690,6 +2703,9 @@ class App(_AppBase):
             try:
                 self.api.patch_video(v, {"type": new_url})
                 v["type"] = new_url                    # MAJ cache local
+                # …et propagation aux caches des autres onglets, sinon
+                # l'Explorateur et les Chaînes garderaient l'ancien type.
+                self._sync_video_caches(v.get("slug"), {"type": new_url})
                 ok += 1
             except Exception as e:
                 fail += 1
@@ -2729,6 +2745,35 @@ class App(_AppBase):
             self._ui(self._log, f"❌ {slug} : {e}")
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
             self._ui(self._browse_render_detail)
+
+    @staticmethod
+    def _rel_urls(value, normalise: bool = True) -> list:
+        """Normalise une RELATION de l'API Pod en liste d'URLs (texte).
+
+        L'API peut renvoyer une relation (`channel`, `theme`, `owner`,
+        `restrict_access_to_groups`…) sous trois formes selon le sérialiseur :
+          • une URL seule            → "https://…/channels/3/"
+          • une liste d'URLs         → ["https://…/channels/3/", …]
+          • une liste d'OBJETS       → [{"url": "https://…", "title": "…"}, …]
+
+        Faire `str(x)` sans distinguer le cas « objet » produirait la
+        représentation texte du dictionnaire au lieu de l'URL : la comparaison
+        d'appartenance échouerait silencieusement et un PATCH enverrait une
+        valeur invalide. Cette fonction est donc le passage OBLIGÉ pour lire
+        une relation.
+
+        `normalise` : retire la barre oblique finale (pour comparer des URLs).
+        """
+        if not value:
+            return []
+        if isinstance(value, (str, dict)):
+            value = [value]
+        out = []
+        for x in value:
+            url = x.get("url", "") if isinstance(x, dict) else x
+            url = str(url)
+            out.append(url.rstrip("/") if normalise else url)
+        return out
 
     def _sync_video_caches(self, slug, payload=None, removed=False):
         """Propage une modification de vidéo à TOUS les caches d'onglets
@@ -2818,6 +2863,10 @@ class App(_AppBase):
             return
         import os as _os
         size_mo = _os.path.getsize(path) / 1024 / 1024
+        # Au-delà du seuil, le remplacement bascule automatiquement sur la voie
+        # CHUNKÉE, via la session web du compte véhicule. Celui-ci est embarqué
+        # (DEPOT) : la bascule est donc TRANSPARENTE, sans configuration.
+        gros = _os.path.getsize(path) > cfg.CHUNK_THRESHOLD_BYTES
         if not messagebox.askyesno(
                 "⚠️  Remplacer le fichier source",
                 f"Remplacer le fichier de « {v.get('title')} » par :\n"
@@ -2827,19 +2876,34 @@ class App(_AppBase):
                 "Cette action ne peut pas être annulée. Continuer ?"):
             return
         self._browse_set_msg("⏳  Envoi du nouveau fichier…", "gray")
-        self._run(self._do_browse_replace_source, v, path)
+        # Fenêtre MODALE de progression : elle bloque toute autre manipulation
+        # pendant l'envoi (une action concurrente couperait le téléversement)
+        # et montre l'avancement.
+        modal = ProgressModal(
+            self,
+            title="Remplacer le fichier & ré-encoder",
+            subtitle=f"« {v.get('title', '')} »\n{_os.path.basename(path)} ({size_mo:.0f} Mo) — "
+                     f"méthode {'par MORCEAUX (compte véhicule)' if gros else 'directe'}.",
+            intro="Préparation de l'envoi…")
+        self._run(self._do_browse_replace_source, v, path, modal, gros)
 
-    def _do_browse_replace_source(self, v, path):
-        """(Thread) PATCH du nouveau fichier (streamé + retry) puis encodage."""
+    def _do_browse_replace_source(self, v, path, modal=None, gros=False):
+        """(Thread) PATCH du nouveau fichier (streamé + retry) puis encodage.
+
+        `modal` : fenêtre ProgressModal ouverte par l'appelant. Elle est mise à
+        jour à chaque étape et TOUJOURS clôturée en fin de traitement (y compris
+        en cas d'erreur), pour ne jamais laisser l'interface bloquée."""
         slug = v.get("slug", "")
         import os as _os
         fname = _os.path.basename(path)
 
         def progress(sent, tot):
             """Callback de progression de l'envoi (met à jour la barre du fichier)."""
-            frac = sent / tot if tot else 0
             self._ui(self._browse_set_msg,
                      f"⏳  Envoi {fname} — {sent/1024/1024:.0f}/{tot/1024/1024:.0f} Mo", "gray")
+            if modal:
+                self._ui(modal.set_progress, (sent / tot if tot else 0),
+                         f"{sent/1024/1024:.0f} / {tot/1024/1024:.0f} Mo envoyés")
 
         def on_retry(attempt, total_try, err):
             """Callback de relance : trace la nouvelle tentative dans le Journal."""
@@ -2847,11 +2911,70 @@ class App(_AppBase):
                      f"⟳ Nouvelle tentative {attempt}/{total_try} (remplacement {slug})…")
             self._ui(self._browse_set_msg,
                      f"⟳  Coupure réseau — nouvelle tentative {attempt}…", "#f59e0b")
+            if modal:
+                self._ui(modal.set_phase,
+                         f"⟳  Coupure réseau — nouvelle tentative {attempt}/{total_try}…",
+                         "#f59e0b")
 
         try:
-            self.api.replace_video_file(v, path, progress_cb=progress, retry_cb=on_retry)
+            if gros:
+                # ── Gros fichier : remplacement par MORCEAUX via le VÉHICULE ──
+                # On finalise le chunké en passant le SLUG cible → Pod REMPLACE
+                # le fichier de la vidéo existante (pas de nouvel enregistrement).
+                self._ui(self._log,
+                         f"🎬 Remplacement chunké (> {cfg.CHUNK_THRESHOLD_BYTES//1024//1024} Mo) "
+                         f"pour {slug} ({fname})…")
+                if modal:
+                    self._ui(modal.set_phase, "Connexion au compte véhicule…")
+                chunked = PodChunkedSession(self.config_data.get("url", ""),
+                                            self.vehicle_username, self.vehicle_password)
+                chunked.login()
+                if modal:
+                    self._ui(modal.set_phase, "Étape 1/3 — Envoi du fichier par morceaux…")
+                try:
+                    returned = chunked.upload_video_chunked(
+                        path, chunk_size=cfg.CHUNK_SIZE_BYTES,
+                        progress_cb=progress, retry_cb=on_retry,
+                        target_slug=slug)          # ← slug cible = remplacement
+                except PodChunkedError as ce:
+                    # 502/503/504 à la finalisation : Pod termine côté serveur.
+                    # On NE relance PAS l'encodage (le fichier n'est peut-être
+                    # pas encore assemblé) : on informe et on s'arrête là.
+                    if ce.status in (502, 503, 504):
+                        self._ui(self._log,
+                                 f"⏳ Remplacement {slug} : finalisation coupée par la passerelle "
+                                 f"(HTTP {ce.status}) — Pod termine côté serveur.")
+                        self._ui(self._browse_set_msg,
+                                 "⏳  Remplacement en cours de finalisation côté serveur "
+                                 "(jusqu'à ~10 min). Vérifiez côté web, puis relancez "
+                                 "l'encodage.", "#f59e0b")
+                        if modal:
+                            self._ui(modal.finish, False,
+                                     "Le fichier est envoyé, mais le serveur termine encore son "
+                                     "assemblage (cela peut prendre ~10 min). Vérifiez la vidéo "
+                                     "sur le site, puis relancez le ré-encodage si besoin.")
+                        return
+                    raise
+                finally:
+                    chunked.close()
+                if returned and returned != slug:
+                    # Sécurité : un slug différent = vidéo neuve créée au lieu
+                    # d'un remplacement. On le signale clairement.
+                    self._ui(self._log,
+                             f"⚠️ Le remplacement a renvoyé un slug différent ({returned}) : "
+                             "une vidéo neuve a peut-être été créée. À vérifier côté web.")
+            else:
+                # ── Fichier ≤ seuil : PATCH direct streamé (inchangé) ──
+                if modal:
+                    self._ui(modal.set_phase, "Étape 1/2 — Envoi du nouveau fichier…")
+                self.api.replace_video_file(v, path, progress_cb=progress, retry_cb=on_retry)
             self._ui(self._log, f"🎬 Fichier remplacé pour {slug} ({fname}).")
             # Relancer l'encodage sur le nouveau fichier
+            if modal:
+                # L'avancement n'est plus mesurable ici → animation continue.
+                self._ui(modal.set_phase,
+                         f"Étape {'3/3' if gros else '2/2'} — Lancement du ré-encodage…")
+                self._ui(modal.set_indeterminate, True)
             try:
                 self.api.launch_encoding(slug)
                 v["encoded"] = False
@@ -2860,14 +2983,28 @@ class App(_AppBase):
                 self._ui(self._log, f"⚙ Ré-encodage lancé pour {slug}.")
                 self._ui(self._browse_set_msg,
                          "✅  Fichier remplacé, ré-encodage lancé.", "#22c55e")
+                if modal:
+                    self._ui(modal.finish, True,
+                             "Fichier remplacé et ré-encodage lancé. La vidéo sera de nouveau "
+                             "disponible à la fin de l'encodage.")
             except Exception as e:
                 self._ui(self._browse_set_msg,
                          f"Fichier remplacé, mais encodage non lancé : {e}", "#f59e0b")
                 self._ui(self._log, f"❌ Encodage non lancé ({slug}) : {e}")
+                if modal:
+                    self._ui(modal.finish, False,
+                             f"Fichier remplacé, mais le ré-encodage n'a pas pu être lancé : {e}")
             self._ui(self._browse_render_detail)
         except Exception as e:
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
             self._ui(self._log, f"❌ Remplacement {slug} : {e}")
+            if modal:
+                self._ui(modal.finish, False, f"Le remplacement a échoué : {e}")
+        finally:
+            # Quoi qu'il arrive, la modale doit être déverrouillée : une fenêtre
+            # modale restée bloquée rendrait l'application inutilisable.
+            if modal:
+                self._ui(modal.ensure_unlocked)
 
     def _browse_delete(self, v):
         """Supprime la vidéo sélectionnée (après confirmation)."""
@@ -2888,6 +3025,11 @@ class App(_AppBase):
             self.api.delete_video(v)
             if v in self.browse_videos:
                 self.browse_videos.remove(v)
+            # Retirer aussi la vidéo des caches des AUTRES onglets (Explorateur,
+            # Chaînes) : sans cela elle y resterait en « fantôme » et toute action
+            # dessus échouerait (404), en faussant au passage les calculs de
+            # groupes/appartenance de l'onglet Chaînes.
+            self._sync_video_caches(slug, removed=True)
             self.browse_selected = None
             self._ui(self._log, f"🗑 Vidéo supprimée : {slug}")
             self._ui(self._browse_render_detail)
@@ -3221,6 +3363,12 @@ class App(_AppBase):
                 # ÉCRITURE réelle : PATCH /rest/videos/<id>/ {owner: <url cible>}
                 self.api.set_video_owner(v, tgt.get("url"), additional_owner_urls=add)
                 v["owner"] = tgt.get("url")       # met à jour le cache local
+                # …et les caches des autres onglets, sinon Vidéos / Explorateur /
+                # Chaînes continueraient d'afficher l'ANCIEN propriétaire.
+                sync_payload = {"owner": tgt.get("url")}
+                if add is not None:
+                    sync_payload["additional_owners"] = add
+                self._sync_video_caches(slug, sync_payload)
                 ok += 1
                 self._ui(self._mark_reassign_row, slug, True)
             except Exception as e:
@@ -4463,13 +4611,14 @@ class App(_AppBase):
         curl_n = str(curl).rstrip("/")
         by_slug = {v.get("slug"): v for v in self.ct_videos}
 
-        # Membres actuels de la chaîne (d'après le cache)
+        # Membres actuels de la chaîne (d'après le cache).
+        # On passe par _rel_urls : le champ `channel` peut contenir des URLs
+        # OU des objets imbriqués selon le sérialiseur de l'instance. Sans cette
+        # normalisation, l'appartenance n'était pas détectée quand l'API renvoie
+        # des objets → aucun retrait possible et risque de doublons.
         current = set()
         for v in self.ct_videos:
-            chans = v.get("channel") or []
-            if isinstance(chans, str):
-                chans = [chans]
-            if curl_n in [str(c).rstrip("/") for c in chans]:
+            if curl_n in self._rel_urls(v.get("channel")):
                 current.add(v.get("slug"))
 
         to_add = desired - current        # à rattacher à la chaîne
@@ -4481,16 +4630,16 @@ class App(_AppBase):
         # cette chaîne, sinon elle resterait dans un thème orphelin (incohérent).
         chan_theme_urls = {str(t.get("url")).rstrip("/")
                            for t in self.ct_themes
-                           if str(t.get("channel")).rstrip("/") == curl_n}
+                           if curl_n in self._rel_urls(t.get("channel"))}
 
         for slug in (to_add | to_remove):
             v = by_slug.get(slug)
             if not v:
                 continue
-            chans = v.get("channel") or []
-            if isinstance(chans, str):
-                chans = [chans]
-            chans = [str(c) for c in chans]
+            # URLs des chaînes de la vidéo (objets imbriqués convertis en URLs) :
+            # ce qui sera renvoyé tel quel dans le PATCH, d'où l'importance de
+            # ne jamais y laisser un dictionnaire.
+            chans = self._rel_urls(v.get("channel"), normalise=False)
             chans_n = [c.rstrip("/") for c in chans]
             theme_urls = None     # None = ne pas toucher au champ theme
 
@@ -4499,10 +4648,7 @@ class App(_AppBase):
             if slug in to_remove:
                 chans = [c for c in chans if c.rstrip("/") != curl_n]  # retrait de la chaîne
                 # COHÉRENCE : purger les thèmes de cette chaîne sur la vidéo
-                themes = v.get("theme") or []
-                if isinstance(themes, str):
-                    themes = [themes]
-                themes = [str(t.get("url") if isinstance(t, dict) else t) for t in themes]
+                themes = self._rel_urls(v.get("theme"), normalise=False)
                 kept = [t for t in themes if t.rstrip("/") not in chan_theme_urls]
                 if len(kept) != len(themes):
                     theme_urls = kept            # on devra patcher le champ theme
@@ -4531,6 +4677,10 @@ class App(_AppBase):
                  f"Chaîne « {ch.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {theme_cleaned} purgé(s) des thèmes, "
                  f"{fail} échec(s).")
+        # Rafraîchir l'affichage : sans cela, la liste garderait l'état d'avant
+        # l'action (nombre de vidéos par chaîne, etc.) jusqu'au prochain
+        # « Actualiser » manuel.
+        self._ui(self._render_ct)
 
     def _ct_apply_theme_videos(self, ch, theme, selected_slugs):
         """Callback du sélecteur de thème : applique les changements en arrière-plan."""
@@ -4549,18 +4699,10 @@ class App(_AppBase):
         curl_n = str(curl).rstrip("/")
         by_slug = {v.get("slug"): v for v in self.ct_videos}
 
-        def norm(rel):
-            """Normalise un champ relation en liste d'URLs (str)."""
-            if not rel:
-                return []
-            if isinstance(rel, str):
-                rel = [rel]
-            return [str(x.get("url") if isinstance(x, dict) else x) for x in rel]
-
         # Membres actuels du thème (d'après le cache)
         current = set()
         for v in self.ct_videos:
-            if turl_n in [u.rstrip("/") for u in norm(v.get("theme"))]:
+            if turl_n in [u.rstrip("/") for u in self._rel_urls(v.get("theme"), normalise=False)]:
                 current.add(v.get("slug"))
 
         to_add = desired - current        # à ranger dans le thème
@@ -4571,9 +4713,9 @@ class App(_AppBase):
             v = by_slug.get(slug)
             if not v:
                 continue
-            themes = norm(v.get("theme"))
+            themes = self._rel_urls(v.get("theme"), normalise=False)
             themes_n = [u.rstrip("/") for u in themes]
-            chans = norm(v.get("channel"))
+            chans = self._rel_urls(v.get("channel"), normalise=False)
             chans_n = [u.rstrip("/") for u in chans]
             payload = {}
 
@@ -4611,6 +4753,7 @@ class App(_AppBase):
         self._ui(self._log,
                  f"Thème « {theme.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {forced} forcé(s) en chaîne, {fail} échec(s).")
+        self._ui(self._render_ct)      # refléter le changement dans la liste
 
     def _ct_manage_owners(self, ch):
         """Ouvre un sélecteur de comptes pour gérer les ADMINISTRATEURS (owners)
@@ -4657,6 +4800,7 @@ class App(_AppBase):
                           f"{len(urls)} administrateur(s).", text_color="#22c55e")
             self._ui(self._log,
                      f"Chaîne « {ch.get('title')} » : {len(urls)} administrateur(s) défini(s).")
+            self._ui(self._render_ct)      # refléter le changement dans la liste
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
@@ -4675,63 +4819,106 @@ class App(_AppBase):
         self._run(self._do_ct_prepare_groups, ch)
 
     def _do_ct_prepare_groups(self, ch):
-        """(Thread) Calcule les groupes COMMUNS à toutes les vidéos de la chaîne
-        (= la restriction uniforme actuelle), puis ouvre la fenêtre."""
+        """(Thread) Analyse les restrictions des vidéos de la chaîne, puis ouvre
+        la fenêtre de sélection.
+
+        On calcule DEUX informations, et pas seulement l'intersection :
+          • `common` : groupes présents sur TOUTES les vidéos → cases cochées ;
+          • `counts` : pour chaque groupe, le NOMBRE de vidéos qui l'ont.
+
+        Pourquoi : avec la seule intersection, il suffisait qu'UNE vidéo sur
+        trente n'ait pas le groupe pour que la case apparaisse vide — laissant
+        croire qu'aucune restriction n'existait. Le décompte permet d'afficher
+        un état « partiel » (ex. « 29/30 ») au lieu de masquer l'information."""
         try:
+            # Les données peuvent avoir changé depuis le dernier chargement
+            # (modification faite dans un autre onglet) : on recharge si le
+            # cache est vide, et on s'appuie sinon sur les caches synchronisés.
             if not self.ct_videos:
                 self.ct_videos = self.api.get_all_videos()
             curl = str(ch.get("url", "")).rstrip("/")
 
             def in_chan(v):
                 """Teste si une vidéo appartient à la chaîne filtrée."""
-                chans = v.get("channel") or []
-                if isinstance(chans, str):
-                    chans = [chans]
-                urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
-                        for c in chans]
-                return curl in urls
+                return curl in self._rel_urls(v.get("channel"))
 
             vids = [v for v in self.ct_videos if in_chan(v)]
             # Groupes communs à TOUTES les vidéos (intersection) = restriction
             # uniforme en vigueur ; sert de pré-cochage.
             common = None
+            counts = {}                     # URL de groupe → nb de vidéos concernées
             for v in vids:
-                gs = set(str(x.get("url") if isinstance(x, dict) else x).rstrip("/")
-                         for x in (v.get("restrict_access_to_groups") or []))
+                gs = set(self._rel_urls(v.get("restrict_access_to_groups")))
+                for g in gs:
+                    counts[g] = counts.get(g, 0) + 1
                 common = gs if common is None else (common & gs)
             common = common or set()
             self._ui(self.ct_status.configure,
                      text=f"{len(vids)} vidéo(s) dans la chaîne.", text_color="gray")
-            self._ui(lambda: self._ct_groups_dialog(ch, common))
+            self._ui(lambda: self._ct_groups_dialog(ch, common, counts, len(vids)))
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Lecture restrictions chaîne : {e}")
 
-    def _ct_groups_dialog(self, ch, current_norm):
-        """Fenêtre de sélection des groupes, pré-cochée sur `current_norm`
-        (URLs normalisées des groupes déjà appliqués à toute la chaîne)."""
+    def _ct_groups_dialog(self, ch, current_norm, counts=None, nb_videos=0):
+        """Fenêtre de sélection des groupes de la chaîne.
+
+        `current_norm` : groupes appliqués à TOUTES les vidéos → cases cochées.
+        `counts`       : URL de groupe → nombre de vidéos concernées. Sert à
+                         signaler les états PARTIELS (ex. « 29/30 vidéos »),
+                         qui, sans cela, apparaîtraient comme « non restreint »
+                         et induiraient l'utilisateur en erreur.
+        `nb_videos`    : nombre total de vidéos dans la chaîne."""
+        counts = counts or {}
         win = ctk.CTkToplevel(self)
         win.title(f"Restreindre « {ch.get('title')} »")
-        win.geometry("440x460")
+        win.geometry("470x520")
         _focus_toplevel(win, self)
 
         ctk.CTkLabel(win, text=f"Chaîne : {ch.get('title')}",
                      font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 2), anchor="w")
-        ctk.CTkLabel(win, text="Cochez les groupes autorisés. La restriction sera appliquée\n"
-                               "à TOUTES les vidéos de la chaîne (statut « Restreint »).\n"
-                               "Sans groupe coché, les vidéos repassent en public.",
+        ctk.CTkLabel(win, text=f"{nb_videos} vidéo(s) dans la chaîne. Cochez les groupes "
+                               "autorisés.\nLa restriction sera appliquée à TOUTES les vidéos "
+                               "(statut « Restreint »).\nSans groupe coché, les vidéos repassent "
+                               "en public.",
                      text_color="gray70", font=ctk.CTkFont(size=11),
                      justify="left").pack(padx=16, anchor="w")
 
-        holder = ctk.CTkScrollableFrame(win, height=260, label_text="Groupes d'accès")
+        holder = ctk.CTkScrollableFrame(win, height=280, label_text="Groupes d'accès")
         holder.pack(fill="both", expand=True, padx=16, pady=10)
         gvars = {}
+        partiels = 0
         for g in self.access_groups:
             gurl = g.get("url", "")
-            # Pré-coché si déjà appliqué uniformément à la chaîne
-            var = ctk.BooleanVar(value=str(gurl).rstrip("/") in current_norm)
+            gnorm = str(gurl).rstrip("/")
+            n = counts.get(gnorm, 0)                 # nb de vidéos ayant ce groupe
+            uniforme = gnorm in current_norm         # groupe présent partout
+            var = ctk.BooleanVar(value=uniforme)
             gvars[gurl] = var
-            ctk.CTkCheckBox(holder, text=g.get("code_name", "?"), variable=var).pack(anchor="w", pady=2)
+            ligne = ctk.CTkFrame(holder, fg_color="transparent")
+            ligne.pack(fill="x", pady=1)
+            ctk.CTkCheckBox(ligne, text=g.get("code_name", "?"),
+                            variable=var).pack(side="left", anchor="w")
+            # État PARTIEL : le groupe existe sur une partie seulement des
+            # vidéos. La case reste décochée (l'action s'applique à tout), mais
+            # on l'affiche pour que l'utilisateur ne croie pas à une absence.
+            if n and not uniforme:
+                partiels += 1
+                ctk.CTkLabel(ligne, text=f"⚠ partiel : {n}/{nb_videos}",
+                             text_color="#f59e0b",
+                             font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
+            elif uniforme:
+                ctk.CTkLabel(ligne, text=f"toutes ({n}/{nb_videos})",
+                             text_color="#22c55e",
+                             font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
+
+        if partiels:
+            ctk.CTkLabel(win,
+                         text=f"⚠ {partiels} groupe(s) ne concernent qu'une PARTIE des vidéos. "
+                              "Appliquer uniformisera la chaîne : les cases décochées seront "
+                              "retirées de toutes les vidéos.",
+                         text_color="#f59e0b", font=ctk.CTkFont(size=11),
+                         wraplength=430, justify="left").pack(padx=16, anchor="w")
 
         bar = ctk.CTkFrame(win, fg_color="transparent")
         bar.pack(fill="x", padx=16, pady=(0, 12))
@@ -4797,6 +4984,7 @@ class App(_AppBase):
             self._ui(self._log,
                      f"Restriction chaîne « {ch.get('title')} » : {ok} OK, {fail} échec(s), "
                      f"{len(group_urls)} groupe(s).")
+            self._ui(self._render_ct)  # refléter le changement dans la liste
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Restriction chaîne : {e}")
@@ -5083,6 +5271,148 @@ def _focus_toplevel(win, master=None):
     # les applications), puis on capture le focus.
     win.after(150, lambda: (win.attributes("-topmost", False), win.focus_force()))
     win.after(200, lambda: win.grab_set())  # modale : bloque la fenêtre principale
+
+
+class ProgressModal(ctk.CTkToplevel):
+    """Fenêtre MODALE de progression, pour les opérations longues à ne pas
+    interrompre (remplacement d'un fichier source + ré-encodage).
+
+    Pourquoi une modale : pendant un remplacement, toute autre manipulation
+    (changer de vidéo, actualiser la liste, relancer l'action…) peut couper
+    l'envoi en cours. Cette fenêtre capture le focus (`grab_set`) et neutralise
+    la croix de fermeture tant que l'opération tourne : l'utilisateur ne peut
+    donc rien faire d'autre que patienter, et voit l'avancement.
+
+    Cycle de vie :
+      • création (thread principal) → `set_phase()` / `set_progress()` pendant
+        le travail (appelés depuis le thread via App._ui) ;
+      • `finish(ok, message)` en fin d'opération : la fenêtre se déverrouille,
+        affiche le résultat et propose un bouton « Fermer ».
+    """
+
+    def __init__(self, master, title: str = "Opération en cours",
+                 intro: str = "", subtitle: str = ""):
+        """Construit la fenêtre modale de progression (titre, sous-titre, étape initiale)."""
+        super().__init__(master)
+        self.master_app = master
+        self._done = False                 # opération terminée ? (pilote la fermeture)
+        self.title(title)
+        self.geometry("470x250")
+        self.resizable(False, False)
+        # Tant que l'opération tourne, la croix de fermeture est NEUTRALISÉE :
+        # fermer la fenêtre laisserait un envoi orphelin en arrière-plan.
+        self.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
+
+        ctk.CTkLabel(self, text="⏳  Veuillez patienter…",
+                     font=ctk.CTkFont(size=17, weight="bold")).pack(
+            anchor="w", padx=20, pady=(18, 2))
+
+        self.subtitle_lbl = ctk.CTkLabel(
+            self, text=subtitle, text_color="gray70", font=ctk.CTkFont(size=12),
+            wraplength=420, justify="left")
+        self.subtitle_lbl.pack(anchor="w", padx=20, pady=(0, 8))
+
+        # Phase courante (envoi / finalisation / ré-encodage…)
+        self.phase_lbl = ctk.CTkLabel(self, text=intro, font=ctk.CTkFont(size=13),
+                                      wraplength=420, justify="left")
+        self.phase_lbl.pack(anchor="w", padx=20, pady=(0, 6))
+
+        # Barre d'avancement (même code couleur que le téléversement par lot)
+        self.bar = ctk.CTkProgressBar(self, progress_color="#16a34a")
+        self.bar.pack(fill="x", padx=20)
+        self.bar.set(0)
+
+        # Détail chiffré sous la barre (Mo envoyés / Mo total)
+        self.detail_lbl = ctk.CTkLabel(self, text="", text_color="gray",
+                                       font=ctk.CTkFont(size=11))
+        self.detail_lbl.pack(anchor="w", padx=20, pady=(4, 0))
+
+        # Rappel : ne pas interrompre (masqué une fois l'opération finie)
+        self.warn_lbl = ctk.CTkLabel(
+            self, text="Ne fermez pas cette fenêtre et ne lancez pas d'autre action : "
+                       "cela interromprait l'envoi.",
+            text_color="#f59e0b", font=ctk.CTkFont(size=11),
+            wraplength=420, justify="left")
+        self.warn_lbl.pack(anchor="w", padx=20, pady=(10, 0))
+
+        # Bouton de fermeture : désactivé jusqu'à la fin de l'opération.
+        self.close_btn = ctk.CTkButton(self, text="Fermer", width=110,
+                                       state="disabled", command=self._close_now)
+        self.close_btn.pack(anchor="e", padx=20, pady=(10, 14))
+
+        _focus_toplevel(self, master)      # au premier plan + modale (grab_set)
+
+    # ── Mises à jour (appelées depuis le thread de travail via App._ui) ────
+
+    def set_phase(self, text: str, color: str = None):
+        """Change le libellé de l'étape en cours (envoi, finalisation, encodage…)."""
+        if not self.winfo_exists():
+            return
+        self.phase_lbl.configure(text=text, **({"text_color": color} if color else {}))
+
+    def set_progress(self, fraction: float, detail: str = ""):
+        """Positionne la barre (0 à 1) et le détail chiffré sous la barre."""
+        if not self.winfo_exists():
+            return
+        self.bar.set(max(0.0, min(1.0, fraction)))
+        if detail:
+            self.detail_lbl.configure(text=detail)
+
+    def set_indeterminate(self, on: bool = True):
+        """Bascule en animation continue quand l'avancement n'est pas mesurable
+        (finalisation côté serveur : on ne sait pas combien de temps il reste)."""
+        if not self.winfo_exists():
+            return
+        try:
+            if on:
+                self.bar.configure(mode="indeterminate")
+                self.bar.start()
+            else:
+                self.bar.stop()
+                self.bar.configure(mode="determinate")
+        except Exception:
+            pass
+
+    def finish(self, ok: bool, message: str):
+        """Fin de l'opération : déverrouille la fenêtre et affiche le résultat."""
+        if not self.winfo_exists():
+            return
+        self._done = True
+        self.set_indeterminate(False)
+        self.bar.set(1.0 if ok else self.bar.get())
+        self.phase_lbl.configure(text=("✅  " if ok else "❌  ") + message,
+                                 text_color="#22c55e" if ok else "#ef4444")
+        self.warn_lbl.configure(text="Opération terminée. Vous pouvez fermer cette fenêtre.",
+                                text_color="gray")
+        self.close_btn.configure(state="normal")
+        try:
+            self.grab_release()            # rend la main à la fenêtre principale
+        except Exception:
+            pass
+
+    def ensure_unlocked(self):
+        """FILET DE SÉCURITÉ : déverrouille la fenêtre si l'opération s'est
+        terminée sans passer par `finish()` (voie de sortie imprévue). Sans ce
+        garde-fou, une modale restée « grabbed » figerait toute l'application."""
+        if not self.winfo_exists() or self._done:
+            return
+        self.finish(False, "Opération terminée de façon inattendue. "
+                           "Vérifiez la vidéo sur le site et le Journal.")
+
+    # ── Fermeture ─────────────────────────────────────────────────────────
+
+    def _on_close_attempt(self):
+        """Clic sur la croix : ignoré tant que l'opération n'est pas terminée."""
+        if self._done:
+            self._close_now()
+
+    def _close_now(self):
+        """Ferme réellement la fenêtre (après la fin de l'opération)."""
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
 
 
 class OwnerPicker(ctk.CTkToplevel):

@@ -33,6 +33,23 @@ KEYRING_TOKEN_KEY = "service_token"
 KEYRING_USER_KEY = "vehicle_username"
 KEYRING_PASS_KEY = "vehicle_password"
 
+# ── Compte VÉHICULE embarqué (DEPOT) ──────────────────────────────────────
+# Compte LOCAL sans privilège, servant UNIQUEMENT à ouvrir la session web du
+# téléversement par morceaux (chunké). Il est embarqué pour que la bascule sur
+# les gros fichiers soit TRANSPARENTE : l'administrateur n'a rien à saisir.
+#
+# Un compte véhicule saisi dans l'onglet Configuration reste PRIORITAIRE :
+# ces valeurs ne servent que de repli quand aucun n'a été renseigné.
+#
+# ⚠️ SÉCURITÉ : ce mot de passe est en clair dans le code, donc extractible d'un
+#    exécutable. C'est acceptable UNIQUEMENT parce que le compte est LOCAL et
+#    SANS PRIVILÈGE (au pire, déposer une vidéo en son nom).
+#    → Le dépôt GitHub de PodAdmin doit rester PRIVÉ.
+#    → Ce compte ne doit JAMAIS être superutilisateur ni staff.
+#    → Toute rotation du mot de passe impose de recompiler et redistribuer.
+VEHICLE_USERNAME = "DEPOT"
+VEHICLE_PASSWORD = "V&xehx7WB!iBWLoL%97HDjK&kg"
+
 # ── Bascule vers le téléversement par morceaux (chunked) ──────────────────
 # > seuil : session web (véhicule) + chunk, puis PATCH owner vers le propriétaire
 # choisi. ≤ seuil : upload classique par token (inchangé).

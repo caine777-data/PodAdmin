@@ -110,6 +110,50 @@ fichiers restent gérés.
 > compte LOCAL SANS PRIVILÈGE (ni superutilisateur, ni staff). Toute rotation
 > du mot de passe impose de recompiler et redistribuer.
 
+
+## 8. Performances d'affichage — CORRIGÉ
+
+Diagnostic mesuré sur une liste de 800 vidéos (environnement de test ; sur un
+poste Windows réel, CustomTkinter est typiquement 2 à 3 fois plus lent) :
+
+| Action | Avant | Après |
+|---|---|---|
+| Taper 10 caractères dans le filtre Vidéos | **11,0 s** | instantané (1 rendu différé) |
+| Cliquer sur une vidéo de la liste | **1,18 s** | **0,10 s** |
+| Afficher 800 vidéos dans l'Explorateur | **13,0 s** | **4,0 s** (plafonné à 300) |
+| Taper 6 caractères dans le filtre Comptes (1500 comptes) | ~18 s | instantané |
+
+La lenteur ne venait pas du réseau mais de l'**affichage** : chaque ligne est un
+widget graphique complet, et la liste était reconstruite bien plus souvent que
+nécessaire.
+
+**Trois corrections :**
+
+1. **Temporisation des filtres** (`FILTER_DELAY_MS = 250`, utilitaire
+   `App._debounce`). Les filtres sont branchés sur « touche relâchée » : taper
+   « conference » déclenchait dix reconstructions complètes, dont neuf jetées
+   aussitôt. On attend désormais une courte pause avant de reconstruire — une
+   seule fois. Appliqué aux filtres Vidéos, Explorateur, Comptes, sélecteur
+   d'agent, mini-sélecteur, et aux trois fenêtres de sélection
+   (OwnerPicker / VideoPicker / ChannelPicker).
+
+2. **Surbrillance sélective** (onglet Vidéos). Cliquer sur une vidéo détruisait
+   et recréait les 300 boutons de la liste juste pour déplacer la couleur de
+   sélection. Seules les deux lignes concernées sont maintenant recolorées.
+   Une police partagée remplace au passage la création d'un objet police par ligne.
+
+3. **Plafond d'affichage dans l'Explorateur** (300 lignes). Il n'y en avait
+   aucun : 800 vidéos = 13 s de blocage.
+   ⚠️ **Point d'attention** : les actions par lot ne portent que sur les lignes
+   AFFICHÉES. Le plafond est donc signalé de façon très visible (bandeau orange
+   + message de comptage réécrit), pour ne jamais produire un traitement partiel
+   silencieux. Pour traiter au-delà de 300 vidéos, il faut affiner le filtre.
+
+**Piste non retenue pour l'instant** : recycler les widgets au lieu de les
+détruire/recréer, ou n'afficher que les lignes visibles à l'écran (« affichage
+virtuel »). Gain supplémentaire réel, mais refonte nettement plus lourde ; les
+trois mesures ci-dessus apportent l'essentiel.
+
 ## Point restant
 
 **Cache de vidéos partagé entre les trois onglets** (Vidéos, Explorateur,
@@ -130,3 +174,29 @@ horodatage de fraîcheur, supprimerait la cause racine — à faire ensuite.
    restrictions hétérogènes → les mentions « partiel : n/N » doivent apparaître.
 5. Remplacer un fichier (< 500 Mo) → la fenêtre de progression doit bloquer
    l'application et se déverrouiller à la fin.
+
+## 9. Option « Vidéo 360° » (onglet Vidéos) — AJOUTÉ
+
+Nouvelle case à cocher « Vidéo 360° (panoramique / immersive) » dans le panneau
+de détail d'une vidéo, sous un intitulé « Format », juste après le statut.
+
+- Elle lit et écrit le champ `is_360` de l'API (PATCH direct), et bénéficie de
+  la synchronisation des caches (`_browse_patch`) : le changement se propage aux
+  autres onglets.
+- Le nom du champ est centralisé dans la constante `FIELD_360` en tête de
+  `app.py` : un seul point à changer si une instance le nommait autrement.
+
+⚠️ **À confirmer avant diffusion** : le nom exact du champ sur l'instance. J'ai
+retenu `is_360` (nom standard d'Esup-Pod), mais la règle du projet est de
+vérifier par sonde. Le script **`verifier_champ_360.py`** est fourni : il fait
+un OPTIONS sur `/rest/videos/` et un GET d'une vidéo réelle pour afficher le nom
+et le type effectifs. Si le champ diffère, corriger la seule constante
+`FIELD_360`.
+
+### Rappel : sous-titres vs légendes (question associée)
+Ce ne sont pas des doublons mais deux « kind » WebVTT distincts :
+- **sous-titres** (`subtitles`) : dialogue seul, surtout pour la TRADUCTION ;
+- **légendes** (`captions`) : dialogue + informations sonores (musique, bruits,
+  locuteur), pour les personnes sourdes/malentendantes — c'est ce qu'exige
+  l'accessibilité (WCAG 1.2.2).
+Le fichier .srt/.vtt est le même ; seul le « kind » enregistré change.

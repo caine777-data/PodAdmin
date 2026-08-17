@@ -58,6 +58,16 @@ except Exception:
 APP_TITLE = "PodAdmin — Université de Toulouse"
 APP_VERSION = "0.1.0"
 
+# Délai (ms) d'attente après la dernière frappe avant de reconstruire une liste
+# filtrée. Assez court pour rester réactif, assez long pour éviter de refaire
+# tout l'affichage à chaque caractère saisi.
+FILTER_DELAY_MS = 250
+
+# Nom du champ « vidéo 360° » dans l'API Esup-Pod. « is_360 » est le nom
+# standard ; centralisé ici pour n'avoir qu'un seul point à corriger si une
+# instance le nommait autrement (à confirmer via verifier_champ_360.py).
+FIELD_360 = "is_360"
+
 
 # ════════════════════════════════════════════════════════════════════════════
 #  MODÈLE : une entrée de la file d'attente
@@ -131,6 +141,18 @@ class App(_AppBase):
 
         self.types: list[dict] = []
         self.type_map: dict[str, str] = {}     # titre → url
+
+        # ══ MAGASIN DE VIDÉOS PARTAGÉ ══════════════════════════════════════
+        # Source de vérité UNIQUE pour les onglets qui manipulent des vidéos
+        # (Vidéos, Explorateur, Chaînes). Auparavant chaque onglet chargeait sa
+        # propre liste : la même vidéo existait en plusieurs exemplaires, et
+        # modifier l'un ne modifiait pas les autres (d'où les désynchronisations).
+        # Avec une liste unique, ce problème devient impossible : il n'y a qu'un
+        # seul objet par vidéo, partagé par tous les onglets.
+        self.videos: list[dict] = []            # la liste unique
+        self.videos_loaded_at = None            # datetime du dernier chargement
+        self.videos_loading = False             # un scan est-il déjà en cours ?
+        self._videos_waiters: list = []         # callbacks à servir en fin de scan
         self.site_urls: list[str] = []         # sites (requis à l'upload)
         self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
         self._auto_loaded: set = set()         # onglets déjà auto-chargés cette session
@@ -1381,7 +1403,8 @@ class App(_AppBase):
         self.agent_filter = ctk.CTkEntry(agent_box, width=300,
                                          placeholder_text="🔍 nom / identifiant…")
         self.agent_filter.grid(row=2, column=0, columnspan=2, padx=8, pady=8, sticky="ew")
-        self.agent_filter.bind("<KeyRelease>", lambda e: self._render_users())
+        self.agent_filter.bind("<KeyRelease>",
+                               lambda e: self._debounce("users", self._render_users))
         ctk.CTkButton(agent_box, text="🔄  Recharger", width=130,
                       command=lambda: self._run(self._load_all_users)).grid(row=2, column=2, padx=8, pady=8)
 
@@ -1949,7 +1972,8 @@ class App(_AppBase):
         self.comptes_filter = ctk.CTkEntry(
             bar, placeholder_text="🔍 nom / prénom / identifiant…")
         self.comptes_filter.pack(side="left", fill="x", expand=True)
-        self.comptes_filter.bind("<KeyRelease>", lambda e: self._render_comptes())
+        self.comptes_filter.bind("<KeyRelease>",
+                                 lambda e: self._debounce("comptes", self._render_comptes))
         # Filtre par statut équipe (is_staff)
         self.comptes_statut = ctk.CTkOptionMenu(
             bar, width=150,
@@ -2112,7 +2136,8 @@ class App(_AppBase):
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
         ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._browse_load).pack(side="left")
+                      hover_color="#1d4ed8",
+                      command=lambda: self._browse_load(force=True)).pack(side="left")
         self.browse_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
                                           font=ctk.CTkFont(size=11))
         self.browse_status.pack(side="left", padx=10)
@@ -2173,7 +2198,10 @@ class App(_AppBase):
         self.browse_detail.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
 
         # — Données —
-        self.browse_videos = []         # scan complet (cache)
+        # `browse_videos` n'est plus un cache propre à l'onglet : c'est un ALIAS
+        # du magasin partagé `self.videos` (même objet liste). Conservé le temps
+        # de la migration pour ne rien casser si un code résiduel y accède.
+        self.browse_videos = self.videos
         self.browse_channels = []       # chaînes (pour filtre + sélecteur)
         self.browse_chan_by_url = {}    # URL chaîne → titre
         self.browse_filtered = []       # sous-ensemble affiché
@@ -2183,40 +2211,66 @@ class App(_AppBase):
 
     # ── Chargement (vidéos + chaînes) ──────────────────────────────────────
 
-    def _browse_load(self):
-        """(Thread) Charge la liste des vidéos pour l'onglet Vidéos."""
+    def _browse_load(self, force: bool = False):
+        """Charge (ou rafraîchit) la liste des vidéos de l'onglet Vidéos.
+
+        `force=True` correspond au bouton « Rafraîchir » : on relit réellement
+        le serveur. À la simple OUVERTURE de l'onglet, `force` reste False et le
+        magasin partagé répond depuis le cache s'il est déjà chargé — c'est tout
+        l'intérêt du cache partagé (aucun rechargement inutile)."""
         if not self.api:
             self.browse_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
         self.browse_status.configure(text="⏳  Chargement…", text_color="gray")
+        self._browse_force_reload = bool(force)
         self._run(self._do_browse_load)
 
     def _do_browse_load(self):
-        """(Thread) Récupère toutes les vidéos + les chaînes (pour le filtre/sélecteur)."""
+        """(Thread) Récupère les chaînes, puis demande les vidéos au MAGASIN PARTAGÉ.
+
+        Les vidéos ne sont plus chargées ici : elles proviennent de
+        `ensure_videos()`, source unique partagée avec l'Explorateur et les
+        Chaînes. Si un autre onglet les a déjà chargées, l'affichage est
+        immédiat (aucun appel réseau)."""
         try:
             def prog(n):
                 """Callback de progression (avancement du scan)."""
                 self._ui(self.browse_status.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
-            videos = self.api.get_all_videos(progress_cb=prog)
             try:
                 channels = self.api.get_channels()
             except Exception:
                 channels = []
-            self.browse_videos = videos
             self.browse_channels = channels
             self.browse_chan_by_url = {str(c.get("url", "")).rstrip("/"): c.get("title", "?")
                                        for c in channels}
             self._ui(self._browse_refresh_channel_menu)
-            self._ui(self._browse_apply_filter)
-            self._ui(self.browse_status.configure,
-                     text=f"✅  {len(videos)} vidéos, {len(channels)} chaîne(s)  ·  "
-                          f"chargé à {datetime.now().strftime('%H:%M')}",
-                     text_color="#22c55e")
-            self._ui(self._log, f"Explorateur vidéos : {len(videos)} vidéos chargées.")
+            # Demande au magasin partagé : `force` reflète le clic sur
+            # « Rafraîchir » (voir _browse_load).
+            self._ui(self.ensure_videos,
+                     on_ready=self._browse_after_videos,
+                     force=getattr(self, "_browse_force_reload", False),
+                     progress_cb=prog)
         except Exception as e:
             self._ui(self.browse_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Chargement explorateur : {e}")
+
+    def _browse_after_videos(self):
+        """Appelé quand le magasin partagé est prêt : rafraîchit l'onglet Vidéos."""
+        self._browse_force_reload = False      # le rechargement forcé est consommé
+        # La sélection en cours pointe vers un objet de l'ANCIENNE liste après un
+        # rechargement : on la ré-associe par slug, sinon le panneau de détail
+        # afficherait un objet qui n'est plus dans le magasin.
+        if self.browse_selected:
+            slug = self.browse_selected.get("slug")
+            self.browse_selected = next(
+                (v for v in self.videos if v.get("slug") == slug), None)
+        self._browse_apply_filter()
+        self.browse_status.configure(
+            text=f"✅  {len(self.videos)} vidéos, {len(self.browse_channels)} chaîne(s)  ·  "
+                 f"chargé à {datetime.now().strftime('%H:%M')}",
+            text_color="#22c55e")
+        self._log(f"Onglet Vidéos : {len(self.videos)} vidéos (magasin partagé).")
 
     def _browse_refresh_channel_menu(self):
         """Remplit le filtre par chaîne avec les titres chargés."""
@@ -2249,14 +2303,32 @@ class App(_AppBase):
         return oid or "—"
 
     def _browse_apply_filter(self, *_):
-        """Filtre la liste des vidéos côté client (instantané)."""
-        if not self.browse_videos:
+        """Demande un filtrage de la liste — avec TEMPORISATION.
+
+        Le filtre est branché sur chaque frappe clavier. Sans temporisation,
+        taper « conference » reconstruisait dix fois la liste entière (une par
+        touche), soit plusieurs secondes de blocage pour neuf rendus jetés
+        aussitôt. On attend donc une courte pause dans la frappe avant de
+        recalculer : une seule reconstruction au lieu de dix."""
+        job = getattr(self, "_browse_filter_job", None)
+        if job:
+            try:
+                self.after_cancel(job)      # annule le rendu encore en attente
+            except Exception:
+                pass
+        self._browse_filter_job = self.after(FILTER_DELAY_MS, self._browse_do_filter)
+
+    def _browse_do_filter(self):
+        """Filtre réellement la liste des vidéos côté client (appelé après la
+        temporisation de `_browse_apply_filter`)."""
+        self._browse_filter_job = None
+        if not self.videos:
             self.browse_count_lbl.configure(text="Cliquez sur « Charger les vidéos ».")
             for w in self.browse_list.winfo_children():
                 w.destroy()
             return
 
-        vids = self.browse_videos
+        vids = self.videos              # source unique partagée
         # Filtre statut
         st = self.browse_statut.get()
         if st == "Brouillon":
@@ -2318,26 +2390,49 @@ class App(_AppBase):
 
         CAP = 300
         sel_slug = self.browse_selected.get("slug") if self.browse_selected else None
+        # On garde une référence sur chaque bouton : cela permet, lors d'un clic,
+        # de ne recolorer QUE les deux lignes concernées au lieu de reconstruire
+        # toute la liste (voir _browse_select).
+        self.browse_rowbtns = {}
+        police = ctk.CTkFont(size=12)      # police partagée par toutes les lignes
         for v in self.browse_filtered[:CAP]:
             slug = v.get("slug", "?")
             is_sel = slug == sel_slug
             title = (v.get("title") or "(sans titre)")[:48]
             tag = "📝" if v.get("is_draft") else "🌐"        # brouillon / public
-            ctk.CTkButton(
+            btn = ctk.CTkButton(
                 self.browse_list, text=f"{tag}  {title}", anchor="w", height=28,
                 fg_color=("gray75", "gray30") if is_sel else "transparent",
                 text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                font=ctk.CTkFont(size=12),
-                command=lambda vv=v: self._browse_select(vv)).pack(fill="x", pady=1)
+                font=police,
+                command=lambda vv=v: self._browse_select(vv))
+            btn.pack(fill="x", pady=1)
+            self.browse_rowbtns[slug] = btn
         if len(self.browse_filtered) > CAP:
             ctk.CTkLabel(self.browse_list,
                          text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
 
     def _browse_select(self, v):
-        """Sélectionne une vidéo et affiche son panneau de détail."""
+        """Sélectionne une vidéo et affiche son panneau de détail.
+
+        La surbrillance est déplacée en recolorant UNIQUEMENT l'ancienne et la
+        nouvelle ligne. Auparavant, la liste entière était détruite puis
+        recréée à chaque clic (jusqu'à 300 boutons) juste pour ce changement de
+        couleur, ce qui rendait la sélection très lente sur les grandes listes."""
+        ancien = self.browse_selected.get("slug") if self.browse_selected else None
         self.browse_selected = v
-        self._render_browse_list()      # met à jour la surbrillance
+        nouveau = v.get("slug")
+        boutons = getattr(self, "browse_rowbtns", {})
+        if boutons:
+            b = boutons.get(ancien)
+            if b is not None and b.winfo_exists():
+                b.configure(fg_color="transparent")            # désélection
+            b = boutons.get(nouveau)
+            if b is not None and b.winfo_exists():
+                b.configure(fg_color=("gray75", "gray30"))     # sélection
+        else:
+            self._render_browse_list()   # repli : liste pas encore construite
         self._browse_render_detail()
 
     # ── Panneau de détail / actions ────────────────────────────────────────
@@ -2422,6 +2517,31 @@ class App(_AppBase):
             v.update(payload)                       # MAJ cache local immédiate
             self._browse_patch(v, payload, f"statut → {choice.lower()}")
         status_seg.configure(command=_apply_status)
+
+        # — Vidéo 360° (panoramique / immersive) —
+        # Case à cocher indépendante du statut. Le champ API est centralisé dans
+        # la constante FIELD_360 (voir en tête de fichier) : si une instance
+        # nommait ce champ autrement, un seul point est à changer.
+        # Diagnostic du nom exact : lancer verifier_champ_360.py.
+        ctk.CTkLabel(self.browse_detail, text="Format", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        is360_var = ctk.BooleanVar(value=bool(v.get(FIELD_360)))
+
+        def _apply_360():
+            """Active/désactive le format 360° pour la vidéo affichée."""
+            val = bool(is360_var.get())
+            v[FIELD_360] = val                       # MAJ cache local immédiate
+            self._browse_patch(v, {FIELD_360: val},
+                               f"vidéo 360 → {'oui' if val else 'non'}")
+
+        ctk.CTkCheckBox(self.browse_detail, text="Vidéo 360° (panoramique / immersive)",
+                        variable=is360_var, command=_apply_360,
+                        font=ctk.CTkFont(size=12)).pack(anchor="w", padx=6, pady=(0, 2))
+        ctk.CTkLabel(self.browse_detail,
+                     text="À cocher pour une vidéo filmée à 360°, afin que Pod utilise le "
+                          "lecteur immersif.",
+                     font=ctk.CTkFont(size=10), text_color="gray60",
+                     wraplength=360, justify="left").pack(anchor="w", padx=6)
 
         # — Restreindre à des groupes d'accès —
         # Cocher au moins un groupe force le statut « Restreint » (couplage voulu).
@@ -2746,6 +2866,25 @@ class App(_AppBase):
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
             self._ui(self._browse_render_detail)
 
+    def _debounce(self, cle: str, fonction):
+        """Diffère l'exécution de `fonction` jusqu'à une courte pause de frappe.
+
+        Les filtres sont branchés sur l'événement « touche relâchée » : sans
+        temporisation, chaque caractère saisi reconstruit toute une liste
+        (opération coûteuse en widgets), et les rendus intermédiaires sont
+        jetés aussitôt. On annule donc le rendu encore en attente et on en
+        replanifie un seul.
+
+        `cle` identifie le différé à remplacer (une clé par filtre)."""
+        attrib = f"_job_{cle}"
+        job = getattr(self, attrib, None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        setattr(self, attrib, self.after(FILTER_DELAY_MS, fonction))
+
     @staticmethod
     def _rel_urls(value, normalise: bool = True) -> list:
         """Normalise une RELATION de l'API Pod en liste d'URLs (texte).
@@ -2775,22 +2914,117 @@ class App(_AppBase):
             out.append(url.rstrip("/") if normalise else url)
         return out
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  MAGASIN DE VIDÉOS PARTAGÉ
+    # ══════════════════════════════════════════════════════════════════════
+
+    def ensure_videos(self, on_ready=None, force: bool = False, progress_cb=None):
+        """Garantit que `self.videos` est chargé, puis appelle `on_ready`.
+
+        C'est le SEUL point d'entrée pour obtenir la liste des vidéos. Les
+        onglets ne rappellent plus `get_all_videos()` chacun de leur côté :
+          • si la liste est déjà chargée et `force=False` → `on_ready` est
+            appelé immédiatement (aucun appel réseau) ;
+          • sinon un scan est lancé en arrière-plan et `on_ready` est appelé à
+            la fin, dans le thread principal.
+
+        CONCURRENCE : si un scan est déjà en cours (l'utilisateur ouvre deux
+        onglets coup sur coup), on n'en lance PAS un second — le `on_ready` est
+        mis en attente et servi avec les autres à la fin du scan en cours.
+
+        `force=True` : rechargement explicite (bouton « Actualiser »).
+        `progress_cb` : callback d'avancement du scan (page par page).
+        """
+        # 1. Données déjà disponibles → service immédiat.
+        if self.videos and not force:
+            if on_ready:
+                on_ready()
+            return
+
+        # 2. Un scan tourne déjà → on s'inscrit dans la file d'attente.
+        if self.videos_loading:
+            if on_ready:
+                self._videos_waiters.append(on_ready)
+            return
+
+        # 3. Sinon, on lance LE scan.
+        self.videos_loading = True
+        if on_ready:
+            self._videos_waiters.append(on_ready)
+        self._run(self._do_load_videos, progress_cb)
+
+    def _do_load_videos(self, progress_cb=None):
+        """(Thread) Charge la liste complète des vidéos dans le magasin partagé,
+        puis réveille tous les onglets qui l'attendaient."""
+        from datetime import datetime
+        try:
+            vids = self.api.get_all_videos(progress_cb=progress_cb)
+            # Remplacement du CONTENU (et non de l'objet liste) : d'éventuelles
+            # références conservées ailleurs restent ainsi valides.
+            self.videos[:] = vids
+            self.videos_loaded_at = datetime.now()
+            self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
+        except Exception as e:
+            self._ui(self._log, f"❌ Chargement des vidéos : {e}")
+        finally:
+            # Quoi qu'il arrive : libérer le verrou et servir les demandeurs,
+            # sinon les onglets resteraient bloqués en attente.
+            self.videos_loading = False
+            self._ui(self._flush_videos_waiters)
+
+    def _flush_videos_waiters(self):
+        """Appelle (thread principal) tous les callbacks en attente du scan."""
+        waiters, self._videos_waiters = self._videos_waiters, []
+        for cb in waiters:
+            try:
+                cb()
+            except Exception as e:
+                self._log(f"❌ Rafraîchissement d'un onglet : {e}")
+
+    def ensure_videos_sync(self, progress_cb=None) -> list:
+        """Version SYNCHRONE de `ensure_videos`, à appeler depuis un thread.
+
+        L'onglet Chaînes travaille déjà dans un thread : il lui faut la liste
+        immédiatement, pas un rappel différé. Si le magasin est vide, on le
+        remplit ici même ; sinon on renvoie directement son contenu.
+
+        Renvoie toujours `self.videos` (la liste partagée)."""
+        from datetime import datetime
+        if not self.videos:
+            vids = self.api.get_all_videos(progress_cb=progress_cb)
+            self.videos[:] = vids
+            self.videos_loaded_at = datetime.now()
+            self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
+        return self.videos
+
+    def videos_stamp(self) -> str:
+        """Libellé de fraîcheur du magasin partagé, affiché dans les onglets."""
+        if not self.videos_loaded_at:
+            return "(non chargé)"
+        return (f"{len(self.videos)} vidéo(s) — chargées à "
+                f"{self.videos_loaded_at.strftime('%H:%M')}")
+
     def _sync_video_caches(self, slug, payload=None, removed=False):
-        """Propage une modification de vidéo à TOUS les caches d'onglets
-        (Vidéos, Explorateur, Chaînes), pour éviter qu'un onglet affiche un
-        état périmé après une modif faite ailleurs. Identifie la vidéo par slug.
-        - payload : dict de champs à appliquer (mise à jour) ;
-        - removed : True si la vidéo a été supprimée (on la retire des caches)."""
-        for name in ("browse_videos", "clean_videos", "ct_videos"):
-            cache = getattr(self, name, None)
-            if not cache:
-                continue
-            if removed:
-                cache[:] = [vv for vv in cache if vv.get("slug") != slug]
-            elif payload:
-                for vv in cache:
-                    if vv.get("slug") == slug:
-                        vv.update(payload)
+        """Applique une modification de vidéo au MAGASIN PARTAGÉ.
+
+        Historique : cette méthode recopiait la modification dans les trois
+        caches d'onglets, qui étaient des listes distinctes. Depuis la mise en
+        place du magasin partagé `self.videos`, il n'existe plus qu'UN SEUL
+        exemplaire de chaque vidéo : la propagation est donc automatique et
+        cette méthode ne sert plus qu'à deux choses —
+          • retirer une vidéo supprimée de la liste (`removed=True`) ;
+          • garantir la mise à jour même si l'appelant a modifié une copie
+            plutôt que l'objet du magasin (filet de sécurité).
+
+        Elle est conservée pour rester compatible avec les appels existants et
+        éviter tout oubli lors d'une future évolution.
+        """
+        if removed:
+            self.videos[:] = [vv for vv in self.videos if vv.get("slug") != slug]
+        elif payload:
+            for vv in self.videos:
+                if vv.get("slug") == slug:
+                    vv.update(payload)
 
     def _loaded_stamp(self) -> str:
         """Renvoie « chargé à HH:MM » pour indiquer la fraîcheur des données
@@ -3023,8 +3257,8 @@ class App(_AppBase):
         slug = v.get("slug", "")
         try:
             self.api.delete_video(v)
-            if v in self.browse_videos:
-                self.browse_videos.remove(v)
+            if v in self.videos:
+                self.videos.remove(v)
             # Retirer aussi la vidéo des caches des AUTRES onglets (Explorateur,
             # Chaînes) : sans cela elle y resterait en « fantôme » et toute action
             # dessus échouerait (404), en faussant au passage les calculs de
@@ -3145,7 +3379,8 @@ class App(_AppBase):
         state = {"frame": box, "filter": fe, "results": res,
                  "chosen": chosen, "on_pick": on_pick, "selected": None}
         # Re-render à chaque frappe dans le filtre
-        fe.bind("<KeyRelease>", lambda e, s=state: self._render_mini_picker(s))
+        fe.bind("<KeyRelease>",
+                lambda e, s=state: self._debounce("mini", lambda: self._render_mini_picker(s)))
         self._reassign_pickers.append(state)
         self._render_mini_picker(state)
         return state
@@ -3436,7 +3671,8 @@ class App(_AppBase):
         scan_row = ctk.CTkFrame(frame, fg_color="transparent")
         scan_row.pack(fill="x")
         ctk.CTkButton(scan_row, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._clean_scan).pack(side="left")
+                      hover_color="#1d4ed8",
+                      command=lambda: self._clean_scan(force=True)).pack(side="left")
         self.clean_scan_lbl = ctk.CTkLabel(scan_row, text="(aucun scan)", text_color="gray",
                                            font=ctk.CTkFont(size=11))
         self.clean_scan_lbl.pack(side="left", padx=10)
@@ -3530,7 +3766,9 @@ class App(_AppBase):
         self.clean_progress.pack(side="left", padx=8)
 
         # Structures de données
-        self.clean_videos = []     # scan complet (cache)
+        # ALIAS du magasin partagé `self.videos` (même objet liste), conservé le
+        # temps de la migration pour ne rien casser si un code résiduel y accède.
+        self.clean_videos = self.videos
         self.clean_filtered = []   # sous-ensemble affiché après filtrage
         self.clean_rowvars = {}    # slug → BooleanVar (cochée = à traiter)
         self.clean_rowlbls = {}    # slug → label de statut ✔/✗
@@ -3557,7 +3795,7 @@ class App(_AppBase):
         self.clean_type.configure(values=["Tous types"] + types)
         # Propriétaires présents dans le scan (libellé lisible → identifiant)
         owner_map = {}
-        for v in self.clean_videos:
+        for v in self.videos:
             oid = str(self._video_owner_id(v))
             if not oid:
                 continue
@@ -3572,7 +3810,7 @@ class App(_AppBase):
             values=["Tous propriétaires"] + sorted(owner_map.keys(), key=str.lower))
         # Chaînes présentes dans le scan (titre → URL)
         chan_map = {}
-        for v in self.clean_videos:
+        for v in self.videos:
             chans = v.get("channel") or []
             if isinstance(chans, str):
                 chans = [chans]
@@ -3586,32 +3824,52 @@ class App(_AppBase):
 
     # ── Scan de l'instance (lecture seule) ─────────────────────────────────
 
-    def _clean_scan(self):
-        """Déclenche le scan complet des vidéos (en arrière-plan)."""
+    def _clean_scan(self, force: bool = False):
+        """Déclenche le scan des vidéos (en arrière-plan).
+
+        `force=True` = bouton « Scanner » : relit réellement le serveur. À la
+        simple ouverture de l'onglet, le magasin partagé répond depuis le cache
+        s'il est déjà chargé (aucun rechargement inutile)."""
         if not self.api:
             self.clean_scan_lbl.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
             return
         self.clean_scan_lbl.configure(text="⏳  Scan en cours…", text_color="gray")
+        self._clean_force_reload = bool(force)
         self._run(self._do_clean_scan)
 
     def _do_clean_scan(self):
-        """(Thread) Récupère toutes les vidéos puis applique le filtre courant."""
+        """(Thread) Demande les vidéos au MAGASIN PARTAGÉ puis applique le filtre.
+
+        Les vidéos ne sont plus rechargées ici : si l'onglet Vidéos (ou Chaînes)
+        les a déjà chargées, l'affichage est immédiat, sans appel réseau."""
         try:
             def prog(n):   # progression du scan paginé
                 """Callback de progression (avancement du scan)."""
                 self._ui(self.clean_scan_lbl.configure,
                          text=f"⏳  {n} vidéos lues…", text_color="gray")
-            vids = self.api.get_all_videos(progress_cb=prog)
-            self.clean_videos = vids
-            self._ui(self.clean_scan_lbl.configure,
-                     text=f"✅  {len(vids)} vidéos chargées  ·  {self._loaded_stamp()}",
-                     text_color="#22c55e")
-            self._ui(self._clean_populate_filters)
-            self._ui(self._apply_clean_filter)
-            self._ui(self._log, f"Scan nettoyage : {len(vids)} vidéos.")
+            self._ui(self.ensure_videos,
+                     on_ready=self._clean_after_videos,
+                     force=getattr(self, "_clean_force_reload", False),
+                     progress_cb=prog)
         except Exception as e:
             self._ui(self.clean_scan_lbl.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Scan nettoyage : {e}")
+
+    def _clean_after_videos(self):
+        """Appelé quand le magasin partagé est prêt : rafraîchit l'Explorateur."""
+        self._clean_force_reload = False        # rechargement forcé consommé
+        # Les cases cochées désignaient des objets de l'ANCIENNE liste : après un
+        # rechargement, on repart d'une sélection vide plutôt que de conserver
+        # des références obsolètes (une action par lot porterait sur des vidéos
+        # qui ne sont plus dans le magasin).
+        if hasattr(self, "clean_rowvars"):
+            self.clean_rowvars = {}
+        self.clean_scan_lbl.configure(
+            text=f"✅  {len(self.videos)} vidéos chargées  ·  {self._loaded_stamp()}",
+            text_color="#22c55e")
+        self._clean_populate_filters()
+        self._apply_clean_filter()
+        self._log(f"Explorateur : {len(self.videos)} vidéos (magasin partagé).")
 
     # ── Filtrage par catégorie + texte ─────────────────────────────────────
 
@@ -3647,10 +3905,27 @@ class App(_AppBase):
         return dups
 
     def _apply_clean_filter(self, *_):
+        """Demande un filtrage de l'Explorateur — avec TEMPORISATION.
+
+        Le filtre étant branché sur chaque frappe clavier et l'affichage d'une
+        ligne étant coûteux ici (cadre + case à cocher + libellés), recalculer à
+        chaque caractère bloquait l'interface plusieurs secondes. On attend donc
+        une courte pause dans la frappe avant de reconstruire."""
+        job = getattr(self, "_clean_filter_job", None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._clean_filter_job = self.after(FILTER_DELAY_MS, self._do_clean_filter)
+
+    def _do_clean_filter(self):
         """Construit self.clean_filtered en appliquant TOUS les filtres en cascade
-        (texte, statut, encodage, type, propriétaire, chaîne, détection, dates)."""
+        (texte, statut, encodage, type, propriétaire, chaîne, détection, dates).
+        Appelé après la temporisation de `_apply_clean_filter`."""
+        self._clean_filter_job = None
         # Pas encore scanné
-        if not self.clean_videos:
+        if not self.videos:
             self.clean_count_lbl.configure(
                 text="Cliquez sur « Scanner les vidéos » pour commencer.")
             for w in self.clean_results.winfo_children():
@@ -3658,7 +3933,7 @@ class App(_AppBase):
             self.clean_filtered = []
             return
 
-        vids = self.clean_videos
+        vids = self.videos              # source unique partagée
 
         # 1) Texte (titre / slug / propriétaire)
         txt = self.clean_text.get().strip().lower()
@@ -3749,14 +4024,39 @@ class App(_AppBase):
         self.clean_rowvars = {}
         self.clean_rowlbls = {}
 
-        self.clean_count_lbl.configure(
-            text=f"{len(self.clean_filtered)} vidéo(s) après filtrage. "
-                 f"Cochez celles à traiter.")
+        # PLAFOND d'affichage : chaque ligne coûte cher (cadre + case + libellés).
+        # Sans plafond, 800 vidéos figeaient l'interface une dizaine de secondes.
+        CAP = 300
+        total = len(self.clean_filtered)
+        tronque = total > CAP
+        a_afficher = self.clean_filtered[:CAP]
+
+        if tronque:
+            # AVERTISSEMENT EXPLICITE : les actions par lot ne portent que sur les
+            # lignes AFFICHÉES. Tronquer sans le dire produirait des traitements
+            # partiels silencieux — exactement ce qu'il faut éviter ici.
+            self.clean_count_lbl.configure(
+                text=f"{total} vidéo(s) après filtrage — seules les {CAP} premières sont "
+                     f"affichées ET traitables. Affinez le filtre pour toutes les traiter.")
+        else:
+            self.clean_count_lbl.configure(
+                text=f"{total} vidéo(s) après filtrage. Cochez celles à traiter.")
 
         if not self.clean_filtered:
             ctk.CTkLabel(self.clean_results, text="Aucune vidéo dans cette catégorie.",
                          text_color="gray").pack(pady=10)
             return
+
+        if tronque:
+            banniere = ctk.CTkFrame(self.clean_results, fg_color=("#fde68a", "#78350f"),
+                                    corner_radius=6)
+            banniere.pack(fill="x", pady=(0, 6))
+            ctk.CTkLabel(banniere,
+                         text=f"⚠  Affichage limité aux {CAP} premières vidéos sur {total}. "
+                              f"Les actions par lot ne s'appliqueront qu'à celles-ci.",
+                         text_color=("#78350f", "#fde68a"),
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         wraplength=900, justify="left").pack(padx=10, pady=6, anchor="w")
 
         # En-tête : (dé)sélection globale
         head = ctk.CTkFrame(self.clean_results, fg_color="transparent")
@@ -3767,7 +4067,7 @@ class App(_AppBase):
                       command=lambda: self._clean_check_all(False)).pack(side="left", padx=2)
 
         # Une ligne par vidéo : [case] titre · slug  [drapeaux]   …  [statut]
-        for v in self.clean_filtered:
+        for v in a_afficher:
             slug = v.get("slug", "?")
             row = ctk.CTkFrame(self.clean_results, fg_color=("gray85", "gray17"),
                                corner_radius=6)
@@ -3869,8 +4169,8 @@ class App(_AppBase):
             try:
                 if kind == "delete":
                     self.api.delete_video(v)
-                    if v in self.clean_videos:
-                        self.clean_videos.remove(v)
+                    if v in self.videos:
+                        self.videos.remove(v)
                     self._sync_video_caches(slug, removed=True)
                 else:
                     # Statut : PATCH des deux booléens d'un coup (cohérent)
@@ -4331,7 +4631,9 @@ class App(_AppBase):
         # Données
         self.ct_channels = []           # liste de chaînes (dicts)
         self.ct_themes = []             # liste de thèmes (dicts)
-        self.ct_videos = []             # cache des vidéos (pour gérer l'appartenance)
+        # ALIAS du magasin partagé `self.videos` (même objet liste), conservé le
+        # temps de la migration pour ne rien casser si un code résiduel y accède.
+        self.ct_videos = self.videos
         self.ct_channel_choices = {}    # titre de chaîne → URL (pour le menu thème)
 
     # ── Chargement ─────────────────────────────────────────────────────────
@@ -4518,14 +4820,13 @@ class App(_AppBase):
         """(Thread) Scanne les vidéos puis ouvre soit le sélecteur de chaîne
         (si aucun thème), soit le petit menu chaîne/thèmes."""
         try:
-            if not self.ct_videos:
-                self.ct_videos = self.api.get_all_videos()
+            self.ensure_videos_sync()      # magasin partagé (chargé si besoin)
             curl = str(ch.get("url", "")).rstrip("/")
             # Thèmes appartenant à CETTE chaîne (cohérence : on ne propose que ceux-là)
             themes = [t for t in self.ct_themes
                       if str(t.get("channel")).rstrip("/") == curl]
             self._ui(self.ct_status.configure,
-                     text=f"{len(self.ct_videos)} vidéos chargées.", text_color="gray")
+                     text=f"{len(self.videos)} vidéos chargées.", text_color="gray")
             if themes:
                 self._ui(lambda: self._ct_organizer_dialog(ch, themes))
             else:
@@ -4577,7 +4878,7 @@ class App(_AppBase):
         contient l'URL donnée. Sert à pré-cocher le sélecteur."""
         target = str(url).rstrip("/")
         pre = {}
-        for v in self.ct_videos:
+        for v in self.videos:
             rel = v.get(field) or []
             if isinstance(rel, str):
                 rel = [rel]
@@ -4589,14 +4890,14 @@ class App(_AppBase):
     def _ct_open_channel_picker(self, ch):
         """Ouvre le sélecteur pour gérer l'appartenance à la chaîne entière."""
         pre = self._videos_in_relation("channel", ch.get("url"))
-        VideoPicker(self, self.ct_videos,
+        VideoPicker(self, self.videos,
                     on_done=lambda slugs: self._ct_apply_channel_videos(ch, slugs),
                     title=f"Vidéos de « {ch.get('title')} »", preselected=pre)
 
     def _ct_open_theme_picker(self, ch, theme):
         """Ouvre le sélecteur pour ranger des vidéos dans un thème de la chaîne."""
         pre = self._videos_in_relation("theme", theme.get("url"))
-        VideoPicker(self, self.ct_videos,
+        VideoPicker(self, self.videos,
                     on_done=lambda slugs: self._ct_apply_theme_videos(ch, theme, slugs),
                     title=f"Vidéos du thème « {theme.get('title')} »", preselected=pre)
 
@@ -4609,7 +4910,7 @@ class App(_AppBase):
         On préserve les AUTRES chaînes de chaque vidéo (on n'ajoute/retire que celle-ci)."""
         curl = ch.get("url", "")
         curl_n = str(curl).rstrip("/")
-        by_slug = {v.get("slug"): v for v in self.ct_videos}
+        by_slug = {v.get("slug"): v for v in self.videos}
 
         # Membres actuels de la chaîne (d'après le cache).
         # On passe par _rel_urls : le champ `channel` peut contenir des URLs
@@ -4617,7 +4918,7 @@ class App(_AppBase):
         # normalisation, l'appartenance n'était pas détectée quand l'API renvoie
         # des objets → aucun retrait possible et risque de doublons.
         current = set()
-        for v in self.ct_videos:
+        for v in self.videos:
             if curl_n in self._rel_urls(v.get("channel")):
                 current.add(v.get("slug"))
 
@@ -4697,11 +4998,11 @@ class App(_AppBase):
         turl_n = str(turl).rstrip("/")
         curl = ch.get("url", "")
         curl_n = str(curl).rstrip("/")
-        by_slug = {v.get("slug"): v for v in self.ct_videos}
+        by_slug = {v.get("slug"): v for v in self.videos}
 
         # Membres actuels du thème (d'après le cache)
         current = set()
-        for v in self.ct_videos:
+        for v in self.videos:
             if turl_n in [u.rstrip("/") for u in self._rel_urls(v.get("theme"), normalise=False)]:
                 current.add(v.get("slug"))
 
@@ -4834,15 +5135,14 @@ class App(_AppBase):
             # Les données peuvent avoir changé depuis le dernier chargement
             # (modification faite dans un autre onglet) : on recharge si le
             # cache est vide, et on s'appuie sinon sur les caches synchronisés.
-            if not self.ct_videos:
-                self.ct_videos = self.api.get_all_videos()
+            self.ensure_videos_sync()      # magasin partagé (chargé si besoin)
             curl = str(ch.get("url", "")).rstrip("/")
 
             def in_chan(v):
                 """Teste si une vidéo appartient à la chaîne filtrée."""
                 return curl in self._rel_urls(v.get("channel"))
 
-            vids = [v for v in self.ct_videos if in_chan(v)]
+            vids = [v for v in self.videos if in_chan(v)]
             # Groupes communs à TOUTES les vidéos (intersection) = restriction
             # uniforme en vigueur ; sert de pré-cochage.
             common = None
@@ -4946,8 +5246,7 @@ class App(_AppBase):
     def _do_ct_apply_groups(self, ch, group_urls):
         """(Thread) Applique la restriction par groupe à chaque vidéo de la chaîne."""
         try:
-            if not self.ct_videos:
-                self.ct_videos = self.api.get_all_videos()
+            self.ensure_videos_sync()      # magasin partagé (chargé si besoin)
             curl = str(ch.get("url", "")).rstrip("/")
             # Vidéos appartenant à cette chaîne
             def in_chan(v):
@@ -4958,7 +5257,7 @@ class App(_AppBase):
                 urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
                         for c in chans]
                 return curl in urls
-            vids = [v for v in self.ct_videos if in_chan(v)]
+            vids = [v for v in self.videos if in_chan(v)]
             ok = fail = 0
             for i, v in enumerate(vids, 1):
                 try:
@@ -5440,7 +5739,8 @@ class OwnerPicker(ctk.CTkToplevel):
         bar.pack(fill="x", padx=14)
         self.filter = ctk.CTkEntry(bar, placeholder_text="🔍 nom / identifiant…")
         self.filter.pack(side="left", fill="x", expand=True, padx=(0, 6))
-        self.filter.bind("<KeyRelease>", lambda e: self._render())
+        # Temporisation : évite de reconstruire toute la liste à chaque caractère.
+        self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
         ctk.CTkButton(bar, text="🔄", width=40, command=self._reload).pack(side="left")
 
         self.count_lbl = ctk.CTkLabel(self, text="", text_color="gray", font=ctk.CTkFont(size=11))
@@ -5489,6 +5789,17 @@ class OwnerPicker(ctk.CTkToplevel):
     def _label(self, u: dict) -> str:
         """Libellé lisible d'un compte."""
         return f"{u.get('username','?')} — {u.get('first_name','')} {u.get('last_name','')}".strip()
+
+    def _render_differe(self):
+        """Replanifie l'affichage après une courte pause de frappe (voir
+        App._debounce) : une seule reconstruction au lieu d'une par caractère."""
+        job = getattr(self, "_render_job", None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._render_job = self.after(FILTER_DELAY_MS, self._render)
 
     def _render(self):
         """Affiche la liste filtrée (cases à cocher)."""
@@ -5577,7 +5888,8 @@ class VideoPicker(ctk.CTkToplevel):
 
         self.filter = ctk.CTkEntry(self, placeholder_text="🔍 titre / slug…")
         self.filter.pack(fill="x", padx=14)
-        self.filter.bind("<KeyRelease>", lambda e: self._render())
+        # Temporisation : évite de reconstruire toute la liste à chaque caractère.
+        self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
 
         self.listbox = ctk.CTkScrollableFrame(self, height=360)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
@@ -5594,6 +5906,17 @@ class VideoPicker(ctk.CTkToplevel):
 
         self._render()
         self._update_chosen()
+
+    def _render_differe(self):
+        """Replanifie l'affichage après une courte pause de frappe (voir
+        App._debounce) : une seule reconstruction au lieu d'une par caractère."""
+        job = getattr(self, "_render_job", None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._render_job = self.after(FILTER_DELAY_MS, self._render)
 
     def _render(self):
         """Affiche la liste filtrée des vidéos (cases à cocher)."""
@@ -5664,7 +5987,8 @@ class ChannelPicker(ctk.CTkToplevel):
 
         self.filter = ctk.CTkEntry(self, placeholder_text="🔍 titre…")
         self.filter.pack(fill="x", padx=14)
-        self.filter.bind("<KeyRelease>", lambda e: self._render())
+        # Temporisation : évite de reconstruire toute la liste à chaque caractère.
+        self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
 
         self.listbox = ctk.CTkScrollableFrame(self, height=320)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
@@ -5682,6 +6006,17 @@ class ChannelPicker(ctk.CTkToplevel):
 
         self._render()
         self._update_chosen()
+
+    def _render_differe(self):
+        """Replanifie l'affichage après une courte pause de frappe (voir
+        App._debounce) : une seule reconstruction au lieu d'une par caractère."""
+        job = getattr(self, "_render_job", None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._render_job = self.after(FILTER_DELAY_MS, self._render)
 
     def _render(self):
         """Affiche la liste filtrée (cases à cocher)."""

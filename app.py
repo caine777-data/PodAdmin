@@ -63,6 +63,13 @@ APP_VERSION = "0.1.0"
 # tout l'affichage à chaque caractère saisi.
 FILTER_DELAY_MS = 250
 
+# Délai (ms) avant de redessiner les listes après une modification (suppression,
+# changement de statut, affectation à une chaîne…). Ce court sursis laisse le
+# temps de voir les ✔/✗ posés sur les lignes traitées avant que la liste ne se
+# nettoie. Il sert aussi à REGROUPER les rafraîchissements : pendant un lot de
+# 300 vidéos, un seul redessin a lieu, à la fin.
+REFRESH_DELAY_MS = 1500
+
 # Nom du champ « vidéo 360° » dans l'API Esup-Pod. « is_360 » est le nom
 # standard ; centralisé ici pour n'avoir qu'un seul point à corriger si une
 # instance le nommait autrement (à confirmer via verifier_champ_360.py).
@@ -3025,6 +3032,102 @@ class App(_AppBase):
             for vv in self.videos:
                 if vv.get("slug") == slug:
                     vv.update(payload)
+        # Toute modification d'une vidéo doit se voir à l'écran. Comme TOUS les
+        # points de mutation passent par ici, c'est le seul endroit à accrocher :
+        # pas de risque d'en oublier un. Passage par _ui car on est souvent
+        # appelé depuis un thread de travail.
+        self._ui(self.schedule_refresh)
+
+    def schedule_refresh(self, channels: bool = False):
+        """Planifie un rafraîchissement des listes après un court délai.
+
+        Appelée après TOUTE modification (suppression, statut, type,
+        propriétaire, affectation à une chaîne ou un thème, groupes d'accès…).
+
+        Deux raisons au délai :
+          • laisser voir les ✔/✗ posés sur les lignes traitées ;
+          • REGROUPER les appels : pendant un traitement par lot, chaque vidéo
+            en déclenche un, mais seul le dernier survit (les précédents sont
+            annulés) — donc un seul redessin, à la fin du lot.
+
+        `channels=True` : les chaînes/thèmes ont changé, on rafraîchit aussi les
+        menus de filtre qui en dépendent dans les autres onglets.
+        """
+        if channels:
+            self._refresh_channels_pending = True
+        job = getattr(self, "_refresh_job", None)
+        if job:
+            try:
+                self.after_cancel(job)      # annule le rafraîchissement en attente
+            except Exception:
+                pass
+        self._refresh_job = self.after(REFRESH_DELAY_MS, self._do_scheduled_refresh)
+
+    def _do_scheduled_refresh(self):
+        """Exécute le rafraîchissement planifié par `schedule_refresh`."""
+        self._refresh_job = None
+        if getattr(self, "_refresh_channels_pending", False):
+            self._refresh_channels_pending = False
+            self._refresh_channel_views()
+        self._refresh_video_views()
+
+    def _refresh_channel_views(self):
+        """Met à jour les éléments d'interface qui dépendent des CHAÎNES.
+
+        Une chaîne renommée, créée ou supprimée doit se refléter dans les menus
+        de filtre « chaîne » de l'onglet Vidéos et de l'Explorateur, ainsi que
+        dans les libellés de chaîne affichés sur chaque vidéo — sinon ces
+        onglets continuent d'afficher un nom périmé, voire une chaîne disparue.
+        """
+        chans = getattr(self, "ct_channels", None) or getattr(self, "browse_channels", None)
+        if not chans:
+            return
+        self.browse_channels = chans
+        self.browse_chan_by_url = {str(c.get("url", "")).rstrip("/"): c.get("title", "?")
+                                   for c in chans}
+        try:
+            if hasattr(self, "browse_chan"):
+                self._browse_refresh_channel_menu()
+        except Exception as e:
+            self._log(f"Rafraîchissement du menu chaînes (Vidéos) : {e}")
+        try:
+            if hasattr(self, "clean_chan"):
+                self._clean_populate_filters()
+        except Exception as e:
+            self._log(f"Rafraîchissement du menu chaînes (Explorateur) : {e}")
+
+    def _refresh_video_views(self):
+        """Recalcule les listes AFFICHÉES des onglets qui montrent des vidéos.
+
+        Le magasin `self.videos` est partagé, mais chaque onglet en garde une
+        PROJECTION filtrée (`browse_filtered`, `clean_filtered`) construite au
+        moment du dernier filtrage. Supprimer une vidéo du magasin ne suffit
+        donc pas : sans ce recalcul, la vidéo disparaît des données mais reste
+        AFFICHÉE dans les listes déjà dessinées (vidéo « fantôme »).
+
+        À appeler après toute suppression ou modification par lot. Sans effet
+        visible si les onglets ne sont pas encore construits.
+        """
+        # La sélection de l'onglet Vidéos peut pointer sur une vidéo supprimée :
+        # on la libère pour ne pas afficher le détail d'un objet disparu.
+        if self.browse_selected and self.browse_selected not in self.videos:
+            self.browse_selected = None
+            try:
+                self._browse_render_detail()
+            except Exception:
+                pass
+        # Onglet Vidéos
+        try:
+            if hasattr(self, "browse_list"):
+                self._browse_do_filter()
+        except Exception as e:
+            self._log(f"Rafraîchissement onglet Vidéos : {e}")
+        # Onglet Explorateur
+        try:
+            if hasattr(self, "clean_results"):
+                self._do_clean_filter()
+        except Exception as e:
+            self._log(f"Rafraîchissement Explorateur : {e}")
 
     def _loaded_stamp(self) -> str:
         """Renvoie « chargé à HH:MM » pour indiquer la fraîcheur des données
@@ -3267,7 +3370,6 @@ class App(_AppBase):
             self.browse_selected = None
             self._ui(self._log, f"🗑 Vidéo supprimée : {slug}")
             self._ui(self._browse_render_detail)
-            self._ui(self._browse_apply_filter)
         except Exception as e:
             self._ui(self._log, f"❌ Suppression {slug} : {e}")
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
@@ -4158,11 +4260,18 @@ class App(_AppBase):
 
         # Désactiver le bouton pendant le traitement
         self.clean_apply_btn.configure(state="disabled")
+        # Mémoriser le libellé de l'action MAINTENANT (thread principal) : lire
+        # un widget Tk depuis un thread de travail n'est pas fiable.
+        self._clean_action_label = label
         self._run(self._do_clean_apply, kind, payload, todo)
 
     def _do_clean_apply(self, kind, payload, todo):
         """(Thread) Applique l'action choisie à chaque vidéo cochée.
         kind = 'patch' (statut, payload = booléens cohérents) ou 'delete'."""
+        # Libellé de l'action, mémorisé par l'appelant AVANT le lancement du
+        # thread : lire un widget Tk depuis un thread de travail n'est pas fiable
+        # (plantages aléatoires « main thread is not in main loop »).
+        libelle_action = getattr(self, "_clean_action_label", kind)
         ok = fail = 0
         for i, v in enumerate(todo, 1):
             slug = v.get("slug", "")
@@ -4191,7 +4300,7 @@ class App(_AppBase):
                  text=f"Terminé : {ok} OK, {fail} échec(s).",
                  text_color="#22c55e" if not fail else "#f59e0b")
         self._ui(self._log,
-                 f"Explorateur « {self.clean_action.get()} » : {ok} OK, {fail} échec(s).")
+                 f"Explorateur « {libelle_action} » : {ok} OK, {fail} échec(s).")
         self._ui(self.clean_apply_btn.configure, state="normal")
 
     def _clean_pick_groups(self):
@@ -4660,6 +4769,11 @@ class App(_AppBase):
                                        for c in self.ct_channels}
             self._ui(self._render_ct)
             self._ui(self._refresh_ct_channel_menu)
+            # La liste des chaînes vient de changer (création, renommage,
+            # suppression, rechargement) : les menus de filtre « chaîne » des
+            # onglets Vidéos et Explorateur doivent suivre. Point d'accroche
+            # unique, puisque toutes ces opérations repassent par ici.
+            self._ui(self.schedule_refresh, channels=True)
             self._ui(self.ct_status.configure,
                      text=f"✅  {len(chans)} chaîne(s), {len(themes)} thème(s)  ·  "
                           f"{self._loaded_stamp()}",
@@ -5304,6 +5418,8 @@ class App(_AppBase):
                 self.api.patch_theme(url, payload)
             self._ui(self._log, logmsg)
             self._do_ct_load()
+            # Les autres onglets affichent des noms de chaîne : les rafraîchir.
+            self._ui(self.schedule_refresh, channels=True)
         except Exception as e:
             self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Modification {kind} : {e}")

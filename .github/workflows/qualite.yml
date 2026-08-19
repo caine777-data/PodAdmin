@@ -1,0 +1,33 @@
+# Vérification de qualité : lancée à chaque envoi de code et sur les pull requests.
+# Objectif : détecter une régression AVANT la compilation et la distribution.
+name: qualité
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:      # bouton « Run workflow » dans l'onglet Actions
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-tk xvfb
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Vérifier la syntaxe de tous les fichiers Python
+        run: python -m compileall -q app.py pod_api.py pod_chunked.py config.py
+
+      - name: Lancer les tests
+        run: xvfb-run -a python -m pytest tests/ -v

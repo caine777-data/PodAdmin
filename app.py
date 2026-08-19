@@ -23,7 +23,9 @@ __license__     = "Usage interne — Université de Toulouse"
 
 import os
 import sys
+import subprocess
 import threading
+import time
 from datetime import datetime
 
 import customtkinter as ctk
@@ -160,6 +162,11 @@ class App(_AppBase):
         self.videos_loaded_at = None            # datetime du dernier chargement
         self.videos_loading = False             # un scan est-il déjà en cours ?
         self._videos_waiters: list = []         # callbacks à servir en fin de scan
+        # VERROU du magasin. Plusieurs threads peuvent vouloir remplir ou muter
+        # `self.videos` en même temps (l'onglet Chaînes charge en synchrone
+        # pendant qu'un scan asynchrone tourne, un lot supprime des vidéos…).
+        # Sans verrou, deux scans complets pouvaient s'écrire l'un sur l'autre.
+        self._videos_lock = threading.RLock()
         self.site_urls: list[str] = []         # sites (requis à l'upload)
         self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
         self._auto_loaded: set = set()         # onglets déjà auto-chargés cette session
@@ -676,7 +683,10 @@ class App(_AppBase):
 
         self.launch_btn.configure(state="disabled")
         self.batch_progress.set(0)
-        self._run(self._do_batch_upload, owner_url, type_url)
+        # Lecture des widgets ICI (thread principal), puis passage en arguments.
+        is_draft = self.visibility_combo.get().startswith("Brouillon")
+        do_encode = self.encode_var.get()
+        self._run(self._do_batch_upload, owner_url, type_url, is_draft, do_encode)
 
     @staticmethod
     def _file_size(path: str) -> int:
@@ -723,10 +733,13 @@ class App(_AppBase):
             _t.sleep(cfg.CHUNK_VERIFY_INTERVAL_S)
         return None
 
-    def _do_batch_upload(self, owner_url: str, type_url: str):
+    def _do_batch_upload(self, owner_url: str, type_url: str,
+                         is_draft: bool, do_encode: bool):
         """(Thread) Téléverse chaque vidéo, ajoute les crédits, lance l'encodage, suit la progression."""
-        is_draft = self.visibility_combo.get().startswith("Brouillon")
-        do_encode = self.encode_var.get()
+        # `is_draft` et `do_encode` sont reçus en ARGUMENTS : ils ont été lus
+        # dans le thread principal par l'appelant. Lire un widget Tk depuis un
+        # thread de travail n'est pas fiable (Tcl n'est pas thread-safe) et
+        # provoque des plantages aléatoires « main thread is not in main loop ».
         total = len(self.items)
         ok = 0
         chunked = None      # session véhicule, ouverte à la 1re nécessité
@@ -937,7 +950,10 @@ class App(_AppBase):
         self._log(f"Relance de {len(failed)} vidéo(s) en échec…")
         self.launch_btn.configure(state="disabled")
         self.retry_btn.pack_forget()
-        self._run(self._do_batch_upload, owner_url, type_url)
+        # Lecture des widgets ICI (thread principal), puis passage en arguments.
+        is_draft = self.visibility_combo.get().startswith("Brouillon")
+        do_encode = self.encode_var.get()
+        self._run(self._do_batch_upload, owner_url, type_url, is_draft, do_encode)
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET CO-AUTEURS (sur vidéos existantes)
@@ -1355,6 +1371,15 @@ class App(_AppBase):
                         command=lambda: self.token_entry.configure(
                             show="" if self.show_token.get() else "*")).grid(row=2, column=2, padx=4)
 
+        # Où le token est-il rangé ? Normalement dans le coffre-fort de l'OS
+        # (chiffré). En cas d'indisponibilité, l'application bascule sur un
+        # fichier EN CLAIR : ce libellé prévient alors l'utilisateur, car le
+        # token porte des droits d'administration sur toute l'instance.
+        self.token_storage_lbl = ctk.CTkLabel(
+            api_box, text="", font=ctk.CTkFont(size=11),
+            text_color="#f59e0b", anchor="w", wraplength=620, justify="left")
+        self.token_storage_lbl.grid(row=3, column=1, columnspan=2, sticky="w", padx=8)
+
         # — Compte VÉHICULE (local) pour le chunké des gros fichiers —
         ctk.CTkLabel(api_box,
                      text=f"Compte véhicule (local) — utilisé pour les gros fichiers (> "
@@ -1507,7 +1532,25 @@ class App(_AppBase):
         self.vehicle_password = v_pass
         self.config_data["url"] = url
         self._auto_loaded = set()      # nouvelle connexion → les onglets se rechargeront frais
-        cfg.save_token(token)
+        # `save_token` renvoie "keyring" (coffre-fort de l'OS, chiffré) ou
+        # "file" (fichier de repli en clair dans le dossier personnel).
+        # Le repli n'arrive que si le coffre-fort est indisponible — mais il
+        # faut alors le DIRE : ce token porte des droits d'administration sur
+        # toute l'instance, et le fichier reste lisible par tout programme
+        # lancé sous la même session Windows.
+        moyen_token = cfg.save_token(token)
+        self._token_en_clair = (moyen_token != "keyring")
+        if self._token_en_clair:
+            self._log("⚠️ Le coffre-fort du système est indisponible : le token a été "
+                      "enregistré dans un FICHIER de votre dossier personnel, en clair. "
+                      "Sur un poste partagé, préférez « Oublier le token » après usage.")
+            try:
+                self.token_storage_lbl.configure(
+                    text="⚠️  Coffre-fort indisponible : token stocké en clair dans un "
+                         "fichier de votre dossier personnel.",
+                    text_color="#f59e0b")
+            except Exception:
+                pass
         cfg.save_vehicle_credentials(v_user, v_pass)
         cfg.save_config(self.config_data)
         self._set_status(True)
@@ -2273,10 +2316,14 @@ class App(_AppBase):
             self.browse_selected = next(
                 (v for v in self.videos if v.get("slug") == slug), None)
         self._browse_apply_filter()
+        alerte = self.scan_truncated_warning()
         self.browse_status.configure(
-            text=f"✅  {len(self.videos)} vidéos, {len(self.browse_channels)} chaîne(s)  ·  "
-                 f"chargé à {datetime.now().strftime('%H:%M')}",
-            text_color="#22c55e")
+            text=(alerte if alerte else
+                  f"✅  {len(self.videos)} vidéos, {len(self.browse_channels)} chaîne(s)  ·  "
+                  f"chargé à {datetime.now().strftime('%H:%M')}"),
+            text_color="#ef4444" if alerte else "#22c55e")
+        if alerte:
+            self._log(alerte)
         self._log(f"Onglet Vidéos : {len(self.videos)} vidéos (magasin partagé).")
 
     def _browse_refresh_channel_menu(self):
@@ -2966,10 +3013,11 @@ class App(_AppBase):
         from datetime import datetime
         try:
             vids = self.api.get_all_videos(progress_cb=progress_cb)
-            # Remplacement du CONTENU (et non de l'objet liste) : d'éventuelles
-            # références conservées ailleurs restent ainsi valides.
-            self.videos[:] = vids
-            self.videos_loaded_at = datetime.now()
+            with self._videos_lock:
+                # Remplacement du CONTENU (et non de l'objet liste) : d'éventuelles
+                # références conservées ailleurs restent ainsi valides.
+                self.videos[:] = vids
+                self.videos_loaded_at = datetime.now()
             self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
         except Exception as e:
             self._ui(self._log, f"❌ Chargement des vidéos : {e}")
@@ -2995,14 +3043,56 @@ class App(_AppBase):
         immédiatement, pas un rappel différé. Si le magasin est vide, on le
         remplit ici même ; sinon on renvoie directement son contenu.
 
+        Le VERROU garantit qu'un seul chargement remplit le magasin à la fois :
+        si un scan asynchrone (`ensure_videos`) tourne déjà, on attend qu'il
+        finisse et on réutilise son résultat au lieu de lancer un second scan
+        complet qui écraserait le premier.
+
         Renvoie toujours `self.videos` (la liste partagée)."""
         from datetime import datetime
-        if not self.videos:
-            vids = self.api.get_all_videos(progress_cb=progress_cb)
-            self.videos[:] = vids
-            self.videos_loaded_at = datetime.now()
-            self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
+        # Si un scan ASYNCHRONE tourne déjà, inutile d'en lancer un second : on
+        # patiente jusqu'à ce qu'il ait rempli le magasin. (On est dans un thread
+        # de travail : attendre ici ne gèle pas l'interface.)
+        attente = 0.0
+        while self.videos_loading and not self.videos and attente < 120:
+            time.sleep(0.2)
+            attente += 0.2
+        if self.videos:
+            return self.videos
+
+        with self._videos_lock:
+            # Un autre thread a pu remplir le magasin pendant l'attente du
+            # verrou : on re-teste avant de lancer un appel réseau inutile.
+            if self.videos:
+                return self.videos
+            self.videos_loading = True
+            try:
+                vids = self.api.get_all_videos(progress_cb=progress_cb)
+                self.videos[:] = vids
+                self.videos_loaded_at = datetime.now()
+                self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
+            finally:
+                # Toujours relâcher le drapeau, sinon `ensure_videos` croirait
+                # qu'un scan tourne encore et n'en lancerait plus jamais.
+                self.videos_loading = False
+                self._ui(self._flush_videos_waiters)
         return self.videos
+
+    def scan_truncated_warning(self) -> str:
+        """Renvoie un avertissement si le dernier scan a été TRONQUÉ, sinon "".
+
+        La pagination s'arrête sur une limite de sécurité (`max_pages`). Si
+        cette limite est atteinte alors qu'il restait des pages, la liste est
+        incomplète : les totaux de l'Inventaire sont faux, l'Explorateur ne voit
+        pas toutes les vidéos, la Réaffectation en oublie. Sans message, rien ne
+        le laisse deviner — c'est le défaut le plus trompeur possible pour un
+        outil d'inventaire, puisqu'il produit des chiffres crédibles mais faux.
+        """
+        if not getattr(self.api, "last_scan_truncated", False):
+            return ""
+        return ("⚠️  LISTE INCOMPLÈTE : la limite de pagination a été atteinte. "
+                "Les totaux affichés sont FAUX et certaines vidéos manquent. "
+                "Signalez-le au support (support-pod@utoulouse.fr).")
 
     def videos_stamp(self) -> str:
         """Libellé de fraîcheur du magasin partagé, affiché dans les onglets."""
@@ -3026,12 +3116,13 @@ class App(_AppBase):
         Elle est conservée pour rester compatible avec les appels existants et
         éviter tout oubli lors d'une future évolution.
         """
-        if removed:
-            self.videos[:] = [vv for vv in self.videos if vv.get("slug") != slug]
-        elif payload:
-            for vv in self.videos:
-                if vv.get("slug") == slug:
-                    vv.update(payload)
+        with self._videos_lock:      # mutation du magasin : protégée
+            if removed:
+                self.videos[:] = [vv for vv in self.videos if vv.get("slug") != slug]
+            elif payload:
+                for vv in self.videos:
+                    if vv.get("slug") == slug:
+                        vv.update(payload)
         # Toute modification d'une vidéo doit se voir à l'écran. Comme TOUS les
         # points de mutation passent par ici, c'est le seul endroit à accrocher :
         # pas de risque d'en oublier un. Passage par _ui car on est souvent
@@ -3360,8 +3451,9 @@ class App(_AppBase):
         slug = v.get("slug", "")
         try:
             self.api.delete_video(v)
-            if v in self.videos:
-                self.videos.remove(v)
+            with self._videos_lock:          # mutation du magasin : protégée
+                if v in self.videos:
+                    self.videos.remove(v)
             # Retirer aussi la vidéo des caches des AUTRES onglets (Explorateur,
             # Chaînes) : sans cela elle y resterait en « fantôme » et toute action
             # dessus échouerait (404), en faussant au passage les calculs de
@@ -3682,9 +3774,12 @@ class App(_AppBase):
             return
         # Désactiver le bouton pendant le traitement (évite les double-clics)
         self.reassign_apply_btn.configure(state="disabled")
-        self._run(self._do_reassign_apply, todo)
+        # Lecture du widget ICI (thread principal), puis passage en argument :
+        # lire une variable Tk depuis un thread de travail n'est pas fiable.
+        # `keep` est reçu en ARGUMENT (lu par l'appelant dans le thread principal).
+        self._run(self._do_reassign_apply, todo, keep)
 
-    def _do_reassign_apply(self, todo):
+    def _do_reassign_apply(self, todo, keep: bool = False):
         """(Thread) Applique la réaffectation vidéo par vidéo via PATCH owner."""
         tgt = self.reassign_target
         keep = self.reassign_keep_var.get()
@@ -3872,7 +3967,13 @@ class App(_AppBase):
         # temps de la migration pour ne rien casser si un code résiduel y accède.
         self.clean_videos = self.videos
         self.clean_filtered = []   # sous-ensemble affiché après filtrage
-        self.clean_rowvars = {}    # slug → BooleanVar (cochée = à traiter)
+        self.clean_rowvars = {}    # slug → BooleanVar (cases AFFICHÉES seulement)
+        # SÉLECTION LOGIQUE : ensemble des slugs cochés, SANS limite d'affichage.
+        # L'affichage est plafonné (300 lignes) pour ne pas figer l'interface,
+        # mais la sélection, elle, peut porter sur toutes les vidéos filtrées :
+        # sinon on ne pourrait jamais traiter plus de 300 vidéos d'un coup, ce
+        # qui est justement l'usage d'un outil de nettoyage en masse.
+        self.clean_selected: set = set()
         self.clean_rowlbls = {}    # slug → label de statut ✔/✗
         self.clean_owner_map = {}  # libellé → identifiant propriétaire
         self.clean_chan_map = {}   # titre chaîne → URL
@@ -3966,9 +4067,13 @@ class App(_AppBase):
         # qui ne sont plus dans le magasin).
         if hasattr(self, "clean_rowvars"):
             self.clean_rowvars = {}
+        alerte = self.scan_truncated_warning()
         self.clean_scan_lbl.configure(
-            text=f"✅  {len(self.videos)} vidéos chargées  ·  {self._loaded_stamp()}",
-            text_color="#22c55e")
+            text=(alerte if alerte else
+                  f"✅  {len(self.videos)} vidéos chargées  ·  {self._loaded_stamp()}"),
+            text_color="#ef4444" if alerte else "#22c55e")
+        if alerte:
+            self._log(alerte)
         self._clean_populate_filters()
         self._apply_clean_filter()
         self._log(f"Explorateur : {len(self.videos)} vidéos (magasin partagé).")
@@ -4026,6 +4131,10 @@ class App(_AppBase):
         (texte, statut, encodage, type, propriétaire, chaîne, détection, dates).
         Appelé après la temporisation de `_apply_clean_filter`."""
         self._clean_filter_job = None
+        # Changer de filtre annule la sélection : agir sur des vidéos qui ne
+        # correspondent plus à ce qui est affiché serait dangereux, d'autant que
+        # la sélection peut dépasser les lignes visibles.
+        self.clean_selected = set()
         # Pas encore scanné
         if not self.videos:
             self.clean_count_lbl.configure(
@@ -4133,16 +4242,9 @@ class App(_AppBase):
         tronque = total > CAP
         a_afficher = self.clean_filtered[:CAP]
 
-        if tronque:
-            # AVERTISSEMENT EXPLICITE : les actions par lot ne portent que sur les
-            # lignes AFFICHÉES. Tronquer sans le dire produirait des traitements
-            # partiels silencieux — exactement ce qu'il faut éviter ici.
-            self.clean_count_lbl.configure(
-                text=f"{total} vidéo(s) après filtrage — seules les {CAP} premières sont "
-                     f"affichées ET traitables. Affinez le filtre pour toutes les traiter.")
-        else:
-            self.clean_count_lbl.configure(
-                text=f"{total} vidéo(s) après filtrage. Cochez celles à traiter.")
+        # Le plafond ne concerne QUE l'affichage : « Tout cocher » sélectionne
+        # l'ensemble des vidéos filtrées, et l'action s'y applique entièrement.
+        self._clean_update_selection_label()
 
         if not self.clean_filtered:
             ctk.CTkLabel(self.clean_results, text="Aucune vidéo dans cette catégorie.",
@@ -4154,8 +4256,9 @@ class App(_AppBase):
                                     corner_radius=6)
             banniere.pack(fill="x", pady=(0, 6))
             ctk.CTkLabel(banniere,
-                         text=f"⚠  Affichage limité aux {CAP} premières vidéos sur {total}. "
-                              f"Les actions par lot ne s'appliqueront qu'à celles-ci.",
+                         text=f"ℹ  Affichage limité aux {CAP} premières vidéos sur {total} "
+                              f"(pour garder l'interface fluide). « Tout cocher » sélectionne "
+                              f"bien les {total}, et l'action s'applique à toute la sélection.",
                          text_color=("#78350f", "#fde68a"),
                          font=ctk.CTkFont(size=12, weight="bold"),
                          wraplength=900, justify="left").pack(padx=10, pady=6, anchor="w")
@@ -4174,9 +4277,13 @@ class App(_AppBase):
             row = ctk.CTkFrame(self.clean_results, fg_color=("gray85", "gray17"),
                                corner_radius=6)
             row.pack(fill="x", pady=2)
-            var = ctk.BooleanVar(value=False)      # DÉCOCHÉ par défaut (sécurité)
+            # La case reflète la SÉLECTION LOGIQUE (et non l'inverse) : une vidéo
+            # cochée puis sortie de l'affichage reste sélectionnée.
+            var = ctk.BooleanVar(value=(slug in self.clean_selected))
             self.clean_rowvars[slug] = var
-            ctk.CTkCheckBox(row, text="", variable=var, width=24).pack(side="left", padx=(8, 0))
+            ctk.CTkCheckBox(row, text="", variable=var, width=24,
+                            command=lambda sl=slug, vv=var: self._clean_toggle(sl, vv)
+                            ).pack(side="left", padx=(8, 0))
 
             # Drapeaux d'état lisibles d'un coup d'œil
             flags = []
@@ -4196,10 +4303,52 @@ class App(_AppBase):
             stat.pack(side="right", padx=8)
             self.clean_rowlbls[slug] = stat
 
+    def _clean_toggle(self, slug: str, var):
+        """Répercute le clic sur une case dans la sélection logique."""
+        if var.get():
+            self.clean_selected.add(slug)
+        else:
+            self.clean_selected.discard(slug)
+        self._clean_update_selection_label()
+
     def _clean_check_all(self, value: bool):
-        """Coche ou décoche toutes les vidéos affichées."""
+        """Coche ou décoche TOUTES les vidéos filtrées — y compris celles qui ne
+        sont pas affichées (l'affichage est plafonné, pas la sélection)."""
+        if value:
+            self.clean_selected = {v.get("slug") for v in self.clean_filtered}
+        else:
+            self.clean_selected = set()
+        # Refléter l'état sur les cases actuellement visibles
+        for slug, var in self.clean_rowvars.items():
+            var.set(slug in self.clean_selected)
+        self._clean_update_selection_label()
+
+    def _clean_clear_selection(self):
+        """Vide la sélection (après un lot traité) et décoche les cases visibles."""
+        self.clean_selected = set()
         for var in self.clean_rowvars.values():
-            var.set(value)
+            try:
+                var.set(False)
+            except Exception:
+                pass
+        self._clean_update_selection_label()
+
+    def _clean_update_selection_label(self):
+        """Affiche le nombre de vidéos sélectionnées, visibles ou non."""
+        n = len(self.clean_selected)
+        total = len(self.clean_filtered)
+        if not hasattr(self, "clean_count_lbl"):
+            return
+        if n:
+            caches = max(0, n - len(self.clean_rowvars))
+            détail = f" (dont {caches} hors affichage)" if caches else ""
+            self.clean_count_lbl.configure(
+                text=f"{total} vidéo(s) après filtrage — {n} sélectionnée(s){détail}.",
+                text_color="#22c55e")
+        else:
+            self.clean_count_lbl.configure(
+                text=f"{total} vidéo(s) après filtrage. Cochez celles à traiter.",
+                text_color="gray")
 
     # ── Application de l'action (avec confirmations) ───────────────────────
 
@@ -4211,9 +4360,10 @@ class App(_AppBase):
         label = self.clean_action.get()
         kind, payload = self._CLEAN_ACTIONS.get(label, ("patch", {}))
         # Vidéos cochées
+        # On part de la SÉLECTION LOGIQUE : les vidéos cochées mais non affichées
+        # (au-delà du plafond de 300) sont bien incluses.
         todo = [v for v in self.clean_filtered
-                if self.clean_rowvars.get(v.get("slug"))
-                and self.clean_rowvars[v.get("slug")].get()]
+                if v.get("slug") in self.clean_selected]
         if not todo:
             self.clean_progress.configure(text="Aucune vidéo cochée.", text_color="#f59e0b")
             return
@@ -4278,8 +4428,9 @@ class App(_AppBase):
             try:
                 if kind == "delete":
                     self.api.delete_video(v)
-                    if v in self.videos:
-                        self.videos.remove(v)
+                    with self._videos_lock:  # mutation du magasin : protégée
+                        if v in self.videos:
+                            self.videos.remove(v)
                     self._sync_video_caches(slug, removed=True)
                 else:
                     # Statut : PATCH des deux booléens d'un coup (cohérent)
@@ -4302,6 +4453,9 @@ class App(_AppBase):
         self._ui(self._log,
                  f"Explorateur « {libelle_action} » : {ok} OK, {fail} échec(s).")
         self._ui(self.clean_apply_btn.configure, state="normal")
+        # Le lot est traité : on vide la sélection pour éviter de rejouer par
+        # inadvertance la même action (sur des vidéos déjà supprimées, notamment).
+        self._ui(self._clean_clear_selection)
 
     def _clean_pick_groups(self):
         """Modale : cocher un ou plusieurs groupes d'accès. Renvoie la liste des
@@ -4457,10 +4611,15 @@ class App(_AppBase):
             self.stats_data = self._compute_stats(videos, user_by_url,
                                                   type_by_url, chan_by_url)
             self._ui(self._render_stats)
+            # L'Inventaire est le plus exposé au scan tronqué : ses totaux
+            # seraient faux sans que rien ne le signale.
+            alerte = self.scan_truncated_warning()
             self._ui(self.stats_status.configure,
-                     text=f"✅  {len(videos)} vidéos analysées.", text_color="#22c55e")
+                     text=(alerte if alerte else f"✅  {len(videos)} vidéos analysées."),
+                     text_color="#ef4444" if alerte else "#22c55e")
             self._ui(self.stats_export_btn.configure, state="normal")
-            self._ui(self._log, f"Inventaire : {len(videos)} vidéos analysées.")
+            self._ui(self._log,
+                     alerte if alerte else f"Inventaire : {len(videos)} vidéos analysées.")
         except Exception as e:
             self._ui(self.stats_status.configure, text=f"❌  {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Inventaire : {e}")
@@ -5645,18 +5804,72 @@ class App(_AppBase):
         ctk.CTkLabel(top, text="📋  Journal", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
         ctk.CTkButton(top, text="🗑 Effacer", width=100, fg_color="gray35",
                       hover_color="gray28", command=self._clear_log).pack(side="right")
+        # Le journal est AUSSI écrit sur disque : « Effacer » ne vide que
+        # l'affichage, l'historique complet reste consultable dans le fichier.
+        ctk.CTkButton(top, text="📂 Ouvrir les journaux", width=170, fg_color="gray35",
+                      hover_color="gray28",
+                      command=self._open_journal_folder).pack(side="right", padx=6)
+        ctk.CTkLabel(frame,
+                     text="Le journal est enregistré chaque mois dans "
+                          "« Mes documents\\.podadmin » (dossier personnel). "
+                          "« Effacer » ne vide que l'affichage.",
+                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     anchor="w").pack(fill="x", pady=(0, 6))
         self.log_box = ctk.CTkTextbox(frame, font=ctk.CTkFont(family="Consolas", size=11))
         self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
         self._log("Application démarrée.")
 
     def _log(self, msg: str):
-        """Ajoute une ligne horodatée au journal."""
-        ts = datetime.now().strftime("%H:%M:%S")
+        """Ajoute une ligne horodatée au journal (écran ET fichier)."""
+        maintenant = datetime.now()
+        ts = maintenant.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
         self.log_box.insert("end", f"[{ts}]  {msg}\n")
         self.log_box.see("end")
         self.log_box.configure(state="disabled")
+        self._log_fichier(maintenant, msg)
+
+    def _log_fichier(self, quand, msg: str):
+        """Recopie la ligne de journal dans un fichier mensuel sur le disque.
+
+        L'affichage à l'écran est effaçable en un clic et disparaît à la
+        fermeture. Or cette application SUPPRIME définitivement des vidéos et
+        réaffecte des comptes sur toute l'instance : il faut pouvoir retrouver
+        après coup qui a fait quoi, et quand. Le fichier est en mode ajout, un
+        par mois, dans le dossier personnel.
+
+        Toute erreur d'écriture est ignorée : la journalisation ne doit jamais
+        empêcher l'application de fonctionner.
+        """
+        try:
+            dossier = os.path.join(os.path.expanduser("~"), ".podadmin")
+            os.makedirs(dossier, exist_ok=True)
+            chemin = os.path.join(dossier, f"journal-{quand.strftime('%Y-%m')}.log")
+            with open(chemin, "a", encoding="utf-8") as f:
+                f.write(f"{quand.strftime('%Y-%m-%d %H:%M:%S')}\t{msg}\n")
+        except Exception:
+            pass      # jamais bloquant
+
+    def _journal_path(self) -> str:
+        """Chemin du fichier de journal du mois en cours."""
+        return os.path.join(os.path.expanduser("~"), ".podadmin",
+                            f"journal-{datetime.now().strftime('%Y-%m')}.log")
+
+    def _open_journal_folder(self):
+        """Ouvre le dossier contenant les journaux dans l'explorateur de fichiers."""
+        dossier = os.path.join(os.path.expanduser("~"), ".podadmin")
+        try:
+            os.makedirs(dossier, exist_ok=True)
+            if sys.platform.startswith("win"):
+                os.startfile(dossier)                     # noqa: S606 (Windows)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", dossier])
+            else:
+                subprocess.Popen(["xdg-open", dossier])
+            self._log(f"Dossier des journaux ouvert : {dossier}")
+        except Exception as e:
+            self._log(f"❌ Ouverture du dossier des journaux : {e}")
 
     def _clear_log(self):
         """Vide le journal."""

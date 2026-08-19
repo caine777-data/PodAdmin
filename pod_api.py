@@ -60,6 +60,15 @@ class PodAPI:
         self.token = token
         self.verify_ssl = verify_ssl
         self.last_scan_skipped = 0     # nb d'éléments ignorés au dernier scan (illisibles côté serveur)
+        # Vrai si le DERNIER scan paginé s'est arrêté sur la limite de sécurité
+        # `max_pages` alors qu'il restait des pages à lire. Dans ce cas la liste
+        # obtenue est INCOMPLÈTE : totaux faux, éléments manquants. À signaler à
+        # l'utilisateur, sans quoi l'application affiche des chiffres crédibles
+        # mais erronés.
+        self.last_scan_truncated = False
+        # Cache des groupes d'accès : leur reconstruction coûte plusieurs
+        # dizaines de requêtes, inutile de la refaire à chaque affichage.
+        self._access_groups_cache = None
         self.session = requests.Session()
         self.session.headers.update({"Authorization": f"Token {token}"})
 
@@ -136,6 +145,7 @@ class PodAPI:
         plus utilisé : on est revenu à la pagination simple et fiable par 'next'.)
         """
         self.last_scan_skipped = 0
+        self.last_scan_truncated = False
         items: list[dict] = []
         url = self._abs(endpoint)
         p = dict(params or {})
@@ -155,6 +165,9 @@ class PodAPI:
             pages += 1
             if progress_cb:
                 progress_cb(len(items))
+        # Sortie de boucle : s'il reste une URL 'next' à suivre, c'est qu'on
+        # s'est arrêté sur `max_pages` → la liste est TRONQUÉE.
+        self.last_scan_truncated = bool(url)
         return items
 
     # ╔══════════════════════════════════════════════════════════════════╗
@@ -474,6 +487,11 @@ class PodAPI:
                 raise PodAPIError(
                     f"Échec après {max_retries} tentatives (coupure réseau/SSL). "
                     f"Dernière erreur : {e}", 0, str(e))
+        # Garde-fou : inatteignable tant que max_retries >= 1, mais sans lui la
+        # fonction renverrait None en silence si la boucle ne s'exécutait pas —
+        # l'appelant croirait le remplacement réussi. (Même garde-fou que
+        # `upload_video`, dont cette fonction est la jumelle.)
+        raise PodAPIError("Remplacement impossible : aucune tentative effectuée.", 0, "")
 
     def set_video_owner(self, video, owner_url: str,
                         additional_owner_urls: Optional[list[str]] = None) -> dict:
@@ -491,41 +509,113 @@ class PodAPI:
         """Bascule l'accès restreint (connexion requise) d'une vidéo."""
         return self.patch_video(video, {"is_restricted": bool(value)})
 
-    def get_access_groups(self, max_id: int = 60) -> list[dict]:
+    def get_access_groups(self, arret_apres: int = 20, use_cache: bool = True,
+                          max_id_absolu: int = 500) -> list[dict]:
         """Récupère les groupes d'accès AVEC leur URL adressable.
 
         Particularité de l'API Pod : la liste /accessgroups/ n'expose ni `id`
         ni `url` (seulement code_name/display_name). Or le champ
         `restrict_access_to_groups` d'une vidéo attend une URL par id
         (/rest/accessgroups/<id>/). On reconstruit donc la correspondance en
-        sondant les routes de détail numériques /accessgroups/<n>/ : chacune qui
-        répond donne {code_name, url}. On renvoie une liste de dicts
-        {code_name, display_name, url} triée par nom.
+        sondant les routes de détail numériques /accessgroups/<n>/.
+
+        DEUX PROBLÈMES DE L'ANCIENNE VERSION, corrigés ici :
+
+        1. Elle s'arrêtait à un plafond FIXE (id 60). Après quelques cycles de
+           création/suppression, un groupe peut porter l'id 61 ou plus : il
+           devenait alors DÉFINITIVEMENT invisible dans l'application, sans
+           aucune erreur. On sonde désormais jusqu'à `arret_apres` échecs
+           CONSÉCUTIFS (défaut : 20), ce qui suit la numérotation réelle au lieu
+           de la deviner. `max_id_absolu` reste une sécurité anti-boucle.
+
+        2. Elle enchaînait 60 requêtes SÉQUENTIELLES (~15 s à chaque
+           chargement). Le sondage est maintenant PARALLÉLISÉ par paquets.
+
+        Le résultat est mis en CACHE (`use_cache=False` pour forcer une
+        relecture, après création ou suppression d'un groupe).
         """
-        groups = []
-        for n in range(1, max_id + 1):
+        if use_cache and self._access_groups_cache is not None:
+            return self._access_groups_cache
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def sonder(n: int):
+            """Interroge /accessgroups/<n>/ ; renvoie le groupe ou None."""
             url = f"{self.rest}/accessgroups/{n}/"
             try:
                 r = self.session.get(url, headers={"Accept": "application/json"},
                                      timeout=15, verify=self.verify_ssl)
             except Exception:
-                continue
+                return None
             if r.status_code != 200:
-                continue
+                return None
             try:
                 g = r.json()
             except ValueError:
-                continue
+                return None
             if isinstance(g, dict) and g.get("code_name"):
-                groups.append({
+                return {
                     "code_name": g.get("code_name"),
                     "display_name": g.get("display_name") or g.get("code_name"),
                     "url": url,
                     "users": g.get("users") or [],     # membres (URLs /owners/)
                     "sites": g.get("sites") or [],
-                })
+                }
+            return None
+
+        # COMBIEN de groupes existe-t-il ? La liste /accessgroups/ ne donne pas
+        # les ids, mais elle donne le NOMBRE de groupes. Le connaître permet de
+        # s'arrêter dès qu'on les a tous trouvés, au lieu de deviner où la
+        # numérotation s'arrête — c'est exact, et bien plus économe.
+        attendus = None
+        try:
+            r = self.session.get(f"{self.rest}/accessgroups/",
+                                 params={"limit": 1000},
+                                 headers={"Accept": "application/json"},
+                                 timeout=20, verify=self.verify_ssl)
+            if r.status_code == 200:
+                d = r.json()
+                if isinstance(d, dict):
+                    attendus = d.get("count")
+                    if attendus is None and isinstance(d.get("results"), list):
+                        attendus = len(d["results"])
+                elif isinstance(d, list):
+                    attendus = len(d)
+        except Exception:
+            attendus = None      # endpoint indisponible → on retombe sur l'heuristique
+
+        groups = []
+        echecs_consecutifs = 0
+        n = 1
+        PAQUET = 20          # sondes menées de front
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            while n <= max_id_absolu:
+                # Arrêt : tous les groupes annoncés ont été retrouvés.
+                if attendus is not None and len(groups) >= attendus:
+                    break
+                # Arrêt de repli (nombre inconnu) : trop d'ids vides d'affilée.
+                if attendus is None and echecs_consecutifs >= arret_apres:
+                    break
+                ids = list(range(n, min(n + PAQUET, max_id_absolu + 1)))
+                resultats = list(pool.map(sonder, ids))
+                # On parcourt le paquet DANS L'ORDRE pour compter correctement
+                # les échecs consécutifs.
+                for res in resultats:
+                    if res is None:
+                        echecs_consecutifs += 1
+                    else:
+                        groups.append(res)
+                        echecs_consecutifs = 0
+                n += PAQUET
+
         groups.sort(key=lambda x: (x.get("code_name") or "").lower())
+        self._access_groups_cache = groups
         return groups
+
+    def invalidate_access_groups_cache(self):
+        """Vide le cache des groupes d'accès (après création ou suppression)."""
+        self._access_groups_cache = None
 
     def set_video_groups(self, video, group_urls: list[str]) -> dict:
         """Restreint une vidéo à une liste de groupes d'accès (URLs
@@ -554,6 +644,7 @@ class PodAPI:
         Cette table permet de convertir un compte choisi par l'utilisateur en
         l'URL /owners/ attendue par le champ `users` d'un groupe."""
         mapping, url, params, pages = {}, f"{self.rest}/owners/", {"limit": 100}, 0
+        self.last_scan_truncated = False
         while url and pages < max_pages:
             r = self.session.get(url, params=(params if pages == 0 else None),
                                  headers={"Accept": "application/json"},
@@ -566,6 +657,8 @@ class PodAPI:
                     mapping[str(user_url).rstrip("/")] = o.get("url")
             url = d.get("next") if isinstance(d, dict) else None
             pages += 1
+        # Même garde-fou que _paginate : signaler une liste incomplète.
+        self.last_scan_truncated = bool(url)
         return mapping
 
     def get_access_group(self, code_name: str, max_id: int = 80) -> Optional[dict]:
@@ -612,12 +705,13 @@ class PodAPI:
         r = self.session.patch(group_url, json={"users": list(owner_urls)},
                                headers={"Accept": "application/json"},
                                timeout=30, verify=self.verify_ssl)
+        self.invalidate_access_groups_cache()  # un groupe de plus : cache périmé
         return self._json(r)
 
     def delete_access_group(self, group_url: str) -> bool:
         """⚠️ Supprime définitivement un groupe d'accès (DELETE)."""
+        self.invalidate_access_groups_cache()  # un groupe de moins : cache périmé
         return self._delete(group_url)
-
     def assign_video_to_channels(self, video, channel_urls: list[str],
                                  theme_urls: Optional[list[str]] = None) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""

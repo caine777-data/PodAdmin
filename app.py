@@ -16,7 +16,7 @@ from __future__ import annotations
 __author__      = "Cédric MONNA"
 __contact__     = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
+from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
 __license__     = "Usage interne — Université de Toulouse"
 
@@ -58,7 +58,7 @@ except Exception:
     HAS_DND = False
 
 APP_TITLE = "PodAdmin — Université de Toulouse"
-APP_VERSION = "0.1.0"
+APP_VERSION = __version__      # affichée dans la barre latérale et « À propos »
 
 # Délai (ms) d'attente après la dernière frappe avant de reconstruire une liste
 # filtrée. Assez court pour rester réactif, assez long pour éviter de refaire
@@ -76,6 +76,10 @@ REFRESH_DELAY_MS = 1500
 # standard ; centralisé ici pour n'avoir qu'un seul point à corriger si une
 # instance le nommait autrement (à confirmer via verifier_champ_360.py).
 FIELD_360 = "is_360"
+
+# Page Moodle où les enseignants téléchargent l'application et le tutoriel.
+# Reprise dans le message de délivrance du jeton (onglet Comptes).
+MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1694,6 +1698,122 @@ class App(_AppBase):
             self._ui(self.users_count_lbl.configure, text=f"❌  Erreur : {e}", text_color="#ef4444")
             self._ui(self._log, f"❌ Erreur chargement utilisateurs : {e}")
 
+    def _user_pk(self, u: dict) -> str:
+        """Identifiant NUMÉRIQUE d'un compte (clé primaire Django).
+
+        L'API renvoie tantôt un champ `id`, tantôt seulement une `url` du type
+        .../rest/users/42/. On récupère l'un ou l'autre : c'est ce numéro
+        qu'attend le formulaire d'administration pour pré-sélectionner
+        l'utilisateur."""
+        pk = u.get("id")
+        if pk:
+            return str(pk)
+        url = str(u.get("url", "")).rstrip("/")
+        return url.rsplit("/", 1)[-1] if url else ""
+
+    def _compte_creer_token(self, u: dict):
+        """Ouvre le formulaire d'administration de création de jeton, avec le
+        compte déjà sélectionné.
+
+        POURQUOI PASSER PAR LE NAVIGATEUR : l'API REST d'Esup-Pod n'expose pas
+        les jetons — ils ne se créent que dans l'administration Django. Les
+        créer depuis l'application supposerait d'y stocker des identifiants
+        SUPERUTILISATEUR, ce qui serait un vrai recul de sécurité (le compte
+        véhicule embarqué est, lui, délibérément sans privilège).
+
+        On ouvre donc la page dans le navigateur, où l'utilisateur est déjà
+        authentifié comme administrateur : il ne reste qu'à cliquer sur
+        « Enregistrer », puis à copier le jeton affiché.
+        """
+        base = (self.config_data.get("url") or "").rstrip("/")
+        if not base:
+            self._log("❌ URL de l'instance non renseignée (onglet Configuration).")
+            return
+        pk = self._user_pk(u)
+        if not pk:
+            self._log(f"❌ Identifiant introuvable pour {u.get('username','?')}.")
+            return
+        # Django REST expose le modèle sous « tokenproxy » depuis DRF 3.14, et
+        # sous « token » avant. On ouvre la version récente ; si l'instance est
+        # plus ancienne, l'administration redirige vers la liste des jetons.
+        url = f"{base}/admin/authtoken/tokenproxy/add/?user={pk}"
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            self._log(f"🔑 Formulaire de création de jeton ouvert pour "
+                      f"{u.get('username','?')} (id {pk}).")
+            self.comptes_msg.configure(
+                text=f"Formulaire ouvert pour {u.get('username','?')} : cliquez sur "
+                     "« Enregistrer » puis copiez le jeton affiché.",
+                text_color="#22c55e")
+        except Exception as e:
+            self._log(f"❌ Ouverture du navigateur : {e}")
+
+    def _compte_mail_token(self, u: dict):
+        """Ouvre le client de messagerie avec une réponse prête à l'emploi.
+
+        Le jeton n'est PAS inséré automatiquement (l'application ne le connaît
+        pas) : un emplacement clairement repérable est laissé dans le message,
+        à remplacer par le jeton copié depuis l'administration."""
+        email = (u.get("email") or "").strip()
+        if not email:
+            self._log(f"❌ Aucune adresse connue pour {u.get('username','?')}.")
+            return
+        # Texte officiel du service (modèle fourni par le support Pod).
+        # Le jeton n'est PAS inséré : l'application ne le connaît pas. Le
+        # marqueur « [TOKEN À REMPLACER] » reste bien visible pour être
+        # remplacé par le jeton copié depuis l'administration.
+        objet = "Dépôt de vidéos sur Pod"
+        corps = (
+            "Madame, Monsieur,\n\n"
+            "Vous avez fait une demande de dépôt de vidéos sur la plateforme Pod de "
+            "l'Université de Toulouse. Ce message vous donne tout ce qu'il faut pour "
+            "démarrer avec PodTéléverseur, l'application qui vous permettra de déposer "
+            "vos vidéos sur videos.utoulouse.fr par lot sans manipulation technique "
+            "particulière.\n\n"
+            "La marche à suivre tient en trois temps.\n\n"
+            "Commencez par télécharger l'application depuis notre page Moodle :\n"
+            f"{MOODLE_URL}\n"
+            "Vous y trouverez deux fichiers, à choisir selon votre ordinateur : "
+            "« Setup.exe » pour Windows, le fichier « .dmg » pour macOS.\n\n"
+            "Installez-la ensuite. Sous Windows, double-cliquez sur « Setup.exe » et "
+            "laissez-vous guider ; si un avertissement de sécurité apparaît, cliquez sur "
+            "« Informations complémentaires » puis « Exécuter quand même ». Sous macOS, "
+            "ouvrez le « .dmg » et glissez l'application dans votre dossier Applications ; "
+            "si le premier lancement est bloqué, allez dans Réglages Système, puis "
+            "Confidentialité et sécurité, et cliquez sur « Ouvrir quand même ». Ces "
+            "avertissements sont normaux : ils s'affichent simplement parce que "
+            "l'application est diffusée en interne.\n\n"
+            "Enfin, activez l'application. Au premier démarrage, elle vous demandera une "
+            "clé d'activation personnelle. Voici la vôtre :\n\n"
+            "[TOKEN À REMPLACER]\n\n"
+            "Cette clé vous est propre et vaut accès à votre compte : merci de la garder "
+            "confidentielle et de ne pas la transmettre. Sélectionnez ensuite le "
+            "propriétaire des vidéos à téléverser (vous-même) par la sélection de votre "
+            "identifiant institutionnel.\n\n"
+            "Une fois cette étape passée, vous pourrez déposer vos vidéos directement "
+            "depuis votre ordinateur. Un guide d'utilisation est disponible dans le menu "
+            "« Aide » de l'application.\n\n"
+            "En cas de question ou de difficulté, écrivez-nous à "
+            "support-pod@utoulouse.fr, nous vous répondrons.\n\n"
+            "Bien cordialement,\n\n"
+            "L'équipe support Pod\n"
+            "Université de Toulouse\n"
+            "Contact : support-pod@utoulouse.fr")
+        try:
+            import urllib.parse
+            import webbrowser
+            lien = (f"mailto:{urllib.parse.quote(email)}"
+                    f"?subject={urllib.parse.quote(objet)}"
+                    f"&body={urllib.parse.quote(corps)}")
+            webbrowser.open(lien)
+            self._log(f"✉️ Brouillon de réponse ouvert pour {email}.")
+            self.comptes_msg.configure(
+                text=f"Message préparé pour {email} — collez le jeton à l'emplacement prévu.",
+                text_color="#22c55e")
+        except Exception as e:
+            self._log(f"❌ Ouverture du client de messagerie : {e}")
+
     def _user_label(self, u: dict) -> str:
         """Libellé lisible d'un compte : « identifiant — Prénom Nom »."""
         return f"{u.get('username','?')} — {u.get('first_name','')} {u.get('last_name','')}".strip()
@@ -2042,6 +2162,12 @@ class App(_AppBase):
                                               font=ctk.CTkFont(size=11))
         self.comptes_count_lbl.pack(anchor="w", pady=(6, 2))
 
+        # Retour visuel des actions « 🔑 Token » et « ✉️ » de chaque ligne.
+        self.comptes_msg = ctk.CTkLabel(frame, text="", text_color="gray",
+                                        font=ctk.CTkFont(size=11),
+                                        anchor="w", wraplength=900, justify="left")
+        self.comptes_msg.pack(anchor="w", fill="x", pady=(0, 4))
+
         self.comptes_results = ctk.CTkScrollableFrame(frame)
         self.comptes_results.pack(fill="both", expand=True, pady=(0, 4))
 
@@ -2113,6 +2239,22 @@ class App(_AppBase):
             ctk.CTkLabel(row, text=self._user_label(u), anchor="w",
                          font=ctk.CTkFont(size=12)).pack(
                 side="left", padx=12, pady=6, fill="x", expand=True)
+            # Bouton « mail » : prépare la réponse au demandeur (grisé sans adresse).
+            a_un_mail = bool((u.get("email") or "").strip())
+            ctk.CTkButton(row, text="✉️", width=34, height=26,
+                          fg_color="gray35", hover_color="gray28",
+                          state="normal" if a_un_mail else "disabled",
+                          command=lambda uu=u: self._compte_mail_token(uu)).pack(
+                side="right", padx=(0, 8))
+            # Bouton « token » : ouvre le formulaire d'admin Django, utilisateur
+            # pré-sélectionné. La création reste faite dans le navigateur, sous
+            # l'identité d'administrateur de l'utilisateur — l'application ne
+            # manipule aucun identifiant privilégié.
+            ctk.CTkButton(row, text="🔑 Token", width=80, height=26,
+                          fg_color="#7c3aed", hover_color="#6d28d9",
+                          command=lambda uu=u: self._compte_creer_token(uu)).pack(
+                side="right", padx=(0, 6))
+
             var = ctk.BooleanVar(value=bool(u.get("is_staff")))
             sw = ctk.CTkSwitch(row, text="Équipe", variable=var, width=80,
                                command=lambda uu=u, vv=var: self._on_staff_toggle(uu, vv))
@@ -5703,15 +5845,58 @@ class App(_AppBase):
             "et sortent de brouillon.")
 
         section(
+            "🎫  Donner un accès à un enseignant (jeton)",
+            "Circuit complet, depuis l'onglet Comptes :\n"
+            "1. L'enseignant se connecte une fois à Pod (cela CRÉE son compte) puis "
+            "remplit le questionnaire.\n"
+            "2. Filtrez son nom dans Comptes, puis activez l'interrupteur « Équipe » : "
+            "ce statut est nécessaire pour que ses dépôts de gros fichiers soient "
+            "réattribués correctement.\n"
+            "3. Bouton « 🔑 Token » : ouvre l'administration Pod dans votre navigateur, "
+            "compte déjà sélectionné. Cliquez sur « Enregistrer », puis copiez le jeton.\n"
+            "4. Bouton « ✉️ » : ouvre votre messagerie avec le message d'accueil déjà "
+            "rédigé. Remplacez [TOKEN À REMPLACER] par le jeton copié, puis envoyez.\n\n"
+            "Le jeton n'est pas créé par l'application : l'API ne le permet pas, et le "
+            "faire supposerait d'y stocker un mot de passe superutilisateur. La création "
+            "reste donc dans le navigateur, sous votre propre identité d'administrateur.\n"
+            "Le bouton ✉️ est grisé si aucune adresse n'est connue pour le compte.")
+
+        section(
+            "🧹  Explorateur : agir sur plus de 300 vidéos",
+            "L'affichage est limité à 300 lignes pour que l'interface reste fluide, "
+            "mais ce plafond ne limite PAS les actions :\n"
+            "• « Tout cocher » sélectionne TOUTES les vidéos filtrées, y compris celles "
+            "qui ne sont pas affichées.\n"
+            "• Le compteur indique combien sont sélectionnées et combien sont hors "
+            "affichage.\n"
+            "• L'action s'applique à toute la sélection.\n\n"
+            "Deux sécurités : changer un filtre remet la sélection à zéro, et la "
+            "sélection est vidée après chaque lot traité.\n\n"
+            "Après une action, les listes se rafraîchissent automatiquement au bout "
+            "d'une seconde et demie — le temps de voir les ✔ posés sur les lignes "
+            "traitées.")
+
+        section(
+            "⚠️  Message « LISTE INCOMPLÈTE »",
+            "Si ce message rouge apparaît, la lecture des vidéos s'est arrêtée sur une "
+            "limite de sécurité : les totaux affichés sont FAUX et des vidéos manquent. "
+            "Ce n'est pas un simple avertissement de confort — ne vous fiez pas aux "
+            "chiffres de l'Inventaire dans ce cas, et signalez-le au support.")
+
+        section(
             "🗂  Les onglets d'administration",
-            "• Comptes : recherche et gestion des utilisateurs.\n"
+            "• Comptes : recherche, statut « Équipe », création de jeton et message "
+            "d'accueil (voir la rubrique « Donner un accès »).\n"
             "• Réaffectation : changer le propriétaire de vidéos (par lot).\n"
             "• Explorateur : recherche, actions par lot (brouillon/public/restreint, "
             "restreindre au groupe, suppression).\n"
             "• Chaînes : chaînes et thèmes, ajout de vidéos, restriction/visibilité.\n"
             "• Groupes d'accès : gestion des groupes.\n"
             "• Co-auteurs : crédits réutilisables.\n"
-            "• Journal : historique horodaté — le premier endroit à consulter en cas de souci.")
+            "• Journal : historique horodaté — le premier endroit à consulter en cas de "
+            "souci. Il est aussi ENREGISTRÉ SUR LE DISQUE (un fichier par mois) : le "
+            "bouton « Effacer » ne vide que l'affichage, et « 📂 Ouvrir les journaux » "
+            "donne accès à l'historique complet.")
 
         section(
             "🍎  macOS : « impossible d'ouvrir l'application »",

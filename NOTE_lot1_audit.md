@@ -208,3 +208,92 @@ L'audit propose 4 requêtes simultanées pour passer d'environ 5 min à 1 min su
 production universitaire — la même qui coupe déjà les envois volumineux — pour
 un gain de confort. Le traitement séquentiel est lent mais prévisible, et une
 erreur y reste facile à situer.
+
+---
+
+# Circuit de délivrance des jetons (onglet Comptes)
+
+Deux boutons ajoutés sur chaque ligne de l'onglet Comptes, pour accompagner le
+circuit : questionnaire → statut équipe → jeton → réponse par mail.
+
+## 🔑 Token
+
+Ouvre dans le navigateur le formulaire d'administration Django de création de
+jeton, **avec le compte déjà pré-sélectionné**
+(`/admin/authtoken/tokenproxy/add/?user=<id>`).
+
+**Pourquoi ne pas créer le jeton depuis l'application** : l'API REST d'Esup-Pod
+n'expose pas les jetons — la documentation officielle indique qu'ils se créent
+uniquement dans l'administration. Le faire depuis PodAdmin supposerait d'y
+stocker des identifiants SUPERUTILISATEUR, alors que le compte véhicule embarqué
+est délibérément sans privilège. L'acte sensible reste donc dans le navigateur,
+sous l'identité d'administrateur de l'utilisateur.
+
+Il ne reste qu'à cliquer sur « Enregistrer » et à copier le jeton.
+
+## ✉️ Préparer la réponse
+
+Ouvre le client de messagerie avec destinataire, objet et corps déjà rédigés.
+Le texte est le **modèle officiel du service** (objet « Dépôt de vidéos sur
+Pod »), repris à l'identique : marche à suivre en trois temps, lien vers la page
+Moodle, avertissements Windows et macOS, rappel de confidentialité.
+
+L'emplacement `[TOKEN À REMPLACER]` est laissé bien visible : le jeton n'est pas
+inséré automatiquement, l'application ne le connaît pas.
+
+L'adresse de la page Moodle est centralisée dans la constante `MOODLE_URL` en
+tête de `app.py` — un seul endroit à modifier si elle change.
+
+Le bouton est **grisé** pour les comptes sans adresse connue.
+
+## Note
+
+`_user_pk()` récupère l'identifiant numérique du compte, que l'API le fournisse
+via un champ `id` ou seulement via l'`url` (.../users/42/).
+
+Le lien vise `tokenproxy`, nom du modèle depuis Django REST Framework 3.14 ; sur
+une instance plus ancienne (`token`), l'administration redirige vers la liste
+des jetons — à vérifier au premier usage.
+
+---
+
+# Version 1.0.0 — aide et numérotation
+
+## Aide complétée
+
+Trois rubriques ajoutées, deux actualisées :
+
+- **🎫 Donner un accès à un enseignant (jeton)** — le circuit complet en quatre
+  étapes (connexion de l'enseignant → statut Équipe → bouton 🔑 → bouton ✉️),
+  avec l'explication de pourquoi le jeton n'est pas créé par l'application.
+- **🧹 Explorateur : agir sur plus de 300 vidéos** — le plafond ne concerne que
+  l'affichage ; « Tout cocher » porte sur toute la sélection. Les deux sécurités
+  (changement de filtre, vidage après lot) sont indiquées, ainsi que le
+  rafraîchissement différé d'une seconde et demie.
+- **⚠️ Message « LISTE INCOMPLÈTE »** — pour que l'avertissement ne soit pas pris
+  pour un simple message de confort : dans ce cas les totaux sont faux.
+- Rubrique **Comptes** actualisée (statut Équipe, jeton, message d'accueil).
+- Rubrique **Journal** actualisée (enregistrement sur disque, bouton d'accès).
+
+## Version : 0.1.0 → 1.0.0
+
+Le passage en 1.0.0 se justifie : cache partagé, lots 1 et 2 de l'audit,
+suppression du plafond d'action, circuit de délivrance des jetons, suite de
+tests et intégration continue.
+
+**Au passage, le point A4 de l'audit est réglé** : la version était recopiée
+dans une vingtaine de fichiers. Un module `__version__.py` en est désormais la
+**source unique**, importé par `app.py`, `config.py`, `pod_api.py` et
+`pod_chunked.py`. Il reste deux endroits à mettre à jour lors d'une publication,
+car ils ne peuvent pas importer de code Python : `version.txt` (métadonnées de
+l'exécutable Windows) et `AppVersion` dans `build.yml` — tous deux déjà passés
+en 1.0.0.
+
+Les sondes `verifier_*.py` gardent leur propre numéro : ce sont des outils de
+diagnostic indépendants.
+
+## Publication
+
+Pour créer la version : pousser le code, puis le tag `v1.0.0`. Le workflow
+`build.yml` produit les exécutables et la Release ; le workflow `qualite.yml`
+vérifie syntaxe et tests à chaque envoi.

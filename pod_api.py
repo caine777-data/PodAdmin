@@ -21,7 +21,7 @@ from __future__ import annotations
 __author__      = "Cédric MONNA"
 __contact__     = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
+from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
 __license__     = "Usage interne — Université de Toulouse"
 

@@ -10,7 +10,7 @@ name: Build installers
 #
 # Déclencheurs :
 #   • Bouton "Run workflow" dans l'onglet Actions (build manuel)
-#   • Push d'un tag v* (ex : v0.1.0) → crée automatiquement une Release GitHub
+#   • Push d'un tag v* (ex : v1.0.0) → crée automatiquement une Release GitHub
 
 on:
   push:
@@ -71,7 +71,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=0.1.0
+          AppVersion=1.0.0
           AppPublisher=Universite de Toulouse
           DefaultDirName={localappdata}\Programs\PodAdmin
           DefaultGroupName=PodAdmin

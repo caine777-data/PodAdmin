@@ -26,6 +26,7 @@ import sys
 import subprocess
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 
 import customtkinter as ctk
@@ -1712,39 +1713,47 @@ class App(_AppBase):
         return url.rsplit("/", 1)[-1] if url else ""
 
     def _compte_creer_token(self, u: dict):
-        """Ouvre le formulaire d'administration de création de jeton, avec le
-        compte déjà sélectionné.
+        """Ouvre l'administration Pod sur les jetons, RECHERCHE PRÉ-REMPLIE au
+        nom du compte.
+
+        POURQUOI LA LISTE ET NON LE FORMULAIRE DE CRÉATION : dans Django REST
+        Framework, la liaison jeton ↔ utilisateur est de type « un à un ». Un
+        compte ne peut donc posséder QU'UN SEUL jeton, et tenter d'en créer un
+        second échoue avec une erreur de validation.
+
+        Ouvrir la LISTE filtrée permet de voir d'abord si la personne en a déjà
+        un :
+          • si oui, il suffit de le recopier — inutile (et risqué) d'en refaire
+            un, car supprimer l'ancien casserait immédiatement son application ;
+          • si non, la liste est vide et le bouton « Ajouter » de
+            l'administration est à un clic.
 
         POURQUOI PASSER PAR LE NAVIGATEUR : l'API REST d'Esup-Pod n'expose pas
         les jetons — ils ne se créent que dans l'administration Django. Les
         créer depuis l'application supposerait d'y stocker des identifiants
         SUPERUTILISATEUR, ce qui serait un vrai recul de sécurité (le compte
         véhicule embarqué est, lui, délibérément sans privilège).
-
-        On ouvre donc la page dans le navigateur, où l'utilisateur est déjà
-        authentifié comme administrateur : il ne reste qu'à cliquer sur
-        « Enregistrer », puis à copier le jeton affiché.
         """
         base = (self.config_data.get("url") or "").rstrip("/")
         if not base:
             self._log("❌ URL de l'instance non renseignée (onglet Configuration).")
             return
-        pk = self._user_pk(u)
-        if not pk:
-            self._log(f"❌ Identifiant introuvable pour {u.get('username','?')}.")
+        username = (u.get("username") or "").strip()
+        if not username:
+            self._log("❌ Identifiant introuvable pour ce compte.")
             return
         # Django REST expose le modèle sous « tokenproxy » depuis DRF 3.14, et
-        # sous « token » avant. On ouvre la version récente ; si l'instance est
-        # plus ancienne, l'administration redirige vers la liste des jetons.
-        url = f"{base}/admin/authtoken/tokenproxy/add/?user={pk}"
+        # sous « token » avant. `?q=` est la recherche standard de toute liste
+        # d'administration Django : elle fonctionne dans les deux cas.
+        url = f"{base}/admin/authtoken/tokenproxy/?q={urllib.parse.quote(username)}"
         try:
             import webbrowser
             webbrowser.open(url)
-            self._log(f"🔑 Formulaire de création de jeton ouvert pour "
-                      f"{u.get('username','?')} (id {pk}).")
+            self._log(f"🔑 Jetons de l'administration ouverts pour {username}.")
             self.comptes_msg.configure(
-                text=f"Formulaire ouvert pour {u.get('username','?')} : cliquez sur "
-                     "« Enregistrer » puis copiez le jeton affiché.",
+                text=f"Jetons ouverts pour « {username} ». S'il en a DÉJÀ un, copiez-le "
+                     "(n'en recréez pas : supprimer l'ancien couperait son accès). "
+                     "Sinon, cliquez sur « Ajouter » dans l'administration.",
                 text_color="#22c55e")
         except Exception as e:
             self._log(f"❌ Ouverture du navigateur : {e}")
@@ -5852,10 +5861,18 @@ class App(_AppBase):
             "2. Filtrez son nom dans Comptes, puis activez l'interrupteur « Équipe » : "
             "ce statut est nécessaire pour que ses dépôts de gros fichiers soient "
             "réattribués correctement.\n"
-            "3. Bouton « 🔑 Token » : ouvre l'administration Pod dans votre navigateur, "
-            "compte déjà sélectionné. Cliquez sur « Enregistrer », puis copiez le jeton.\n"
+            "3. Bouton « 🔑 Token » : ouvre les jetons de l'administration Pod dans votre "
+            "navigateur, recherche déjà remplie au nom du compte.\n"
+            "   • S'il a DÉJÀ un jeton : recopiez-le simplement.\n"
+            "   • Sinon : « Ajouter », choisir le compte, « Enregistrer », copier.\n"
             "4. Bouton « ✉️ » : ouvre votre messagerie avec le message d'accueil déjà "
             "rédigé. Remplacez [TOKEN À REMPLACER] par le jeton copié, puis envoyez.\n\n"
+            "⚠️ UN SEUL JETON PAR COMPTE : Pod n'en autorise qu'un. Tenter d'en créer "
+            "un second échoue avec une erreur. Et surtout, ne supprimez PAS un jeton "
+            "existant pour en refaire un : l'ancien devient aussitôt invalide et "
+            "l'application de l'enseignant cesse de fonctionner jusqu'à ce qu'il saisisse "
+            "le nouveau. À ne faire que sur demande (jeton perdu ou compromis), en "
+            "prévenant la personne.\n\n"
             "Le jeton n'est pas créé par l'application : l'API ne le permet pas, et le "
             "faire supposerait d'y stocker un mot de passe superutilisateur. La création "
             "reste donc dans le navigateur, sous votre propre identité d'administrateur.\n"

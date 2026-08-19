@@ -218,9 +218,23 @@ circuit : questionnaire → statut équipe → jeton → réponse par mail.
 
 ## 🔑 Token
 
-Ouvre dans le navigateur le formulaire d'administration Django de création de
-jeton, **avec le compte déjà pré-sélectionné**
-(`/admin/authtoken/tokenproxy/add/?user=<id>`).
+Ouvre dans le navigateur la **liste des jetons** de l'administration Django,
+**recherche pré-remplie au nom du compte**
+(`/admin/authtoken/tokenproxy/?q=<username>`).
+
+**Pourquoi la liste et non le formulaire de création** : dans Django REST
+Framework, la liaison jeton ↔ utilisateur est un `OneToOneField`. Un compte ne
+peut donc avoir **qu'un seul jeton** ; tenter d'en créer un second échoue avec
+une erreur de validation.
+
+Ouvrir la liste filtrée permet de voir d'abord si la personne en a déjà un :
+- si oui, il suffit de le recopier ;
+- si non, le bouton « Ajouter » de l'administration est à un clic.
+
+⚠️ **Ne jamais supprimer un jeton existant pour en refaire un** : l'ancien
+devient aussitôt invalide et l'application de l'enseignant cesse de fonctionner
+jusqu'à ce qu'il saisisse le nouveau. À réserver aux jetons perdus ou compromis,
+en prévenant la personne. Ce rappel figure aussi dans l'aide intégrée.
 
 **Pourquoi ne pas créer le jeton depuis l'application** : l'API REST d'Esup-Pod
 n'expose pas les jetons — la documentation officielle indique qu'ils se créent

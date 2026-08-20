@@ -379,3 +379,60 @@ création et la suppression rechargent cette liste, elles voient toujours l'éta
 3 tests ajoutés (44 au total). Vérifié en réintroduisant volontairement la
 régression : le test de création échoue immédiatement, puis repasse au vert une
 fois le code restauré.
+
+---
+
+# Correctif — échec de téléversement (coupure SSL)
+
+## Symptôme
+Une vidéo échouait systématiquement au téléversement :
+
+```
+SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol'))
+Échec après 3 tentatives — puis 3 nouvelles après relance manuelle.
+```
+
+## Diagnostic
+Deux indices concordants dans le journal :
+
+1. l'appel fautif est `POST /rest/videos/` → envoi **monobloc** (donc fichier
+   sous le seuil de bascule) ;
+2. chaque tentative dure **~62 secondes** avant d'échouer, de façon très
+   régulière → signature d'une coupure par la **passerelle**, pas d'une erreur
+   applicative.
+
+Autrement dit : nginx ferme la connexion au bout d'environ une minute de
+transfert. Le seuil de bascule était exprimé en **octets** (500 Mo), alors que
+ce qui provoque la coupure est la **durée** de l'envoi — laquelle dépend du
+débit montant. Sur une liaison lente, un fichier de 150 ou 200 Mo dépasse la
+minute et se fait couper, sans jamais atteindre le seuil.
+
+Réessayer à l'identique ne pouvait donc pas aboutir : trois tentatives, puis
+trois autres après relance manuelle, toutes coupées au même endroit — environ
+six minutes perdues.
+
+## Correction — deux niveaux
+
+**1. Repli automatique.** Si l'envoi direct est coupé, l'application bascule
+seule sur l'envoi **par morceaux** (session du compte véhicule), au lieu
+d'abandonner : session → envoi découpé → réattribution au propriétaire choisi.
+Le cas d'une finalisation coupée (502/503/504) réutilise la vérification
+existante plutôt que de conclure à l'échec.
+
+**Le repli n'a lieu QUE sur une vraie coupure réseau** (`_est_coupure_reseau`).
+Un refus métier — champ manquant, droits insuffisants, jeton invalide —
+échouerait de la même façon en chunké : le rejouer ferait perdre du temps et
+risquerait de créer un doublon.
+
+**2. Seuil abaissé : 500 Mo → 150 Mo.** Environ une minute d'envoi sur une
+liaison à 20 Mbit/s. Les fichiers concernés passent ainsi directement par la
+voie fiable, sans perdre de temps en tentatives vouées à l'échec.
+
+## Tests
+6 tests ajoutés (50 au total), dont un rejouant **l'erreur exacte du journal**,
+et trois vérifiant qu'un refus métier ne déclenche PAS le repli.
+
+## À surveiller
+Si des coupures subsistent sur des fichiers plus petits encore, c'est que la
+liaison montante est plus lente que prévu : abaisser `CHUNK_THRESHOLD_BYTES`
+dans `config.py` (une seule ligne, en tête du fichier).

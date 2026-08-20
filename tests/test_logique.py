@@ -406,3 +406,49 @@ class TestInvalidationCacheGroupes:
         api = self._api()
         api.set_access_group_members("https://v.fr/rest/accessgroups/1/", [])
         assert api._access_groups_cache is None
+
+
+class TestDetectionCoupureReseau:
+    """Distinguer une COUPURE de connexion d'un REFUS du serveur.
+
+    Cas réel : l'envoi direct d'une vidéo était coupé par la passerelle après
+    environ une minute (« SSLEOFError: EOF occurred in violation of protocol »).
+    Réessayer à l'identique échouait invariablement ; l'application bascule
+    désormais sur l'envoi par morceaux. Mais UNIQUEMENT en cas de coupure : un
+    refus métier (champ manquant, droits insuffisants) échouerait pareil en
+    chunké, et le rejouer risquerait de créer un doublon."""
+
+    @staticmethod
+    def _f(err):
+        import app
+        return app.App._est_coupure_reseau(err)
+
+    def test_erreur_reelle_ssl_eof(self):
+        from pod_api import PodAPIError
+        err = PodAPIError(
+            "Échec après 3 tentatives (coupure réseau/SSL). Dernière erreur : "
+            "HTTPSConnectionPool(host='videos.utoulouse.fr', port=443): Max retries "
+            "exceeded with url: /rest/videos/ (Caused by SSLError(SSLEOFError(8, "
+            "'EOF occurred in violation of protocol (_ssl.c:2427)')))", 0, "")
+        assert self._f(err) is True
+
+    def test_connexion_reinitialisee(self):
+        from pod_api import PodAPIError
+        assert self._f(PodAPIError("Connection reset by peer", 0, "")) is True
+
+    def test_passerelle_504(self):
+        from pod_api import PodAPIError
+        assert self._f(PodAPIError("Gateway timeout", 504, "max retries exceeded")) is True
+
+    def test_refus_400_pas_de_repli(self):
+        """Un champ manquant échouerait aussi en chunké : ne pas rejouer."""
+        from pod_api import PodAPIError
+        assert self._f(PodAPIError("HTTP 400 : champ sites requis", 400, "required")) is False
+
+    def test_droits_insuffisants_pas_de_repli(self):
+        from pod_api import PodAPIError
+        assert self._f(PodAPIError("HTTP 403 interdit", 403, "forbidden")) is False
+
+    def test_token_invalide_pas_de_repli(self):
+        from pod_api import PodAPIError
+        assert self._f(PodAPIError("HTTP 401", 401, "invalid token")) is False

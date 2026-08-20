@@ -53,7 +53,19 @@ VEHICLE_PASSWORD = "V&xehx7WB!iBWLoL%97HDjK&kg"
 # ── Bascule vers le téléversement par morceaux (chunked) ──────────────────
 # > seuil : session web (véhicule) + chunk, puis PATCH owner vers le propriétaire
 # choisi. ≤ seuil : upload classique par token (inchangé).
-CHUNK_THRESHOLD_BYTES = 500 * 1024 * 1024      # 500 Mo
+# Seuil de bascule vers l'envoi par morceaux.
+#
+# ATTENTION : ce seuil est en OCTETS, mais ce qui fait échouer un envoi direct
+# est sa DURÉE. La passerelle (nginx) ferme la connexion au-delà d'environ une
+# minute de transfert — erreur « SSLEOFError: EOF occurred in violation of
+# protocol ». Sur une liaison montante lente, un fichier bien plus petit que le
+# seuil peut donc dépasser cette minute et être coupé.
+#
+# L'application se replie automatiquement sur l'envoi par morceaux dans ce cas
+# (voir App._replier_sur_chunked), mais après avoir perdu du temps en tentatives
+# inutiles. Abaisser ce seuil évite ces tentatives : 150 Mo correspond à environ
+# une minute d'envoi sur une liaison à 20 Mbit/s.
+CHUNK_THRESHOLD_BYTES = 150 * 1024 * 1024      # 150 Mo
 CHUNK_SIZE_BYTES      = 2 * 1024 * 1024         # 2 Mo par morceau (validé)
 
 # ── Vérification « lancer puis vérifier » après un 504 de finalisation ────

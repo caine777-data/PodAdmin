@@ -742,6 +742,91 @@ class App(_AppBase):
             _t.sleep(cfg.CHUNK_VERIFY_INTERVAL_S)
         return None
 
+    @staticmethod
+    def _est_coupure_reseau(err: Exception) -> bool:
+        """Cette erreur vient-elle d'une coupure de connexion (et non d'un refus
+        du serveur) ?
+
+        On ne veut replier sur l'envoi par morceaux QUE dans ce cas. Un refus
+        métier (400 champ manquant, 403 droits insuffisants…) échouerait de la
+        même façon en chunké : le rejouer ne ferait que perdre du temps et
+        risquerait de créer un doublon.
+
+        Signature typique de la coupure par la passerelle :
+        « SSLEOFError: EOF occurred in violation of protocol ».
+        """
+        texte = f"{getattr(err, 'body', '')} {err}".lower()
+        indices = ("sslerror", "ssleoferror", "eof occurred",
+                   "connection aborted", "connection reset",
+                   "max retries exceeded", "connectionerror",
+                   "remotedisconnected", "broken pipe")
+        # `status` vaut 0 quand aucune réponse HTTP n'a été reçue (vraie coupure).
+        sans_reponse = getattr(err, "status", 0) in (0, 502, 503, 504)
+        return sans_reponse and any(i in texte for i in indices)
+
+    def _replier_sur_chunked(self, it, owner_url: str, type_url: str,
+                             is_draft: bool, progress, on_retry):
+        """Renvoie le fichier par MORCEAUX après l'échec de l'envoi direct.
+
+        Déroulé : ouverture d'une session avec le compte véhicule → envoi
+        découpé → la vidéo naît au nom du véhicule → réattribution au
+        propriétaire choisi et pose des métadonnées.
+
+        Renvoie le dictionnaire de la vidéo créée. Toute erreur est propagée à
+        l'appelant, qui l'affichera comme un échec normal."""
+        chunked = PodChunkedSession(self.config_data.get("url", ""),
+                                    self.vehicle_username, self.vehicle_password)
+        chunked.login()
+        try:
+            slug = chunked.upload_video_chunked(
+                it.path, chunk_size=cfg.CHUNK_SIZE_BYTES,
+                progress_cb=progress, retry_cb=on_retry)
+        except PodChunkedError as ce:
+            # La passerelle a coupé la finalisation : Pod termine côté serveur.
+            # On attend que la vidéo apparaisse plutôt que de conclure à l'échec.
+            if ce.status in (502, 503, 504):
+                self._ui(self._log,
+                         f"⏳ {it.title} : finalisation coupée (HTTP {ce.status}) — "
+                         "Pod termine côté serveur, vérification en cours…")
+                video = self._verify_chunked_creation(it, owner_url)
+                if not video:
+                    raise
+                slug = video.get("slug", "")
+            else:
+                raise
+        finally:
+            chunked.close()
+
+        video = self.api.get_video_by_slug(slug)
+        if not video:
+            raise PodAPIError(f"Vidéo envoyée (slug={slug}) mais introuvable via l'API.", 0, "")
+
+        # Réattribution au propriétaire choisi + métadonnées. Si elle échoue, la
+        # vidéo reste au nom du véhicule : on le signale FORT (jamais en silence).
+        patch = {
+            "owner": owner_url,
+            "title": it.title or it.filename,
+            "type": type_url,
+            "is_draft": is_draft,
+            "main_lang": self.config_data.get("main_lang", "fr"),
+            "cursus": self.config_data.get("cursus", "0"),
+        }
+        if self.additional_owner_urls:
+            patch["additional_owners"] = list(self.additional_owner_urls)
+        try:
+            self.api.patch_video(video, patch)
+        except Exception as e:
+            it.error = f"réattribution échouée : {e}"
+            self._ui(self._set_item_status, it, "⚠️ NON réattribuée", "#ef4444")
+            self._ui(self._log,
+                     f"⚠️⚠️ {it.title} : vidéo créée (slug={slug}) mais NON réattribuée "
+                     f"à {owner_url} — RESTE au nom du véhicule ! Réattribuez-la à la "
+                     f"main (onglet Réaffectation). Détail : {e}")
+        else:
+            self._ui(self._log,
+                     f"✅ {it.title} : envoi par morceaux réussi (slug={slug}).")
+        return video
+
     def _do_batch_upload(self, owner_url: str, type_url: str,
                          is_draft: bool, do_encode: bool):
         """(Thread) Téléverse chaque vidéo, ajoute les crédits, lance l'encodage, suit la progression."""
@@ -854,17 +939,40 @@ class App(_AppBase):
                                  f"⚠️ Vidéo créée (slug={slug}) mais introuvable via l'API pour "
                                  "réattribution/métadonnées — à vérifier côté web.")
                 else:
-                    # ── Petit fichier : upload classique par TOKEN (inchangé) ──
-                    video = self.api.upload_video(
-                        it.path, it.title or it.filename, owner_url, type_url,
-                        main_lang=self.config_data.get("main_lang", "fr"),
-                        cursus=self.config_data.get("cursus", "0"),
-                        is_draft=is_draft,
-                        additional_owner_urls=self.additional_owner_urls,
-                        site_urls=self.site_urls,
-                        progress_cb=progress,
-                        retry_cb=on_retry,
-                    )
+                    # ── Fichier sous le seuil : upload classique par TOKEN ──
+                    try:
+                        video = self.api.upload_video(
+                            it.path, it.title or it.filename, owner_url, type_url,
+                            main_lang=self.config_data.get("main_lang", "fr"),
+                            cursus=self.config_data.get("cursus", "0"),
+                            is_draft=is_draft,
+                            additional_owner_urls=self.additional_owner_urls,
+                            site_urls=self.site_urls,
+                            progress_cb=progress,
+                            retry_cb=on_retry,
+                        )
+                    except PodAPIError as e:
+                        # REPLI AUTOMATIQUE SUR L'ENVOI PAR MORCEAUX.
+                        #
+                        # L'envoi monobloc peut être coupé par la passerelle même
+                        # sous le seuil : au-delà d'environ une minute de transfert,
+                        # nginx ferme la connexion (erreur SSL « EOF occurred in
+                        # violation of protocol »). Le seuil en octets ne suffit
+                        # donc pas : ce qui compte est la DURÉE de l'envoi, qui
+                        # dépend du débit montant.
+                        #
+                        # Réessayer à l'identique échoue invariablement (constaté :
+                        # 3 tentatives, puis 3 autres après relance manuelle). On
+                        # bascule donc sur la voie chunkée, conçue pour résister
+                        # à ces coupures, plutôt que d'abandonner.
+                        if not self._est_coupure_reseau(e):
+                            raise
+                        self._ui(self._log,
+                                 f"⚠️ {it.title} : envoi direct coupé par le serveur. "
+                                 "Bascule automatique sur l'envoi par morceaux…")
+                        self._ui(self._set_item_status, it, "⟳ envoi par morceaux", "#f59e0b")
+                        video = self._replier_sur_chunked(
+                            it, owner_url, type_url, is_draft, progress, on_retry)
                     it.slug = video.get("slug", "") if isinstance(video, dict) else ""
                     it.video_url = video.get("url", "") if isinstance(video, dict) else ""
 

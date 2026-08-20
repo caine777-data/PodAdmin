@@ -353,3 +353,56 @@ class TestGroupesAcces:
     def test_aucun_groupe(self):
         api = _api_factice([], avec_liste=False)
         assert api.get_access_groups() == []
+
+
+class TestInvalidationCacheGroupes:
+    """Créer ou supprimer un groupe doit PÉRIMER le cache, sinon le nouveau
+    groupe n'apparaît nulle part jusqu'au redémarrage de l'application.
+
+    Régression réelle : l'invalidation avait été placée par erreur dans la
+    fonction voisine (`set_access_group_members`), si bien que la CRÉATION ne
+    rafraîchissait rien."""
+
+    @staticmethod
+    def _api():
+        from pod_api import PodAPI
+        api = PodAPI.__new__(PodAPI)
+        api.rest = "https://v.fr/rest"
+        api.verify_ssl = True
+        api._access_groups_cache = [{"code_name": "ancien"}]   # cache pré-rempli
+
+        class _R:
+            status_code = 201
+            text = "{}"
+
+            def json(self):
+                return {}
+
+        class _S:
+            def post(self, *a, **kw):
+                return _R()
+
+            def patch(self, *a, **kw):
+                return _R()
+
+        api.session = _S()
+        api._delete = lambda url: True
+        return api
+
+    def test_creation_invalide_le_cache(self):
+        api = self._api()
+        api.create_access_group("nouveau", ["https://v.fr/rest/sites/1/"])
+        assert api._access_groups_cache is None, \
+            "après création, le cache doit être vidé"
+
+    def test_suppression_invalide_le_cache(self):
+        api = self._api()
+        api.delete_access_group("https://v.fr/rest/accessgroups/1/")
+        assert api._access_groups_cache is None, \
+            "après suppression, le cache doit être vidé"
+
+    def test_changement_de_membres_invalide_le_cache(self):
+        """Les membres sont stockés avec le groupe dans le cache."""
+        api = self._api()
+        api.set_access_group_members("https://v.fr/rest/accessgroups/1/", [])
+        assert api._access_groups_cache is None

@@ -697,6 +697,8 @@ class PodAPI:
         r = self.session.post(f"{self.rest}/accessgroups/", json=body,
                               headers={"Accept": "application/json"},
                               timeout=30, verify=self.verify_ssl)
+        # Un groupe de plus : le cache reconstruit par sondage est périmé.
+        self.invalidate_access_groups_cache()
         return self._json(r)
 
     def set_access_group_members(self, group_url: str, owner_urls: list[str]) -> dict:
@@ -705,13 +707,15 @@ class PodAPI:
         r = self.session.patch(group_url, json={"users": list(owner_urls)},
                                headers={"Accept": "application/json"},
                                timeout=30, verify=self.verify_ssl)
-        self.invalidate_access_groups_cache()  # un groupe de plus : cache périmé
+        # Les membres font partie des données mises en cache : à rafraîchir.
+        self.invalidate_access_groups_cache()
         return self._json(r)
 
     def delete_access_group(self, group_url: str) -> bool:
         """⚠️ Supprime définitivement un groupe d'accès (DELETE)."""
         self.invalidate_access_groups_cache()  # un groupe de moins : cache périmé
         return self._delete(group_url)
+
     def assign_video_to_channels(self, video, channel_urls: list[str],
                                  theme_urls: Optional[list[str]] = None) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""

@@ -311,3 +311,71 @@ diagnostic indépendants.
 Pour créer la version : pousser le code, puis le tag `v1.0.0`. Le workflow
 `build.yml` produit les exécutables et la Release ; le workflow `qualite.yml`
 vérifie syntaxe et tests à chaque envoi.
+
+---
+
+# Correctif — onglet « Groupes d'accès » vide
+
+## Symptôme
+L'onglet Groupes d'accès n'affichait aucun groupe, alors qu'ils existaient bien
+sur l'instance.
+
+## Cause
+Enchaînement subtil, en deux temps :
+
+1. La **connexion** remplit déjà `self.access_groups` (elle charge les groupes
+   pour la restriction de visibilité).
+2. Le hook d'ouverture de l'onglet ne déclenchait le chargement **que si cette
+   liste était vide**. Une fois connecté, elle ne l'était plus — donc le hook ne
+   faisait rien. Or l'**affichage** de la liste n'avait lieu qu'à l'intérieur de
+   ce chargement : il n'était donc jamais construit.
+
+Les groupes étaient bien en mémoire ; c'est le rendu qui manquait.
+
+> Il est probable que la correction C4/P1 ait rendu ce défaut visible : en
+> accélérant `get_access_groups` (de ~15 s à quasi immédiat), la connexion
+> remplit désormais la liste **avant** que l'utilisateur n'ouvre l'onglet.
+> Auparavant, le chargement était si lent que la liste était souvent encore vide
+> à l'ouverture, ce qui déclenchait le rechargement — et donc l'affichage.
+
+## Correction
+Le hook distingue maintenant deux cas :
+- données pas encore chargées → chargement complet (groupes **et** table des
+  comptes propriétaires, nécessaire pour ajouter des membres) ;
+- données déjà en mémoire → simple affichage, sans appel réseau.
+
+Un indicateur explicite `_groups_loaded` remplace le test « la liste est-elle
+vide ? », qui n'était pas un bon signal puisque la connexion la remplit déjà.
+
+---
+
+# Correctif — création d'un groupe non répercutée
+
+## Symptôme
+Créer un groupe d'accès ne le faisait apparaître nulle part : ni dans l'onglet
+Groupes, ni dans les fenêtres « Restreindre au groupe… » des autres onglets.
+La suppression, elle, fonctionnait.
+
+## Cause — erreur d'insertion de ma part
+Lors de l'ajout du cache des groupes (correction C4/P1), l'invalidation du cache
+avait été insérée automatiquement au mauvais endroit : elle avait atterri dans
+`set_access_group_members` au lieu de `create_access_group`. La création ne
+périmait donc pas le cache, et le rechargement qui suit renvoyait l'ancienne
+liste.
+
+## Correction
+- `create_access_group` invalide désormais le cache (c'était le manque) ;
+- `set_access_group_members` le conserve, à juste titre : les membres font
+  partie des données mises en cache — seul le commentaire était faux ;
+- `delete_access_group` l'avait déjà.
+
+## Propagation aux autres onglets
+Vérifiée : les fenêtres de restriction des onglets Vidéos, Explorateur et
+Chaînes lisent `self.access_groups` au moment où elles s'ouvrent. Comme la
+création et la suppression rechargent cette liste, elles voient toujours l'état
+à jour — aucun mécanisme supplémentaire n'est nécessaire.
+
+## Tests
+3 tests ajoutés (44 au total). Vérifié en réintroduisant volontairement la
+régression : le test de création échoue immédiatement, puis repasse au vert une
+fois le code restauré.

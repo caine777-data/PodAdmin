@@ -174,6 +174,10 @@ class App(_AppBase):
         self._videos_lock = threading.RLock()
         self.site_urls: list[str] = []         # sites (requis à l'upload)
         self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
+        # Vrai une fois l'onglet Groupes réellement chargé (groupes + table des
+        # comptes propriétaires). `access_groups` ne suffit pas comme indicateur :
+        # la connexion le remplit déjà, sans charger le reste ni afficher.
+        self._groups_loaded = False
         self._auto_loaded: set = set()         # onglets déjà auto-chargés cette session
         self.items: list[UploadItem] = []
         self.all_users: list[dict] = []        # liste complète Pod (pour sélection owner)
@@ -1143,9 +1147,29 @@ class App(_AppBase):
         self.groups_owners_map = {}   # url compte → url owner (chargé à la demande)
 
     def _show_groups_tab_hook(self):
-        """Charge les groupes la première fois qu'on ouvre l'onglet."""
-        if self.api and not self.access_groups:
+        """Prépare l'onglet Groupes d'accès à chaque ouverture.
+
+        ATTENTION au piège corrigé ici : la connexion remplit déjà
+        `self.access_groups`. L'ancienne version ne déclenchait le chargement
+        QUE si cette liste était vide — donc, une fois connecté, elle ne faisait
+        rien… et l'affichage n'était jamais construit, puisque le rendu n'avait
+        lieu qu'à l'intérieur du chargement. Résultat : un onglet vide alors que
+        les groupes étaient bien en mémoire.
+
+        On distingue donc deux cas :
+          • données pas encore chargées → chargement complet (groupes + table
+            des comptes propriétaires, nécessaire pour ajouter des membres) ;
+          • données déjà en mémoire → simple affichage, sans appel réseau.
+        """
+        if not self.api:
+            return
+        if not getattr(self, "_groups_loaded", False):
             self._groups_reload()
+        else:
+            # Déjà chargé : on se contente de (re)construire l'affichage.
+            self._render_groups_list()
+            self.groups_status.configure(
+                text=f"{len(self.access_groups)} groupe(s).", text_color="gray")
 
     def _groups_reload(self):
         """Recharge la liste des groupes d'accès (avec leurs URLs) en arrière-plan."""
@@ -1161,6 +1185,7 @@ class App(_AppBase):
             self.access_groups = self.api.get_access_groups()
             # Table compte→owner (pour convertir lors de l'ajout de membres)
             self.groups_owners_map = self.api.get_owners_map()
+            self._groups_loaded = True     # évite un rechargement à chaque ouverture
             self._ui(self.groups_status.configure,
                      text=f"{len(self.access_groups)} groupe(s).", text_color="gray")
             self._ui(self._render_groups_list)

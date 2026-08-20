@@ -6049,12 +6049,26 @@ class App(_AppBase):
             "donne accès à l'historique complet.")
 
         section(
-            "🍎  macOS : « impossible d'ouvrir l'application »",
-            "Blocage normal d'une app non signée (Gatekeeper), pas un bug.\n"
-            "• Terminal : xattr -cr \"/Applications/PodAdmin.app\"\n"
-            "• Ou : Réglages Système → Confidentialité et sécurité → « Ouvrir quand même ».\n"
-            "⚠️ L'app du build est en Apple Silicon (arm64) : pas compatible Mac Intel "
-            "sans build dédié.")
+            "🍎  macOS : « est endommagé » ou « impossible d'ouvrir »",
+            "L'application N'EST PAS endommagée : macOS affiche ce message pour toute "
+            "application diffusée hors de l'App Store. Deux méthodes :\n\n"
+            "1) La plus simple — Réglages Système → Confidentialité et sécurité : après "
+            "une tentative d'ouverture, un bouton « Ouvrir quand même » apparaît en bas.\n\n"
+            "2) Si ce bouton n'apparaît pas (cas du message « est endommagé ») :\n"
+            "   • Copiez d'abord l'application depuis le .dmg vers le dossier Applications "
+            "(ou le Bureau) — impossible de la débloquer tant qu'elle est dans le .dmg, "
+            "qui est en lecture seule. Éjectez ensuite le .dmg.\n"
+            "   • Ouvrez le Terminal (⌘+Espace, « Terminal ») et tapez :\n"
+            "       xattr -cr\n"
+            "     puis un ESPACE, puis glissez l'application dans la fenêtre du Terminal "
+            "(le chemin s'écrit tout seul) et appuyez sur Entrée.\n"
+            "   • Si le message persiste, la signature du paquet a été abîmée pendant le "
+            "transfert. Réparez-la avec :\n"
+            "       codesign --force --deep --sign - \n"
+            "     suivi du même glisser-déposer.\n\n"
+            "À noter : transférer un .app par messagerie (Telegram, WhatsApp…) ou le "
+            "recompresser avec un outil quelconque casse souvent sa signature. Préférez "
+            "toujours le .dmg, et transmettez-le par un lien de téléchargement.")
 
         section(
             "🛠  Dépannage courant",

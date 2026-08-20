@@ -151,10 +151,26 @@ jobs:
             --add-data "assets:assets" \
             app.py
 
-      - name: Compresser le .app (archive, comme avant)
+      # Sur Apple Silicon, macOS EXIGE que tout exécutable porte une signature
+      # valide. Sans elle, le système refuse l'application avec le message
+      # trompeur « est endommagé et ne peut pas être ouvert » — alors que le
+      # fichier est intact. Une signature « ad hoc » (-s -) suffit à lever ce
+      # blocage : elle ne certifie pas l'éditeur (il faudrait un compte Apple
+      # Developer payant pour cela), mais elle rend le paquet cohérent.
+      - name: Signer l'application (signature ad hoc)
+        run: |
+          codesign --force --deep --sign - "dist/PodAdmin.app"
+          codesign --verify --deep --strict --verbose=2 "dist/PodAdmin.app"
+
+      # IMPORTANT : ne PAS utiliser `zip` sur un .app. La commande zip ne
+      # préserve ni les liens symboliques internes ni les attributs étendus du
+      # paquet : la signature est cassée à la décompression, et macOS affiche à
+      # nouveau « est endommagé ». `ditto` est l'outil prévu par Apple pour
+      # archiver un paquet applicatif sans l'altérer.
+      - name: Compresser le .app (ditto, préserve la signature)
         run: |
           cd dist
-          zip -r PodAdmin-macOS.zip PodAdmin.app || zip -r PodAdmin-macOS.zip PodAdmin
+          ditto -c -k --sequesterRsrc --keepParent PodAdmin.app PodAdmin-macOS.zip
 
       - name: Publier l'archive macOS
         uses: actions/upload-artifact@v4
@@ -165,7 +181,9 @@ jobs:
       - name: Fabriquer le DMG (glisser-déposer vers Applications)
         run: |
           mkdir -p dmg_stage
-          cp -R "dist/PodAdmin.app" dmg_stage/ 2>/dev/null || cp -R "dist/PodAdmin" dmg_stage/
+          # `ditto` préserve la signature et les liens internes du paquet,
+          # ce que `cp -R` ne garantit pas.
+          ditto "dist/PodAdmin.app" "dmg_stage/PodAdmin.app"
           ln -s /Applications dmg_stage/Applications
           hdiutil create -volname "PodAdmin" -srcfolder dmg_stage \
             -ov -format UDZO "dist/PodAdmin.dmg"

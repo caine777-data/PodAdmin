@@ -262,11 +262,14 @@ class App(_AppBase):
         ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=8)
 
-        # Emplacement du bandeau « nouvelle version disponible ». Il reste VIDE
-        # tant qu'aucune mise à jour n'est détectée, et n'occupe alors aucune
-        # place : la vérification se fait en arrière-plan, sans rien retarder.
-        self.maj_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        self.maj_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
+        # Emplacement du bandeau « nouvelle version disponible ».
+        # ATTENTION : le cadre est créé mais VOLONTAIREMENT PAS affiché ici.
+        # Un CTkFrame vide conserve sa hauteur par défaut (200 px) : l'afficher
+        # d'avance amputerait la barre latérale de 200 px et tronquerait les
+        # derniers onglets en fenêtre réduite. Il n'est inséré qu'au moment où
+        # une mise à jour est réellement détectée (voir _afficher_bandeau_maj).
+        self.maj_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent",
+                                      height=0)
 
         # Zone de navigation DÉFILANTE : sur petit écran, les onglets défilent
         # au lieu de déborder hors de la fenêtre (le haut et le bas restent fixes).
@@ -1777,6 +1780,10 @@ class App(_AppBase):
 
         for w in self.maj_frame.winfo_children():
             w.destroy()
+        # Insertion effective dans la barre latérale, maintenant qu'il y a
+        # quelque chose à montrer (voir le commentaire à la création du cadre).
+        if not self.maj_frame.winfo_manager():
+            self.maj_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
         cadre = ctk.CTkFrame(self.maj_frame, fg_color=couleur, corner_radius=6)
         cadre.pack(fill="x")
         ctk.CTkLabel(cadre, text=titre, font=ctk.CTkFont(size=11, weight="bold"),

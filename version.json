@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Repli automatique sur l'envoi par morceaux, correctif macOS.",
-  "version_minimale": "1.0.0"
+  "notes": "Correction de l'affichage de la barre latérale.",
+  "version_minimale": ""
 }

@@ -80,7 +80,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.0.1
+          AppVersion=1.0.2
           AppPublisher=Universite de Toulouse
           DefaultDirName={localappdata}\Programs\PodAdmin
           DefaultGroupName=PodAdmin

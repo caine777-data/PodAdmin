@@ -33,6 +33,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
 import config as cfg
+import maj                                  # vérification des mises à jour
 from pod_api import (PodAPI, PodAPIError, CONTRIBUTOR_ROLES,
                      SUBTITLE_LANGS, SUBTITLE_KINDS)
 # Moteur de téléversement par morceaux via session web (gros fichiers > seuil).
@@ -194,6 +195,10 @@ class App(_AppBase):
         if self.config_data.get("url") and self.token:
             self._run(self._auto_connect)
 
+        # Vérification d'une nouvelle version, différée de 2 secondes pour ne
+        # pas concurrencer le chargement initial, puis menée en arrière-plan.
+        self.after(2000, self._verifier_maj)
+
     # ── Threading helpers ────────────────────────────────────────────────
 
     def _run(self, fn, *a):
@@ -256,6 +261,12 @@ class App(_AppBase):
         # Version épinglée en bas (hors zone défilante)
         ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=8)
+
+        # Emplacement du bandeau « nouvelle version disponible ». Il reste VIDE
+        # tant qu'aucune mise à jour n'est détectée, et n'occupe alors aucune
+        # place : la vérification se fait en arrière-plan, sans rien retarder.
+        self.maj_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.maj_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
 
         # Zone de navigation DÉFILANTE : sur petit écran, les onglets défilent
         # au lieu de déborder hors de la fenêtre (le haut et le bas restent fixes).
@@ -1732,6 +1743,74 @@ class App(_AppBase):
                          "La récupération après 504 sera moins précise.")
         except Exception as e:
             self._ui(self._log, f"⚠️ Résolution du compte véhicule impossible : {e}")
+
+    def _verifier_maj(self):
+        """Lance la vérification de mise à jour en ARRIÈRE-PLAN.
+
+        Appelée peu après le démarrage. Tout se passe dans un thread : si le
+        réseau est absent ou le serveur injoignable, l'application n'attend rien
+        et l'utilisateur ne voit rien."""
+        def travail():
+            """(Thread) Interroge le fichier de version publié."""
+            try:
+                info = maj.etat_mise_a_jour(
+                    APP_VERSION,
+                    getattr(cfg, "UPDATE_URL", ""),
+                    getattr(cfg, "UPDATE_TIMEOUT_S", 5))
+            except Exception:
+                info = None              # jamais bloquant
+            if info:
+                self._ui(self._afficher_bandeau_maj, info)
+        self._run(travail)
+
+    def _afficher_bandeau_maj(self, info: dict):
+        """Affiche le bandeau annonçant une nouvelle version.
+
+        Volontairement NON bloquant, même quand la version installée est
+        périmée : le ton se durcit (couleur, libellé), mais l'application reste
+        pleinement utilisable. Empêcher quelqu'un de travailler à un mauvais
+        moment coûterait plus cher que le retard de mise à jour."""
+        urgent = bool(info.get("urgent"))
+        couleur = "#b45309" if urgent else "#1d4ed8"
+        titre = ("⚠️  Version obsolète" if urgent
+                 else f"⬆️  Version {info['version']} disponible")
+
+        for w in self.maj_frame.winfo_children():
+            w.destroy()
+        cadre = ctk.CTkFrame(self.maj_frame, fg_color=couleur, corner_radius=6)
+        cadre.pack(fill="x")
+        ctk.CTkLabel(cadre, text=titre, font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="white", wraplength=190,
+                     justify="left").pack(anchor="w", padx=8, pady=(6, 0))
+        if urgent:
+            ctk.CTkLabel(cadre,
+                         text=f"La version {info['version']} corrige un point important. "
+                              "Mettez à jour dès que possible.",
+                         font=ctk.CTkFont(size=10), text_color="white",
+                         wraplength=190, justify="left").pack(anchor="w", padx=8)
+        elif info.get("notes"):
+            ctk.CTkLabel(cadre, text=info["notes"], font=ctk.CTkFont(size=10),
+                         text_color="white", wraplength=190,
+                         justify="left").pack(anchor="w", padx=8)
+        if info.get("url"):
+            ctk.CTkButton(cadre, text="Télécharger", height=24,
+                          fg_color="white", text_color=couleur,
+                          hover_color="gray90",
+                          command=lambda u=info["url"]: self._ouvrir_lien_maj(u)
+                          ).pack(fill="x", padx=8, pady=(4, 8))
+        else:
+            ctk.CTkLabel(cadre, text="", height=4).pack()
+        self._log(f"⬆️ Version {info['version']} disponible"
+                  + (" (mise à jour recommandée sans délai)." if urgent else "."))
+
+    def _ouvrir_lien_maj(self, url: str):
+        """Ouvre la page de téléchargement de la nouvelle version."""
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            self._log("Page de téléchargement ouverte.")
+        except Exception as e:
+            self._log(f"❌ Ouverture du lien de mise à jour : {e}")
 
     def _auto_connect(self):
         """(Thread) Reconnexion automatique au démarrage si un token est déjà enregistré."""

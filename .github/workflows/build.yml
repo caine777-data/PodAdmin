@@ -17,6 +17,15 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Numéro de version à PUBLIER (ex. 1.1.0). Laisser VIDE pour une simple compilation d'essai."
+        required: false
+        default: ""
+      notes:
+        description: "Phrase affichée dans le bandeau de mise à jour (facultatif)"
+        required: false
+        default: ""
 
 jobs:
   # ─────────────────────────────── WINDOWS ───────────────────────────────
@@ -195,17 +204,80 @@ jobs:
           path: dist/PodAdmin.dmg
 
   # ──────────────────── Release GitHub (si tag v*) ─────────────────────
+  # Publication : crée la Release et prévient les applications installées.
+  # Déclenchée soit par un tag, soit par le bouton « Run workflow » lorsqu'un
+  # numéro de version a été saisi. Sans numéro, on compile seulement (essai).
   release:
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     steps:
       - uses: actions/download-artifact@v4
+      # Nom de la version : le tag s'il y en a un, sinon le numéro saisi
+      # dans le formulaire du bouton « Run workflow ».
+      - name: Déterminer le numéro de version
+        id: v
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "num=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "num=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Créer la release et joindre tous les livrables
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.v.outputs.num }}
+          name: PodAdmin v${{ steps.v.outputs.num }}
           files: |
             PodAdmin-Windows-Setup/PodAdmin-Setup.exe
             PodAdmin-Windows-portable/PodAdmin.exe
             PodAdmin-macOS-DMG/PodAdmin.dmg
             PodAdmin-macOS-zip/PodAdmin-macOS.zip
+
+      # ── Notification de mise à jour, entièrement automatique ──────────────
+      # Cette étape écrit `version.json` sur le dépôt PUBLIC des releases.
+      # C'est ce fichier que les applications installées consultent au
+      # démarrage pour savoir qu'une version plus récente existe.
+      #
+      # Vous n'avez donc RIEN à faire à la main : poser le tag suffit.
+      #
+      # Prérequis (une seule fois) : créer un secret nommé RELEASES_TOKEN
+      # dans ce dépôt (Settings → Secrets and variables → Actions), contenant
+      # un jeton GitHub autorisé à écrire sur le dépôt public.
+      # Sans ce secret, l'étape est simplement IGNORÉE : la publication des
+      # exécutables se déroule normalement.
+      - name: Publier version.json sur le dépôt public
+        if: env.RELEASES_TOKEN != ''
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          DEPOT_PUBLIC: ${{ vars.RELEASES_REPO }}
+        run: |
+          set -e
+          VERSION="${{ steps.v.outputs.num }}"
+          DEPOT="${DEPOT_PUBLIC:-${GITHUB_REPOSITORY_OWNER}/podadmin-releases}"
+
+          # Résumé affiché dans le bandeau : celui saisi dans le formulaire,
+          # sinon une phrase neutre.
+          NOTES="${{ inputs.notes }}"
+          [ -z "$NOTES" ] && NOTES="Nouvelle version disponible."
+
+          cat > version.json <<EOF
+          {
+            "version": "$VERSION",
+            "url": "https://github.com/$DEPOT/releases/latest",
+            "notes": "$NOTES",
+            "version_minimale": ""
+          }
+          EOF
+          echo "Contenu publié :" && cat version.json
+
+          git clone --depth 1 \
+            "https://x-access-token:${RELEASES_TOKEN}@github.com/${DEPOT}.git" public
+          cp version.json public/version.json
+          cd public
+          git config user.name  "github-actions"
+          git config user.email "github-actions@github.com"
+          git add version.json
+          git diff --cached --quiet || git commit -m "Version $VERSION"
+          git push

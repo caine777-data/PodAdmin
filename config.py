@@ -273,3 +273,19 @@ VIDEO_EXTENSIONS = {
     ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v",
     ".wmv", ".flv", ".mpg", ".mpeg", ".ts", ".mts",
 }
+
+# ── Vérification des mises à jour ────────────────────────────────────────
+# Adresse du fichier décrivant la dernière version publiée. Il est hébergé sur
+# un dépôt GitHub PUBLIC distinct du dépôt de code (qui reste privé, puisqu'il
+# contient le mot de passe du compte véhicule).
+#
+# Le dépôt public ne contient QUE ce fichier et les exécutables : aucun secret.
+# Voir MISE_A_JOUR.md pour la marche à suivre.
+#
+# Mettre à "" pour désactiver complètement la vérification.
+UPDATE_URL = ("https://raw.githubusercontent.com/"
+              "caine777-data/podadmin-releases/main/version.json")
+
+# Délai maximal (secondes) accordé à la vérification. Volontairement court :
+# elle ne doit jamais retarder le démarrage.
+UPDATE_TIMEOUT_S = 5

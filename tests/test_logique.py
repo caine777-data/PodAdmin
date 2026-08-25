@@ -452,3 +452,76 @@ class TestDetectionCoupureReseau:
     def test_token_invalide_pas_de_repli(self):
         from pod_api import PodAPIError
         assert self._f(PodAPIError("HTTP 401", 401, "invalid token")) is False
+
+
+class TestComparaisonVersions:
+    """La comparaison de versions doit être NUMÉRIQUE, pas alphabétique :
+    comparer des chaînes ferait passer « 1.10.0 » pour antérieure à « 1.9.0 »,
+    et l'application ne proposerait jamais la mise à jour."""
+
+    @staticmethod
+    def _c(a, b):
+        from maj import comparer_versions
+        return comparer_versions(a, b)
+
+    def test_egalite(self):
+        assert self._c("1.0.0", "1.0.0") == 0
+
+    def test_anterieure(self):
+        assert self._c("1.0.0", "1.0.1") == -1
+
+    def test_posterieure(self):
+        assert self._c("1.0.1", "1.0.0") == 1
+
+    def test_piege_dix_contre_neuf(self):
+        """LE piège : « 1.10.0 » est POSTÉRIEURE à « 1.9.0 »."""
+        assert self._c("1.9.0", "1.10.0") == -1
+        assert self._c("1.10.0", "1.9.0") == 1
+
+    def test_longueurs_differentes(self):
+        assert self._c("1.2", "1.2.0") == 0
+
+    def test_suffixe_ignore(self):
+        assert self._c("1.0.0", "1.0.0-beta") == 0
+
+    def test_valeurs_absurdes(self):
+        assert self._c("", "1.0.0") == -1
+        assert self._c("abc", "0.0.0") == 0
+
+
+class TestEtatMiseAJour:
+    """La vérification ne doit JAMAIS bloquer ni signaler à tort."""
+
+    def test_deja_a_jour_aucun_signalement(self, monkeypatch):
+        import maj
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: {"version": "1.0.0"})
+        assert maj.etat_mise_a_jour("1.0.0", "http://x") is None
+
+    def test_version_locale_plus_recente(self, monkeypatch):
+        """Compilation locale en avance : pas de bandeau."""
+        import maj
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: {"version": "1.0.0"})
+        assert maj.etat_mise_a_jour("1.5.0", "http://x") is None
+
+    def test_mise_a_jour_disponible(self, monkeypatch):
+        import maj
+        monkeypatch.setattr(maj, "recuperer_info",
+                            lambda u, t=5: {"version": "1.1.0", "url": "http://dl"})
+        info = maj.etat_mise_a_jour("1.0.0", "http://x")
+        assert info["version"] == "1.1.0"
+        assert info["urgent"] is False
+
+    def test_version_perimee_marquee_urgente(self, monkeypatch):
+        import maj
+        monkeypatch.setattr(maj, "recuperer_info",
+                            lambda u, t=5: {"version": "2.0.0", "version_minimale": "1.5.0"})
+        assert maj.etat_mise_a_jour("1.0.0", "http://x")["urgent"] is True
+
+    def test_reseau_indisponible_silence(self, monkeypatch):
+        import maj
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: None)
+        assert maj.etat_mise_a_jour("1.0.0", "http://x") is None
+
+    def test_url_vide_desactive_la_verification(self):
+        import maj
+        assert maj.recuperer_info("") is None

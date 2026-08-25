@@ -229,11 +229,22 @@ jobs:
             echo "num=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Créer la release et joindre tous les livrables
+      # La Release est publiée sur le dépôt PUBLIC, et non sur ce dépôt privé.
+      # C'est indispensable : le bouton « Télécharger » du bandeau de mise à
+      # jour renvoie vers ce dépôt public. Publier sur le dépôt privé donnerait
+      # une page inaccessible (404) à toute personne n'y ayant pas accès.
+      #
+      # L'écriture se fait avec RELEASES_TOKEN (le jeton créé pour le dépôt
+      # public), et non avec le jeton automatique de GitHub Actions, qui n'a
+      # aucun droit en dehors de ce dépôt-ci.
+      - name: Créer la release sur le dépôt public
         uses: softprops/action-gh-release@v2
         with:
+          repository: ${{ vars.RELEASES_REPO || format('{0}/podadmin-releases', github.repository_owner) }}
+          token: ${{ secrets.RELEASES_TOKEN }}
           tag_name: v${{ steps.v.outputs.num }}
           name: PodAdmin v${{ steps.v.outputs.num }}
+          body: ${{ inputs.notes || 'Nouvelle version.' }}
           files: |
             PodAdmin-Windows-Setup/PodAdmin-Setup.exe
             PodAdmin-Windows-portable/PodAdmin.exe
@@ -245,7 +256,8 @@ jobs:
       # C'est ce fichier que les applications installées consultent au
       # démarrage pour savoir qu'une version plus récente existe.
       #
-      # Vous n'avez donc RIEN à faire à la main : poser le tag suffit.
+      # Vous n'avez RIEN à faire à la main : saisir le numéro de version dans
+      # le formulaire « Run workflow » (ou poser un tag) suffit.
       #
       # Prérequis (une seule fois) : créer un secret nommé RELEASES_TOKEN
       # dans ce dépôt (Settings → Secrets and variables → Actions), contenant

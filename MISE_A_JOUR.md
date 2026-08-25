@@ -77,9 +77,15 @@ C'est terminé.
      groupes d'accès »
 5. **Run workflow**
 
-C'est tout. La compilation produit les exécutables, crée la Release, et écrit
-`version.json` sur le dépôt public. Les applications déjà installées afficheront
-le bandeau à leur prochain démarrage.
+C'est tout. La compilation produit les exécutables, crée la Release **sur le
+dépôt public** `podadmin-releases` avec les fichiers à télécharger, et y écrit
+`version.json`. Les applications déjà installées afficheront le bandeau à leur
+prochain démarrage.
+
+> Les Releases sont publiées sur le dépôt **public**, jamais sur le dépôt de
+> code. C'est volontaire : le bouton « Télécharger » du bandeau doit mener à une
+> page accessible à tous, sans compte ni autorisation. Le dépôt de code reste
+> privé (il contient le mot de passe du compte véhicule).
 
 ## Compiler sans publier (essai)
 
@@ -98,9 +104,15 @@ publication), mais **vous n'êtes pas obligé de les utiliser**. Le bouton suffi
 
 # Questions pratiques
 
-**Et si je ne fais pas les étapes 2 et 3 ?**
-La publication des exécutables fonctionne quand même : l'étape de notification
-est simplement ignorée. Vous pouvez donc commencer sans, et l'ajouter plus tard.
+**Le jeton RELEASES_TOKEN est-il indispensable ?**
+**Oui.** Les exécutables sont publiés sur le dépôt PUBLIC, ce qui permet à vos
+collègues de les télécharger sans avoir accès au dépôt de code, qui reste privé.
+Sans ce jeton, l'écriture sur le dépôt public est impossible et la publication
+échoue.
+
+En revanche, une **compilation d'essai** (champ « Numéro de version » laissé
+vide) fonctionne sans jeton : elle produit les exécutables en artefacts, sans
+rien publier.
 
 **Comment forcer une mise à jour vraiment importante ?**
 Par exemple après une rotation du mot de passe du compte véhicule, qui rend les

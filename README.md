@@ -104,3 +104,16 @@ PodAdmin/
 ```
 
 Version : **1.0.2**
+
+---
+
+## Droits
+
+© Copyright 2026 Cédric MONNA
+
+Développé pour l'Université de Toulouse, avec Philippe BAQUÉ et Michel JACOB.
+
+**Tous droits réservés.** La réutilisation, la diffusion ou l'adaptation de cet
+outil, en tout ou partie, sont soumises à l'autorisation préalable de l'auteur.
+
+Contact : support-pod@utoulouse.fr

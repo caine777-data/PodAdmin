@@ -82,6 +82,7 @@ jobs:
           AppName=PodAdmin
           AppVersion=1.0.2
           AppPublisher=Universite de Toulouse
+          AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
           DefaultGroupName=PodAdmin
           PrivilegesRequired=lowest

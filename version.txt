@@ -28,7 +28,7 @@ VSVersionInfo(
             StringStruct(u'ProductName',      u'PodAdmin'),
             StringStruct(u'ProductVersion',   u'1.0.2'),
             StringStruct(u'CompanyName',      u'Universite de Toulouse - MFCA'),
-            StringStruct(u'LegalCopyright',   u'(C) 2026 Cedric MONNA - Universite de Toulouse'),
+            StringStruct(u'LegalCopyright',   u'© Copyright 2026 Cédric MONNA'),
             StringStruct(u'Comments',
                          u'Developpe par Cedric MONNA (cedricmonna@gmail.com) '
                          u'pour le service MFCA, Universite de Toulouse. '

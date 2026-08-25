@@ -18,7 +18,9 @@ __contact__     = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
 from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+__copyright__   = "© Copyright 2026 Cédric MONNA"
+__license__     = ("Tous droits réservés — réutilisation, diffusion ou "
+                   "adaptation soumises à l'autorisation de l'auteur.")
 
 
 import os
@@ -6226,9 +6228,16 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=("#1d4ed8", "#60a5fa")).pack(pady=(0, 14))
 
-        ctk.CTkLabel(card, text="Usage interne — non redistribuable",
+        # Mention légale : titulaire des droits, puis conditions d'utilisation.
+        # Le copyright désigne l'auteur ; la licence dit ce qu'on a le droit
+        # d'en faire — c'est elle qui encadre réellement la réutilisation.
+        ctk.CTkLabel(card, text=__copyright__,
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color="gray60").pack(pady=(0, 2))
+        ctk.CTkLabel(card, text=__license__,
                      font=ctk.CTkFont(size=10, slant="italic"),
-                     text_color="gray50").pack(pady=(0, 18))
+                     text_color="gray50", wraplength=420,
+                     justify="center").pack(padx=20, pady=(0, 18))
 
     def _build_tab_log(self):
         """Construit l'onglet Journal (zone de texte horodatée + bouton Effacer)."""

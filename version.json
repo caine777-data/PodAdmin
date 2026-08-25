@@ -1,6 +1,6 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Correction de l'affichage de la barre latérale.",
+  "notes": "Copyright, correctif macOS et abaissement du seuil d'envoi.",
   "version_minimale": ""
 }

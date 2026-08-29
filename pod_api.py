@@ -767,6 +767,62 @@ class PodAPI:
         payload.update(extra)
         return self._post("/channels/", json=payload)
 
+    # ══════════════════════════════════════════════════════════════════
+    #  IMAGES — bannières de chaînes et de thèmes
+    # ══════════════════════════════════════════════════════════════════
+
+    def get_images(self, max_pages: int = 20) -> list[dict]:
+        """Liste les images de l'instance (bannières, vignettes…).
+
+        Chaque entrée contient `url` (la référence à poser dans `headband`),
+        `file` (l'adresse du fichier, pour afficher une vignette), `name` et
+        `folder`."""
+        return self._paginate("/images/", {"limit": 100}, max_pages=max_pages)
+
+    def get_folders(self, max_pages: int = 10) -> list[dict]:
+        """Liste les dossiers de rangement des images (champ obligatoire au dépôt)."""
+        return self._paginate("/folders/", {"limit": 100}, max_pages=max_pages)
+
+    def upload_image(self, file_path: str, name: str, folder_url: str,
+                     created_by_url: str) -> dict:
+        """Dépose une image sur l'instance et renvoie sa description.
+
+        L'API exige QUATRE champs (vérifié par sonde sur l'instance) :
+          • `file`       — le fichier lui-même, en multipart ;
+          • `name`       — un libellé ;
+          • `folder`     — l'URL d'un dossier de rangement ;
+          • `created_by` — l'URL du compte déposant.
+
+        L'`url` renvoyée est celle à poser dans le champ `headband` d'une
+        chaîne ou d'un thème.
+
+        À noter : Pod REFUSE les images trop petites ou mal formées (« Le
+        fichier que vous avez transféré n'est pas une image, ou il est
+        corrompu »). L'appelant doit donc remonter le message d'erreur tel quel.
+        """
+        if not os.path.isfile(file_path):
+            raise PodAPIError(f"Fichier introuvable : {file_path}")
+        nom_fichier = os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            fichiers = {"file": (nom_fichier, f, "application/octet-stream")}
+            donnees = {
+                "name": name or os.path.splitext(nom_fichier)[0],
+                "folder": folder_url,
+                "created_by": created_by_url,
+            }
+            r = self.session.post(f"{self.rest}/images/", files=fichiers,
+                                  data=donnees, timeout=120,
+                                  verify=self.verify_ssl)
+        return self._json(r)
+
+    def set_channel_headband(self, channel, image_url: str) -> dict:
+        """Pose (ou retire, si `image_url` est vide) la bannière d'une chaîne."""
+        return self.patch_channel(channel, {"headband": image_url or None})
+
+    def set_theme_headband(self, theme, image_url: str) -> dict:
+        """Pose (ou retire, si `image_url` est vide) la bannière d'un thème."""
+        return self.patch_theme(theme, {"headband": image_url or None})
+
     def patch_channel(self, channel: str, payload: dict) -> dict:
         """Met à jour une chaîne (réf = URL ou id)."""
         ep = channel if str(channel).startswith("http") else f"/channels/{channel}/"

@@ -5361,6 +5361,10 @@ class App(_AppBase):
                           command=lambda c=ch: self._ct_manage_owners(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🔒 Restreindre", width=100, fg_color="gray35",
                           command=lambda c=ch: self._ct_manage_groups(c)).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🎨 Habillage", width=94, fg_color="#7c3aed",
+                          hover_color="#6d28d9",
+                          command=lambda c=ch: self._ct_habillage(c, "channel")).pack(
+                side="left", padx=2)
             ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color="gray35",
                           command=lambda c=ch: self._ct_toggle_visible(c)).pack(side="left", padx=2)
             ctk.CTkButton(crow, text="🗑", width=34, fg_color="#b91c1c", hover_color="#991b1b",
@@ -5375,6 +5379,10 @@ class App(_AppBase):
                     side="left", padx=6, pady=2, fill="x", expand=True)
                 ctk.CTkButton(trow, text="✏", width=34, height=24, fg_color="gray30",
                               command=lambda th=t: self._ct_rename_theme(th)).pack(side="left", padx=2)
+                ctk.CTkButton(trow, text="🎨", width=34, height=24, fg_color="#7c3aed",
+                              hover_color="#6d28d9",
+                              command=lambda th=t: self._ct_habillage(th, "theme")).pack(
+                    side="left", padx=2)
                 ctk.CTkButton(trow, text="🗑", width=34, height=24, fg_color="#7f1d1d",
                               hover_color="#991b1b",
                               command=lambda th=t: self._ct_delete_theme(th)).pack(side="left", padx=(2, 8))
@@ -5432,6 +5440,188 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Création thème : {e}")
 
     # ── Modification ───────────────────────────────────────────────────────
+
+    # ── Habillage (couleur, description, bannière) ─────────────────────────
+
+    def _ct_habillage(self, element, genre: str):
+        """Ouvre la fenêtre d'habillage d'une chaîne ou d'un thème.
+
+        `genre` vaut "channel" ou "theme". Les deux partagent titre, description
+        et bannière ; seule une chaîne possède en plus une couleur et un état de
+        visibilité (vérifié par sonde sur l'API de l'instance).
+
+        Le champ `style` (CSS libre) n'est volontairement PAS exposé : une
+        erreur de syntaxe s'appliquerait à l'affichage public de la chaîne.
+        """
+        est_chaine = (genre == "channel")
+        libelle = "chaîne" if est_chaine else "thème"
+
+        win = ctk.CTkToplevel(self)
+        win.title(f"Habillage — {element.get('title', '')}")
+        win.geometry("560x560" if est_chaine else "560x470")
+        _focus_toplevel(win, self)
+
+        ctk.CTkLabel(win, text=f"🎨  Habillage de la {libelle}",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(
+            anchor="w", padx=18, pady=(16, 2))
+        ctk.CTkLabel(win, text=element.get("title", ""), text_color="gray70",
+                     font=ctk.CTkFont(size=12)).pack(anchor="w", padx=18, pady=(0, 10))
+
+        corps = ctk.CTkFrame(win)
+        corps.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        corps.columnconfigure(1, weight=1)
+        ligne = 0
+
+        # — Titre —
+        ctk.CTkLabel(corps, text="Titre :", width=110, anchor="e").grid(
+            row=ligne, column=0, padx=8, pady=8)
+        titre_entry = ctk.CTkEntry(corps)
+        titre_entry.insert(0, element.get("title", "") or "")
+        titre_entry.grid(row=ligne, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=8)
+        ligne += 1
+
+        # — Description —
+        ctk.CTkLabel(corps, text="Description :", width=110, anchor="ne").grid(
+            row=ligne, column=0, padx=8, pady=8, sticky="ne")
+        desc_box = ctk.CTkTextbox(corps, height=90)
+        desc_box.insert("1.0", element.get("description", "") or "")
+        desc_box.grid(row=ligne, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=8)
+        ligne += 1
+
+        # — Couleur (chaînes uniquement) —
+        couleur_entry = None
+        apercu_couleur = None
+        if est_chaine:
+            ctk.CTkLabel(corps, text="Couleur :", width=110, anchor="e").grid(
+                row=ligne, column=0, padx=8, pady=8)
+            zone = ctk.CTkFrame(corps, fg_color="transparent")
+            zone.grid(row=ligne, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=8)
+            couleur_entry = ctk.CTkEntry(zone, width=120, placeholder_text="ex. 223333")
+            couleur_entry.insert(0, (element.get("color") or "").lstrip("#"))
+            couleur_entry.pack(side="left")
+            apercu_couleur = ctk.CTkLabel(zone, text="   ", width=40, height=26,
+                                          corner_radius=4)
+            apercu_couleur.pack(side="left", padx=8)
+
+            def rafraichir_couleur(*_):
+                """Montre la couleur saisie, pour éviter les codes erronés."""
+                val = (couleur_entry.get() or "").strip().lstrip("#")
+                try:
+                    if len(val) in (3, 6) and all(c in "0123456789abcdefABCDEF" for c in val):
+                        apercu_couleur.configure(fg_color=f"#{val}")
+                    else:
+                        apercu_couleur.configure(fg_color=("gray85", "gray25"))
+                except Exception:
+                    pass
+            couleur_entry.bind("<KeyRelease>", rafraichir_couleur)
+            rafraichir_couleur()
+            ctk.CTkButton(zone, text="Choisir…", width=90, fg_color="gray35",
+                          command=lambda: self._ct_choisir_couleur(couleur_entry,
+                                                                   rafraichir_couleur)
+                          ).pack(side="left")
+            ligne += 1
+
+        # — Bannière —
+        ctk.CTkLabel(corps, text="Bannière :", width=110, anchor="e").grid(
+            row=ligne, column=0, padx=8, pady=8)
+        banniere = {"url": element.get("headband") or ""}
+        banniere_lbl = ctk.CTkLabel(
+            corps, anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
+            text=("Image définie" if banniere["url"] else "aucune"))
+        banniere_lbl.grid(row=ligne, column=1, sticky="w", padx=(0, 6), pady=8)
+
+        def choisir_banniere():
+            """Ouvre la galerie et retient l'image choisie."""
+            win.grab_release()
+            picker = BannerPicker(self, f"Bannière de la {libelle}", banniere["url"])
+            self.wait_window(picker)
+            if picker.resultat is not None:
+                banniere["url"] = picker.resultat
+                banniere_lbl.configure(
+                    text=("Image définie" if picker.resultat else "aucune (retirée)"),
+                    text_color=("#22c55e" if picker.resultat else "#f59e0b"))
+            try:
+                win.grab_set()
+            except Exception:
+                pass
+
+        ctk.CTkButton(corps, text="Choisir…", width=110,
+                      command=choisir_banniere).grid(row=ligne, column=2, padx=8, pady=8)
+        ligne += 1
+
+        # — Visibilité (chaînes uniquement) —
+        visible_var = None
+        if est_chaine:
+            visible_var = ctk.BooleanVar(value=bool(element.get("visible")))
+            ctk.CTkCheckBox(corps, text="Chaîne visible publiquement",
+                            variable=visible_var).grid(
+                row=ligne, column=1, columnspan=2, sticky="w", padx=(0, 8), pady=8)
+            ligne += 1
+
+        msg = ctk.CTkLabel(win, text="", font=ctk.CTkFont(size=11),
+                           wraplength=500, justify="left", anchor="w")
+        msg.pack(fill="x", padx=18, pady=(0, 4))
+
+        bas = ctk.CTkFrame(win, fg_color="transparent")
+        bas.pack(fill="x", padx=16, pady=(0, 14))
+
+        def enregistrer():
+            """Compose le PATCH et l'applique."""
+            payload = {
+                "title": titre_entry.get().strip(),
+                "description": desc_box.get("1.0", "end").strip(),
+                "headband": banniere["url"] or None,
+            }
+            if not payload["title"]:
+                msg.configure(text="Le titre ne peut pas être vide.", text_color="#f59e0b")
+                return
+            if est_chaine:
+                coul = (couleur_entry.get() or "").strip().lstrip("#")
+                if coul and not (len(coul) in (3, 6)
+                                 and all(c in "0123456789abcdefABCDEF" for c in coul)):
+                    msg.configure(
+                        text="Couleur invalide : attendu 3 ou 6 caractères hexadécimaux "
+                             "(ex. 223333).", text_color="#f59e0b")
+                    return
+                payload["color"] = coul
+                payload["visible"] = bool(visible_var.get())
+            msg.configure(text="⏳ Enregistrement…", text_color="gray")
+            self._run(self._do_ct_habillage, element, genre, payload, win, msg)
+
+        ctk.CTkButton(bas, text="Enregistrer", width=140, fg_color="#16a34a",
+                      hover_color="#15803d", command=enregistrer).pack(side="right")
+        ctk.CTkButton(bas, text="Annuler", width=110, fg_color="gray35",
+                      hover_color="gray28", command=win.destroy).pack(side="right", padx=8)
+
+    def _ct_choisir_couleur(self, champ, apres):
+        """Ouvre le sélecteur de couleur du système et remplit le champ."""
+        from tkinter import colorchooser
+        actuel = (champ.get() or "").strip().lstrip("#")
+        try:
+            initial = f"#{actuel}" if len(actuel) in (3, 6) else "#1f4e79"
+            choix = colorchooser.askcolor(color=initial, title="Couleur de la chaîne")
+        except Exception:
+            choix = (None, None)
+        if choix and choix[1]:
+            champ.delete(0, "end")
+            champ.insert(0, str(choix[1]).lstrip("#"))
+            apres()
+
+    def _do_ct_habillage(self, element, genre: str, payload: dict, win, msg):
+        """(Thread) Applique l'habillage puis rafraîchit la liste."""
+        try:
+            if genre == "channel":
+                self.api.patch_channel(element.get("url") or element.get("id"), payload)
+            else:
+                self.api.patch_theme(element.get("url") or element.get("id"), payload)
+            element.update({k: v for k, v in payload.items() if v is not None})
+            self._ui(self._log,
+                     f"🎨 Habillage enregistré : {payload.get('title', '')}.")
+            self._ui(win.destroy)
+            self._do_ct_load()          # recharge chaînes et thèmes
+        except Exception as e:
+            self._ui(msg.configure, text=f"❌ {e}", text_color="#ef4444")
+            self._ui(self._log, f"❌ Habillage : {e}")
 
     def _ct_rename_channel(self, ch):
         """Renomme une chaîne (boîte de saisie)."""
@@ -6100,6 +6290,26 @@ class App(_AppBase):
             "Le bouton ✉️ est grisé si aucune adresse n'est connue pour le compte.")
 
         section(
+            "🎨  Habiller une chaîne ou un thème",
+            "Bouton « 🎨 Habillage » sur chaque chaîne (et « 🎨 » sur chaque thème) "
+            "de l'onglet Chaînes. On y règle :\n"
+            "• le titre et la description ;\n"
+            "• la couleur (chaînes seulement), avec aperçu et sélecteur ;\n"
+            "• la bannière ;\n"
+            "• la visibilité publique (chaînes seulement).\n\n"
+            "Pour la bannière, deux possibilités :\n"
+            "• BIBLIOTHÈQUE — réutiliser une image déjà présente sur la plateforme. "
+            "Les vignettes générées automatiquement pour les vidéos sont masquées par "
+            "défaut, sans quoi elles noieraient les vraies bannières ; décochez la case "
+            "pour toutes les voir.\n"
+            "• DEPUIS MON ORDINATEUR — déposer une nouvelle image (JPG ou PNG). Pod "
+            "refuse les images trop petites ou mal formées.\n\n"
+            "Le bouton « Retirer la bannière » enlève l'image sans en poser d'autre.\n\n"
+            "À savoir : la page d'ACCUEIL de la plateforme n'est pas modifiable depuis "
+            "l'application — elle relève de la configuration du serveur, et non de "
+            "l'API.")
+
+        section(
             "🧹  Explorateur : agir sur plus de 300 vidéos",
             "L'affichage est limité à 300 lignes pour que l'interface reste fluide, "
             "mais ce plafond ne limite PAS les actions :\n"
@@ -6737,6 +6947,354 @@ class VideoPicker(ctk.CTkToplevel):
     def _validate(self):
         """Renvoie la liste des slugs sélectionnés à l'appelant puis ferme."""
         self.on_done(list(self.selected.keys()))
+        self.destroy()
+
+
+class BannerPicker(ctk.CTkToplevel):
+    """Fenêtre de choix d'une bannière : bibliothèque de l'instance ou fichier local.
+
+    Deux façons de poser une bannière :
+      • BIBLIOTHÈQUE — réutiliser une image déjà présente sur l'instance ;
+      • ORDINATEUR   — déposer un nouveau fichier.
+
+    Deux difficultés traitées ici :
+
+    1. LE BRUIT. Une instance accumule des centaines d'images, en très grande
+       majorité des vignettes générées automatiquement pour les vidéos (noms du
+       type « 0005-galerie-imagemp4_3 »). Une galerie brute serait inutilisable :
+       un filtre masque ces vignettes par défaut.
+
+    2. LA LENTEUR. Afficher toutes les vignettes signifierait autant de
+       téléchargements. On plafonne donc l'affichage et on charge les images
+       PROGRESSIVEMENT, en arrière-plan, sans figer la fenêtre.
+    """
+
+    # Au-delà, on n'affiche pas : il faut affiner le filtre.
+    PLAFOND = 40
+
+    def __init__(self, master, titre: str, image_actuelle: str = ""):
+        super().__init__(master)
+        self.master_app = master
+        self.resultat = None          # URL choisie, "" pour retirer, None si annulé
+        self.image_actuelle = str(image_actuelle or "")
+        self.images = []              # catalogue complet (chargé une fois)
+        self.vignettes = {}           # URL d'image → CTkImage (évite de retélécharger)
+        self._job_filtre = None
+
+        self.title(titre)
+        self.geometry("760x620")
+        _focus_toplevel(self, master)
+
+        ctk.CTkLabel(self, text=titre,
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(
+            anchor="w", padx=16, pady=(14, 2))
+
+        self.onglets = ctk.CTkTabview(self, height=470)
+        self.onglets.pack(fill="both", expand=True, padx=12, pady=6)
+        self.onglets.add("Bibliothèque")
+        self.onglets.add("Depuis mon ordinateur")
+
+        self._build_bibliotheque(self.onglets.tab("Bibliothèque"))
+        self._build_local(self.onglets.tab("Depuis mon ordinateur"))
+
+        bas = ctk.CTkFrame(self, fg_color="transparent")
+        bas.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkButton(bas, text="Retirer la bannière", width=160,
+                      fg_color="#b45309", hover_color="#92400e",
+                      command=self._retirer).pack(side="left")
+        ctk.CTkButton(bas, text="Annuler", width=110, fg_color="gray35",
+                      hover_color="gray28", command=self._annuler).pack(side="right")
+
+        self._charger_catalogue()
+
+    # ── Onglet bibliothèque ───────────────────────────────────────────────
+
+    def _build_bibliotheque(self, parent):
+        """Construit la galerie des images déjà présentes sur l'instance."""
+        barre = ctk.CTkFrame(parent, fg_color="transparent")
+        barre.pack(fill="x", padx=6, pady=(6, 2))
+        self.filtre = ctk.CTkEntry(barre, placeholder_text="🔍 filtrer par nom…", width=260)
+        self.filtre.pack(side="left")
+        self.filtre.bind("<KeyRelease>", lambda e: self._filtrer_differe())
+
+        # Les vignettes de vidéos sont écartées par défaut : ce sont elles qui
+        # noient les vraies bannières.
+        self.masquer_vignettes = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(barre, text="Masquer les vignettes de vidéos",
+                        variable=self.masquer_vignettes,
+                        command=self._filtrer).pack(side="left", padx=12)
+
+        self.compteur = ctk.CTkLabel(parent, text="Chargement…", text_color="gray",
+                                     font=ctk.CTkFont(size=11), anchor="w")
+        self.compteur.pack(fill="x", padx=8, pady=(2, 4))
+
+        self.galerie = ctk.CTkScrollableFrame(parent, height=350)
+        self.galerie.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+    def _charger_catalogue(self):
+        """(Thread) Récupère la liste des images de l'instance."""
+        def travail():
+            """(Thread) Lecture du catalogue d'images."""
+            try:
+                images = self.master_app.api.get_images()
+            except Exception as e:
+                self.master_app._ui(self.compteur.configure,
+                                    text=f"❌ {e}", text_color="#ef4444")
+                return
+            self.images = images
+            self.master_app._ui(self._filtrer)
+        self.master_app._run(travail)
+
+    @staticmethod
+    def _est_vignette_video(nom: str) -> bool:
+        """Ce nom ressemble-t-il à une vignette générée automatiquement ?
+
+        Pod nomme ces images d'après le slug de la vidéo, avec un suffixe
+        numérique : « 0005-galerie-imagemp4_3 ». On repère ce motif plutôt
+        que de lister des cas particuliers."""
+        import re as _re
+        return bool(_re.match(r"^\d{3,5}-.*_\d+$", (nom or "").strip()))
+
+    def _filtrer_differe(self):
+        """Attend une pause dans la frappe avant de reconstruire la galerie."""
+        if self._job_filtre:
+            try:
+                self.after_cancel(self._job_filtre)
+            except Exception:
+                pass
+        self._job_filtre = self.after(FILTER_DELAY_MS, self._filtrer)
+
+    def _filtrer(self):
+        """Applique les filtres puis réaffiche la galerie."""
+        self._job_filtre = None
+        texte = (self.filtre.get() or "").strip().lower()
+        retenues = []
+        for img in self.images:
+            nom = str(img.get("name", ""))
+            if self.masquer_vignettes.get() and self._est_vignette_video(nom):
+                continue
+            if texte and texte not in nom.lower():
+                continue
+            retenues.append(img)
+        self._afficher(retenues)
+
+    def _afficher(self, images: list):
+        """Dessine les vignettes (plafonnées) et lance leur chargement."""
+        for w in self.galerie.winfo_children():
+            w.destroy()
+
+        total = len(images)
+        montrees = images[:self.PLAFOND]
+        masquees = len(self.images) - total
+        detail = f"{total} image(s)"
+        if masquees > 0:
+            detail += f" — {masquees} vignette(s) de vidéos masquée(s)"
+        if total > self.PLAFOND:
+            detail += f" — {self.PLAFOND} affichées, affinez le filtre"
+        self.compteur.configure(text=detail, text_color="gray")
+
+        if not montrees:
+            ctk.CTkLabel(self.galerie, text="Aucune image ne correspond.",
+                         text_color="gray").pack(pady=20)
+            return
+
+        # Grille de 4 colonnes
+        for i, img in enumerate(montrees):
+            ligne, col = divmod(i, 4)
+            case = ctk.CTkFrame(self.galerie, width=165, height=140)
+            case.grid(row=ligne, column=col, padx=6, pady=6)
+            case.grid_propagate(False)
+
+            actuelle = str(img.get("url", "")).rstrip("/") == self.image_actuelle.rstrip("/")
+            apercu = ctk.CTkLabel(case, text="…", width=150, height=80,
+                                  fg_color=("gray85", "gray25"), corner_radius=4)
+            apercu.pack(padx=6, pady=(6, 2))
+
+            nom = str(img.get("name", "?"))
+            ctk.CTkLabel(case, text=(("✅ " if actuelle else "") + nom[:22]),
+                         font=ctk.CTkFont(size=10),
+                         text_color=("#22c55e" if actuelle else "gray70")).pack()
+            ctk.CTkButton(case, text="Choisir", height=22, width=140,
+                          font=ctk.CTkFont(size=11),
+                          command=lambda u=img.get("url", ""): self._choisir(u)).pack(pady=(2, 6))
+
+            # Chargement de la vignette en arrière-plan, une par une.
+            self._charger_vignette(img, apercu)
+
+    def _charger_vignette(self, img: dict, cible):
+        """(Thread) Télécharge et affiche une vignette, sans bloquer la fenêtre."""
+        url_fichier = str(img.get("file", ""))
+        if not url_fichier:
+            return
+        deja = self.vignettes.get(url_fichier)
+        if deja is not None:
+            cible.configure(image=deja, text="")
+            return
+
+        def travail():
+            """(Thread) Téléchargement puis mise à l'échelle de l'image."""
+            try:
+                import io
+                from PIL import Image as _Img
+                r = self.master_app.api.session.get(url_fichier, timeout=20)
+                if r.status_code != 200:
+                    return
+                pil = _Img.open(io.BytesIO(r.content))
+                pil.thumbnail((150, 80))
+                ctkimg = ctk.CTkImage(light_image=pil, dark_image=pil, size=pil.size)
+                self.vignettes[url_fichier] = ctkimg
+                self.master_app._ui(self._poser_vignette, cible, ctkimg)
+            except Exception:
+                pass          # une vignette illisible ne doit rien interrompre
+        self.master_app._run(travail)
+
+    @staticmethod
+    def _poser_vignette(cible, image):
+        """Affiche la vignette téléchargée (thread principal)."""
+        try:
+            if cible.winfo_exists():
+                cible.configure(image=image, text="")
+        except Exception:
+            pass
+
+    # ── Onglet fichier local ──────────────────────────────────────────────
+
+    def _build_local(self, parent):
+        """Construit l'onglet de dépôt d'un fichier depuis le poste."""
+        ctk.CTkLabel(parent,
+                     text="Déposer une nouvelle image sur la plateforme, puis "
+                          "l'utiliser comme bannière.",
+                     font=ctk.CTkFont(size=12), wraplength=650,
+                     justify="left").pack(anchor="w", padx=10, pady=(12, 6))
+
+        cadre = ctk.CTkFrame(parent)
+        cadre.pack(fill="x", padx=10, pady=6)
+        cadre.columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(cadre, text="Fichier :", width=90, anchor="e").grid(
+            row=0, column=0, padx=8, pady=8)
+        self.chemin_lbl = ctk.CTkEntry(cadre, placeholder_text="aucun fichier choisi")
+        self.chemin_lbl.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=8)
+        ctk.CTkButton(cadre, text="Parcourir…", width=110,
+                      command=self._parcourir).grid(row=0, column=2, padx=8, pady=8)
+
+        ctk.CTkLabel(cadre, text="Nom :", width=90, anchor="e").grid(
+            row=1, column=0, padx=8, pady=8)
+        self.nom_entry = ctk.CTkEntry(cadre, placeholder_text="libellé de l'image")
+        self.nom_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=8)
+
+        ctk.CTkLabel(cadre, text="Dossier :", width=90, anchor="e").grid(
+            row=2, column=0, padx=8, pady=8)
+        self.dossier_menu = ctk.CTkOptionMenu(cadre, values=["(chargement…)"])
+        self.dossier_menu.grid(row=2, column=1, columnspan=2, sticky="ew",
+                               padx=(0, 8), pady=8)
+
+        self.msg_local = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
+                                      wraplength=650, justify="left", anchor="w")
+        self.msg_local.pack(fill="x", padx=10, pady=(4, 0))
+
+        ctk.CTkButton(parent, text="⬆  Déposer et utiliser comme bannière",
+                      height=34, fg_color="#16a34a", hover_color="#15803d",
+                      command=self._deposer).pack(padx=10, pady=12)
+
+        ctk.CTkLabel(parent,
+                     text="Formats acceptés : JPG, PNG. Pod refuse les images trop "
+                          "petites ou mal formées.",
+                     font=ctk.CTkFont(size=10), text_color="gray55",
+                     wraplength=650, justify="left").pack(anchor="w", padx=10)
+
+        self._charger_dossiers()
+
+    def _charger_dossiers(self):
+        """(Thread) Remplit la liste des dossiers de rangement."""
+        def travail():
+            """(Thread) Lecture des dossiers."""
+            try:
+                dossiers = self.master_app.api.get_folders()
+            except Exception:
+                dossiers = []
+            self._dossiers = {f"{d.get('name', '?')}": d.get("url", "") for d in dossiers}
+            valeurs = list(self._dossiers.keys()) or ["(aucun dossier)"]
+            self.master_app._ui(self.dossier_menu.configure, values=valeurs)
+            self.master_app._ui(self.dossier_menu.set, valeurs[0])
+        self.master_app._run(travail)
+
+    def _parcourir(self):
+        """Ouvre le sélecteur de fichier et pré-remplit le nom."""
+        from tkinter import filedialog
+        chemin = filedialog.askopenfilename(
+            title="Choisir une image",
+            filetypes=[("Images", "*.jpg *.jpeg *.png"), ("Tous les fichiers", "*.*")])
+        if not chemin:
+            return
+        self.chemin_lbl.delete(0, "end")
+        self.chemin_lbl.insert(0, chemin)
+        if not self.nom_entry.get().strip():
+            import os as _os
+            self.nom_entry.insert(0, _os.path.splitext(_os.path.basename(chemin))[0])
+
+    def _deposer(self):
+        """Dépose l'image choisie puis la retient comme bannière."""
+        chemin = (self.chemin_lbl.get() or "").strip()
+        if not chemin:
+            self.msg_local.configure(text="Choisissez d'abord un fichier.",
+                                     text_color="#f59e0b")
+            return
+        dossier_url = getattr(self, "_dossiers", {}).get(self.dossier_menu.get(), "")
+        if not dossier_url:
+            self.msg_local.configure(
+                text="Aucun dossier de rangement disponible : impossible de déposer.",
+                text_color="#ef4444")
+            return
+        # `created_by` : le compte connecté à PodAdmin, c'est-à-dire celui qui
+        # dépose réellement l'image.
+        createur = getattr(self.master_app, "vehicle_owner_url", "") or ""
+        if not createur:
+            for u in (getattr(self.master_app, "all_users", None) or []):
+                createur = u.get("url", "")
+                break
+        if not createur:
+            self.msg_local.configure(
+                text="Impossible de déterminer le compte déposant.", text_color="#ef4444")
+            return
+
+        self.msg_local.configure(text="⏳ Dépôt en cours…", text_color="gray")
+
+        def travail():
+            """(Thread) Dépôt de l'image sur l'instance."""
+            try:
+                img = self.master_app.api.upload_image(
+                    chemin, self.nom_entry.get().strip(), dossier_url, createur)
+                url = img.get("url", "")
+                self.master_app._ui(self._choisir, url)
+            except Exception as e:
+                self.master_app._ui(self.msg_local.configure,
+                                    text=f"❌ {e}", text_color="#ef4444")
+        self.master_app._run(travail)
+
+    # ── Sortie ────────────────────────────────────────────────────────────
+
+    def _choisir(self, url: str):
+        """Retient l'image et ferme la fenêtre."""
+        self.resultat = url
+        self._fermer()
+
+    def _retirer(self):
+        """Demande le retrait de la bannière (la chaîne n'en aura plus)."""
+        self.resultat = ""
+        self._fermer()
+
+    def _annuler(self):
+        """Ferme sans rien changer."""
+        self.resultat = None
+        self._fermer()
+
+    def _fermer(self):
+        """Libère la fenêtre."""
+        try:
+            self.grab_release()
+        except Exception:
+            pass
         self.destroy()
 
 

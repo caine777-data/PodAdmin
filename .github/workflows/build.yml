@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Numéro de version à PUBLIER (ex. 1.1.0). Laisser VIDE pour une simple compilation d'essai."
+        description: "Écrire OUI pour PUBLIER une version (le numéro est lu dans __version__.py). Laisser VIDE = compilation d'essai."
         required: false
         default: ""
       notes:
@@ -80,7 +80,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.0.3
+          AppVersion=1.0.4
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
@@ -218,16 +218,38 @@ jobs:
     permissions:
       contents: write
     steps:
+      # ORDRE IMPORTANT : le checkout d'abord, car il NETTOIE le dossier de
+      # travail. Placé après, il supprimerait les artefacts téléchargés — donc
+      # les exécutables à publier.
+      #
+      # Le code est nécessaire pour lire __version__.py : c'est lui qui fait foi
+      # pour le numéro de version, et non le champ du formulaire.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
-      # Nom de la version : le tag s'il y en a un, sinon le numéro saisi
-      # dans le formulaire du bouton « Run workflow ».
-      - name: Déterminer le numéro de version
+
+      # Le numéro de version vient du CODE COMPILÉ (__version__.py), et non du
+      # formulaire. Sans cela, saisir un numéro différent de celui du code
+      # produisait une incohérence : l'application affichait « 1.0.3 » tout en
+      # étant annoncée comme « 1.0.4 », et signalait donc en permanence une
+      # mise à jour disponible... vers elle-même.
+      #
+      # Le champ « version » du formulaire ne sert plus qu'à DÉCLENCHER la
+      # publication : sa valeur exacte est ignorée.
+      - name: Déterminer le numéro de version (depuis le code)
         id: v
+        shell: bash
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "num=${{ inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "num=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          NUM=$(grep -oE '__version__[[:space:]]*=[[:space:]]*"[^"]+"' __version__.py | grep -oE '"[^"]+"' | tr -d '"')
+          if [ -z "$NUM" ]; then
+            echo "::error::Impossible de lire la version dans __version__.py"
+            exit 1
+          fi
+          echo "num=$NUM" >> "$GITHUB_OUTPUT"
+          echo "Version publiée (lue dans le code) : $NUM"
+          SAISI="${{ inputs.version }}"
+          if [ -n "$SAISI" ] && [ "$SAISI" != "$NUM" ] && [ "$SAISI" != "OUI" ] && [ "$SAISI" != "oui" ]; then
+            echo "::warning::Numero saisi ($SAISI) different du code ($NUM). C'est la version du CODE qui est publiee."
           fi
 
       # La Release est publiée sur le dépôt PUBLIC, et non sur ce dépôt privé.

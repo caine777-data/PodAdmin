@@ -1,6 +1,6 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.4",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Copyright, correctif macOS et abaissement du seuil d'envoi.",
+  "notes": "Réglages de l'instance, habillage des chaînes.",
   "version_minimale": ""
 }

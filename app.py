@@ -1615,6 +1615,75 @@ class App(_AppBase):
                  "dans le coffre-fort de votre système (Keychain / Credential Manager).",
             justify="left", text_color="gray70", wraplength=820).pack(anchor="w", padx=14, pady=(0, 12))
 
+        # ── Réglages de l'instance (hors API) ────────────────────────────
+        # Certains paramètres de Pod ne sont PAS exposés par l'API REST : la
+        # page d'accueil, par exemple, relève de la configuration du serveur.
+        # L'application ne peut donc pas les modifier — mais elle peut éviter
+        # de chercher l'adresse, en ouvrant directement la bonne page de
+        # l'administration dans le navigateur, où l'utilisateur est déjà
+        # authentifié. Même principe que le bouton « 🔑 Token » de l'onglet
+        # Comptes.
+        ctk.CTkFrame(frame, height=1, fg_color="gray30").pack(fill="x", pady=8)
+
+        inst_box = ctk.CTkFrame(frame)
+        inst_box.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(inst_box, text="🛠  Réglages de l'instance",
+                     font=ctk.CTkFont(size=14, weight="bold")).pack(
+            anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(
+            inst_box,
+            text="Ces réglages ne sont pas accessibles par l'API : ils se modifient "
+                 "dans l'administration de Pod. Les boutons ci-dessous l'ouvrent "
+                 "directement à la bonne page, dans votre navigateur.",
+            justify="left", text_color="gray70", font=ctk.CTkFont(size=11),
+            wraplength=820).pack(anchor="w", padx=14, pady=(0, 8))
+
+        rangee = ctk.CTkFrame(inst_box, fg_color="transparent")
+        rangee.pack(fill="x", padx=14, pady=(0, 12))
+        ctk.CTkButton(rangee, text="🏠  Page d'accueil", width=190,
+                      fg_color="#7c3aed", hover_color="#6d28d9",
+                      command=lambda: self._ouvrir_admin(
+                          "/admin/configuration/", "page d'accueil")).pack(side="left")
+        ctk.CTkButton(rangee, text="🔑  Jetons", width=130, fg_color="gray35",
+                      hover_color="gray28",
+                      command=lambda: self._ouvrir_admin(
+                          "/admin/authtoken/tokenproxy/", "jetons")).pack(side="left", padx=8)
+        ctk.CTkButton(rangee, text="⚙️  Administration", width=170, fg_color="gray35",
+                      hover_color="gray28",
+                      command=lambda: self._ouvrir_admin(
+                          "/admin/", "administration")).pack(side="left")
+
+        self.config_admin_msg = ctk.CTkLabel(
+            inst_box, text="", font=ctk.CTkFont(size=11), text_color="gray",
+            wraplength=820, justify="left", anchor="w")
+        self.config_admin_msg.pack(fill="x", padx=14, pady=(0, 10))
+
+    def _ouvrir_admin(self, chemin: str, libelle: str):
+        """Ouvre une page de l'administration Pod dans le navigateur.
+
+        L'application ne manipule aucun identifiant privilégié : c'est la
+        session déjà ouverte dans le navigateur qui authentifie l'utilisateur.
+        """
+        base = (self.config_data.get("url") or "").rstrip("/")
+        if not base:
+            self.config_admin_msg.configure(
+                text="Renseignez d'abord l'adresse de l'instance, plus haut.",
+                text_color="#f59e0b")
+            return
+        url = f"{base}{chemin}"
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            self._log(f"🛠 Administration ouverte ({libelle}) : {url}")
+            self.config_admin_msg.configure(
+                text=f"Page « {libelle} » ouverte dans votre navigateur. "
+                     "Connectez-vous en administrateur si ce n'est pas déjà fait.",
+                text_color="#22c55e")
+        except Exception as e:
+            self.config_admin_msg.configure(text=f"❌ Ouverture impossible : {e}",
+                                            text_color="#ef4444")
+            self._log(f"❌ Ouverture de l'administration : {e}")
+
     def _forget_token(self):
         """Efface le token ET les identifiants véhicule de ce poste, et se déconnecte."""
         cfg.clear_token()
@@ -6288,6 +6357,19 @@ class App(_AppBase):
             "faire supposerait d'y stocker un mot de passe superutilisateur. La création "
             "reste donc dans le navigateur, sous votre propre identité d'administrateur.\n"
             "Le bouton ✉️ est grisé si aucune adresse n'est connue pour le compte.")
+
+        section(
+            "🛠  Réglages non accessibles depuis l'application",
+            "Certains paramètres de Pod ne sont pas exposés par l'API : l'application "
+            "ne peut donc pas les modifier. C'est le cas de la PAGE D'ACCUEIL de la "
+            "plateforme, qui relève de la configuration du serveur.\n\n"
+            "L'onglet Configuration propose, tout en bas, une section « Réglages de "
+            "l'instance » avec trois boutons qui ouvrent l'administration de Pod "
+            "directement à la bonne page, dans votre navigateur : page d'accueil, "
+            "jetons, administration générale.\n\n"
+            "Vous devez y être connecté en administrateur — c'est votre session de "
+            "navigateur qui vous authentifie, l'application ne détient aucun mot de "
+            "passe privilégié.")
 
         section(
             "🎨  Habiller une chaîne ou un thème",

@@ -22,7 +22,6 @@ de vidéos par lot et y ajoute des modules d'administration.
 | **Nettoyage / Modération** | Détecter (jamais encodées, brouillons, vieux brouillons, doublons de titre) puis agir par lot : mettre en brouillon, publier, restreindre, lever la restriction, **supprimer** (double confirmation). |
 | **Inventaire / Stats** | Volumétrie, durées, répartition par utilisateur / type / chaîne, **export Excel** (`.xlsx`). |
 | **Chaînes & thèmes** | Créer, renommer, basculer la visibilité et supprimer chaînes et thèmes. |
-| **Co-auteurs** | Crédits / contributeurs (hérité du Téléverseur). |
 | **Configuration** | Connexion à l'instance, stockage chiffré du token. |
 | **Journal** | Historique horodaté de toutes les actions. |
 
@@ -103,7 +102,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.0.4**
+Version : **1.1.0**
 
 ---
 

@@ -36,7 +36,7 @@ from tkinter import filedialog, messagebox
 
 import config as cfg
 import maj                                  # vérification des mises à jour
-from pod_api import (PodAPI, PodAPIError, CONTRIBUTOR_ROLES,
+from pod_api import (PodAPI, PodAPIError,
                      SUBTITLE_LANGS, SUBTITLE_KINDS)
 # Moteur de téléversement par morceaux via session web (gros fichiers > seuil).
 from pod_chunked import PodChunkedSession, PodChunkedError
@@ -188,7 +188,6 @@ class App(_AppBase):
         self.upload_owner_url: str = ""        # propriétaire explicite du lot (obligatoire)
         self.upload_owner_label: str = ""
         self.additional_owner_map: dict[str, str] = {}   # url → libellé (pour ré-ouverture)
-        self.common_contributors: list[dict] = []
 
         self._build_ui()
         self._show_tab("upload")
@@ -290,7 +289,6 @@ class App(_AppBase):
             ("📊   Inventaire",    "stats"),
             ("📺   Chaînes",       "ct"),
             ("🔐   Groupes d'accès", "groups"),
-            ("👥   Co-auteurs",    "coauthors"),
             ("⚙️   Configuration", "config"),
             ("❓   Aide",          "help"),
             ("📋   Journal",       "log"),
@@ -319,7 +317,6 @@ class App(_AppBase):
         self._build_tab_stats()
         self._build_tab_ct()
         self._build_tab_groups()
-        self._build_tab_coauthors()
         self._build_tab_config()
         self._build_tab_help()
         self._build_tab_log()
@@ -992,14 +989,6 @@ class App(_AppBase):
                     it.slug = video.get("slug", "") if isinstance(video, dict) else ""
                     it.video_url = video.get("url", "") if isinstance(video, dict) else ""
 
-                # Contributeurs communs
-                for c in self.common_contributors:
-                    try:
-                        self.api.add_contributor(it.video_url, c["name"], c.get("email", ""),
-                                                 c.get("role", "author"), c.get("weblink", ""))
-                    except Exception as e:
-                        self._ui(self._log, f"Contributeur non ajouté ({it.title}) : {e}")
-
                 # Encodage
                 if do_encode and it.slug:
                     try:
@@ -1091,138 +1080,6 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET CO-AUTEURS (sur vidéos existantes)
     # ═════════════════════════════════════════════════════════════════════
-
-    def _build_tab_coauthors(self):
-        """Construit l'onglet Co-auteurs (recherche de vidéo + ajout de contributeurs)."""
-        frame = ctk.CTkFrame(self.content, fg_color="transparent")
-        self.tabs["coauthors"] = frame
-
-        ctk.CTkLabel(frame, text="👥  Co-auteurs sur une vidéo existante",
-                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 6))
-
-        ctk.CTkLabel(frame, text="Recherchez une vidéo par titre, puis ajoutez des "
-                                 "propriétaires additionnels (comptes Pod) ou des "
-                                 "contributeurs (crédits libres).",
-                     text_color="gray70", wraplength=820, justify="left").pack(anchor="w", pady=(0, 10))
-
-        search = ctk.CTkFrame(frame, fg_color="transparent")
-        search.pack(fill="x")
-        self.ca_search = ctk.CTkEntry(search, placeholder_text="🔍 titre de la vidéo…", width=360)
-        self.ca_search.pack(side="left", padx=(0, 8))
-        self.ca_search.bind("<Return>", lambda e: self._run(self._ca_search_videos))
-        ctk.CTkButton(search, text="Rechercher", width=120,
-                      command=lambda: self._run(self._ca_search_videos)).pack(side="left")
-
-        self.ca_results = ctk.CTkScrollableFrame(frame, height=160)
-        self.ca_results.pack(fill="x", pady=8)
-        ctk.CTkLabel(self.ca_results, text="Lancez une recherche.", text_color="gray").pack(pady=14)
-
-        self.ca_selected_lbl = ctk.CTkLabel(frame, text="Aucune vidéo sélectionnée.",
-                                            text_color="gray", font=ctk.CTkFont(size=12, weight="bold"))
-        self.ca_selected_lbl.pack(anchor="w", pady=(4, 4))
-
-        # Formulaire contributeur
-        form = ctk.CTkFrame(frame)
-        form.pack(fill="x", pady=4)
-        ctk.CTkLabel(form, text="Ajouter un contributeur (crédit)",
-                     font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=4,
-                                                           padx=12, pady=(10, 4), sticky="w")
-        ctk.CTkLabel(form, text="Nom :").grid(row=1, column=0, padx=(12, 4), pady=6, sticky="e")
-        self.ca_name = ctk.CTkEntry(form, width=200, placeholder_text="Prénom NOM")
-        self.ca_name.grid(row=1, column=1, padx=4, pady=6)
-        ctk.CTkLabel(form, text="Email :").grid(row=1, column=2, padx=(16, 4), pady=6, sticky="e")
-        self.ca_email = ctk.CTkEntry(form, width=220, placeholder_text="prenom.nom@univ-tlse.fr")
-        self.ca_email.grid(row=1, column=3, padx=4, pady=6)
-        ctk.CTkLabel(form, text="Rôle :").grid(row=2, column=0, padx=(12, 4), pady=6, sticky="e")
-        self.ca_role = ctk.CTkComboBox(form, width=200, values=CONTRIBUTOR_ROLES)
-        self.ca_role.set("author")
-        self.ca_role.grid(row=2, column=1, padx=4, pady=6)
-        ctk.CTkButton(form, text="📋  Choisir dans la liste Pod", width=200,
-                      fg_color="gray35", hover_color="gray28",
-                      command=self._ca_pick_user).grid(row=2, column=2, padx=4, pady=6)
-        ctk.CTkButton(form, text="➕  Ajouter le contributeur", fg_color="#16a34a",
-                      hover_color="#15803d", command=self._ca_add_contributor).grid(
-            row=2, column=3, padx=4, pady=6, sticky="e")
-        form.columnconfigure(3, weight=1)
-
-        self.ca_msg = ctk.CTkLabel(frame, text="", text_color="gray", font=ctk.CTkFont(size=11))
-        self.ca_msg.pack(anchor="w", pady=4)
-
-        self._ca_selected_video = None
-
-    def _ca_search_videos(self):
-        """(Thread) Recherche des vidéos par titre via l'API et affiche les résultats."""
-        if not self.api:
-            self._ui(self.ca_msg.configure, text="Non connecté.", text_color="#ef4444")
-            return
-        q = self.ca_search.get().strip()
-        try:
-            data = self.api._get("/videos/", {"search": q, "limit": 30})
-            videos = data.get("results", []) if isinstance(data, dict) else []
-            self._ui(self._ca_show_results, videos)
-        except Exception as e:
-            self._ui(self.ca_msg.configure, text=f"Erreur : {e}", text_color="#ef4444")
-
-    def _ca_show_results(self, videos: list):
-        """Affiche la liste cliquable des vidéos trouvées."""
-        for w in self.ca_results.winfo_children():
-            w.destroy()
-        if not videos:
-            ctk.CTkLabel(self.ca_results, text="Aucun résultat.", text_color="gray").pack(pady=14)
-            return
-        for v in videos:
-            title = v.get("title", "Sans titre")
-            ctk.CTkButton(self.ca_results, text=f"  {title[:60]}", anchor="w",
-                          fg_color="transparent", text_color=("gray10", "gray90"),
-                          hover_color=("gray75", "gray28"), height=30,
-                          command=lambda vid=v: self._ca_select(vid)).pack(fill="x", pady=1)
-
-    def _ca_select(self, video: dict):
-        """Mémorise la vidéo sélectionnée pour l'ajout de contributeurs."""
-        self._ca_selected_video = video
-        self.ca_selected_lbl.configure(text=f"✅  {video.get('title','')[:60]}", text_color="#22c55e")
-
-    def _ca_pick_user(self):
-        """Ouvre OwnerPicker en mode sélection unique pour pré-remplir un contributeur."""
-        if not self.api:
-            self.ca_msg.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
-            return
-        OwnerPicker(self, on_done=lambda *a: None, title="Choisir un utilisateur Pod",
-                    single=True, on_single=self._ca_fill_from_user)
-
-    def _ca_fill_from_user(self, u: dict):
-        """Pré-remplit le formulaire contributeur à partir d'un compte Pod choisi."""
-        name = f"{u.get('first_name','')} {u.get('last_name','')}".strip() or u.get("username", "")
-        self.ca_name.delete(0, "end")
-        self.ca_name.insert(0, name)
-        email = u.get("email", "") or ""
-        if email:
-            self.ca_email.delete(0, "end")
-            self.ca_email.insert(0, email)
-        self.ca_msg.configure(text=f"Pré-rempli depuis : {u.get('username','')}", text_color="#22c55e")
-
-    def _ca_add_contributor(self):
-        """Vérifie la saisie puis lance l'ajout du contributeur en arrière-plan."""
-        if not self._ca_selected_video:
-            self.ca_msg.configure(text="Sélectionnez une vidéo.", text_color="#f59e0b")
-            return
-        name = self.ca_name.get().strip()
-        if not name:
-            self.ca_msg.configure(text="Le nom est requis.", text_color="#f59e0b")
-            return
-        video_url = self._ca_selected_video.get("url", "")
-        self._run(self._ca_do_add, video_url, name, self.ca_email.get().strip(), self.ca_role.get())
-
-    def _ca_do_add(self, video_url, name, email, role):
-        """(Thread) Ajoute un contributeur (crédit) à la vidéo via l'API."""
-        try:
-            self.api.add_contributor(video_url, name, email, role)
-            self._ui(self.ca_msg.configure, text=f"✅  {name} ajouté(e) ({role}).", text_color="#22c55e")
-            self._ui(self.ca_name.delete, 0, "end")
-            self._ui(self.ca_email.delete, 0, "end")
-            self._ui(self._log, f"Contributeur ajouté : {name} ({role})")
-        except Exception as e:
-            self._ui(self.ca_msg.configure, text=f"❌  {e}", text_color="#ef4444")
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET GROUPES D'ACCÈS
@@ -1495,8 +1352,14 @@ class App(_AppBase):
     # ═════════════════════════════════════════════════════════════════════
 
     def _build_tab_config(self):
-        """Construit l'onglet Configuration (connexion API + choix de l'agent déposant)."""
-        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        """Construit l'onglet Configuration (connexion API + réglages de l'instance).
+
+        Cet onglet est DÉFILABLE, contrairement aux autres : son contenu est long
+        (connexion, compte véhicule, agent déposant, aide au jeton, réglages de
+        l'instance) et, en fenêtre réduite, les dernières sections étaient
+        purement et simplement invisibles — sans même une barre de défilement
+        pour le laisser deviner."""
+        frame = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         self.tabs["config"] = frame
 
         ctk.CTkLabel(frame, text="⚙️  Configuration",
@@ -1634,24 +1497,37 @@ class App(_AppBase):
             inst_box,
             text="Ces réglages ne sont pas accessibles par l'API : ils se modifient "
                  "dans l'administration de Pod. Les boutons ci-dessous l'ouvrent "
-                 "directement à la bonne page, dans votre navigateur.",
+                 "directement à la bonne page, dans votre navigateur.\n"
+                 "La page d'accueil se règle à deux endroits : le TEXTE de "
+                 "présentation (page statique) et les VIGNETTES affichées (blocs).",
             justify="left", text_color="gray70", font=ctk.CTkFont(size=11),
             wraplength=820).pack(anchor="w", padx=14, pady=(0, 8))
 
         rangee = ctk.CTkFrame(inst_box, fg_color="transparent")
         rangee.pack(fill="x", padx=14, pady=(0, 12))
-        ctk.CTkButton(rangee, text="🏠  Page d'accueil", width=190,
+        # La page d'accueil se règle en DEUX endroits distincts de
+        # l'administration (adresses vérifiées sur l'instance) :
+        #   • le TEXTE de présentation est une « page statique » (flatpage) ;
+        #   • les VIGNETTES et encarts affichés sont des « blocs ».
+        # D'où deux boutons plutôt qu'un seul, pour éviter de chercher.
+        ctk.CTkButton(rangee, text="🏠  Accueil : texte", width=170,
                       fg_color="#7c3aed", hover_color="#6d28d9",
                       command=lambda: self._ouvrir_admin(
-                          "/admin/configuration/", "page d'accueil")).pack(side="left")
-        ctk.CTkButton(rangee, text="🔑  Jetons", width=130, fg_color="gray35",
+                          "/admin/flatpages/flatpage/",
+                          "texte de la page d'accueil")).pack(side="left")
+        ctk.CTkButton(rangee, text="🧩  Accueil : blocs", width=170,
+                      fg_color="#7c3aed", hover_color="#6d28d9",
+                      command=lambda: self._ouvrir_admin(
+                          "/admin/main/block/",
+                          "blocs de la page d'accueil")).pack(side="left", padx=8)
+        ctk.CTkButton(rangee, text="🔑  Jetons", width=120, fg_color="gray35",
                       hover_color="gray28",
                       command=lambda: self._ouvrir_admin(
-                          "/admin/authtoken/tokenproxy/", "jetons")).pack(side="left", padx=8)
-        ctk.CTkButton(rangee, text="⚙️  Administration", width=170, fg_color="gray35",
+                          "/admin/authtoken/tokenproxy/", "jetons")).pack(side="left")
+        ctk.CTkButton(rangee, text="⚙️  Administration", width=160, fg_color="gray35",
                       hover_color="gray28",
                       command=lambda: self._ouvrir_admin(
-                          "/admin/", "administration")).pack(side="left")
+                          "/admin/", "administration")).pack(side="left", padx=8)
 
         self.config_admin_msg = ctk.CTkLabel(
             inst_box, text="", font=ctk.CTkFont(size=11), text_color="gray",
@@ -5000,7 +4876,10 @@ class App(_AppBase):
         dim.pack(fill="x", pady=(0, 4))
         ctk.CTkLabel(dim, text="Répartition par :").pack(side="left", padx=(0, 4))
         self.stats_dim = ctk.CTkOptionMenu(
-            dim, width=160, values=["Utilisateur", "Type", "Chaîne"],
+            dim, width=210,
+            values=["Utilisateur", "Type", "Chaîne",
+                    "👁 Vues — vidéos", "👁 Vues — chaînes",
+                    "👁 Vues — utilisateurs", "👁 Vues — par mois"],
             command=lambda _c: self._render_stats())
         self.stats_dim.set("Utilisateur")
         self.stats_dim.pack(side="left")
@@ -5049,8 +4928,19 @@ class App(_AppBase):
                            for u in (self.all_users or [])}
 
             self.stats_videos = videos
+            # Consultations : détail jour par jour, par vidéo. Une erreur ici ne
+            # doit pas priver l'utilisateur de tout l'inventaire — on continue
+            # sans les vues plutôt que d'échouer.
+            try:
+                self._ui(self.stats_status.configure,
+                         text="⏳  Lecture des consultations…", text_color="gray")
+                vues = self.api.get_view_counts()
+            except Exception as e:
+                vues = []
+                self._ui(self._log, f"Consultations indisponibles : {e}")
+
             self.stats_data = self._compute_stats(videos, user_by_url,
-                                                  type_by_url, chan_by_url)
+                                                  type_by_url, chan_by_url, vues)
             self._ui(self._render_stats)
             # L'Inventaire est le plus exposé au scan tronqué : ses totaux
             # seraient faux sans que rien ne le signale.
@@ -5081,8 +4971,110 @@ class App(_AppBase):
             return by_url.get(ref.rstrip("/"), ref) if ref.startswith("http") else ref
         return fallback
 
-    def _compute_stats(self, videos, user_by_url, type_by_url, chan_by_url) -> dict:
-        """Calcule tous les agrégats (logique pure, testable sans interface)."""
+    @staticmethod
+    def _compute_views(videos, vues, user_by_url, chan_by_url) -> dict:
+        """Agrège les consultations : classement, évolution, chaînes, propriétaires.
+
+        Pod enregistre une entrée par vidéo ET PAR JOUR. On en tire :
+          • `total`        — nombre total de vues ;
+          • `top`          — les vidéos les plus vues, avec propriétaire ;
+          • `par_mois`     — total par mois, pour suivre l'évolution ;
+          • `par_chaine`   — total par chaîne ;
+          • `par_proprio`  — total par propriétaire ;
+          • `periode`      — première et dernière date connues.
+
+        `periode` est important : il indique la PROFONDEUR d'historique réellement
+        conservée par l'instance. Si elle se limite à quelques semaines, une
+        courbe d'évolution longue n'a pas de sens.
+
+        Fonction pure (sans réseau ni interface) : testable directement.
+        """
+        from collections import defaultdict
+
+        # Index des vidéos par identifiant, pour rattacher chaque vue.
+        def cle(valeur):
+            if isinstance(valeur, dict):
+                valeur = valeur.get("url", "")
+            return str(valeur or "").rstrip("/").rsplit("/", 1)[-1]
+
+        infos = {}
+        for v in videos:
+            infos[cle(v.get("url") or v.get("id"))] = v
+
+        total = 0
+        par_video = defaultdict(int)
+        par_mois = defaultdict(int)
+        dates = []
+
+        for e in (vues or []):
+            n = int(e.get("count") or 0)
+            if n <= 0:
+                continue
+            total += n
+            par_video[cle(e.get("video"))] += n
+            d = str(e.get("date") or "")
+            if len(d) >= 7:
+                par_mois[d[:7]] += n        # regroupement AAAA-MM
+                dates.append(d[:10])
+
+        # Classement des vidéos, enrichi du titre et du propriétaire.
+        top = []
+        for vid, n in sorted(par_video.items(), key=lambda x: -x[1]):
+            v = infos.get(vid)
+            if not v:
+                continue                    # vidéo supprimée depuis
+            proprio = v.get("owner")
+            if isinstance(proprio, dict):
+                proprio = proprio.get("url", "")
+            top.append({
+                "titre": (v.get("title") or "(sans titre)"),
+                "vues": n,
+                "proprio": user_by_url.get(str(proprio or "").rstrip("/"), "?"),
+            })
+
+        # Agrégats par chaîne et par propriétaire.
+        par_chaine = defaultdict(int)
+        par_proprio = defaultdict(int)
+        for vid, n in par_video.items():
+            v = infos.get(vid)
+            if not v:
+                continue
+            proprio = v.get("owner")
+            if isinstance(proprio, dict):
+                proprio = proprio.get("url", "")
+            par_proprio[user_by_url.get(str(proprio or "").rstrip("/"), "?")] += n
+            chans = v.get("channel") or []
+            if isinstance(chans, (str, dict)):
+                chans = [chans]
+            if not chans:
+                par_chaine["(hors chaîne)"] += n
+            for c in chans:
+                if isinstance(c, dict):
+                    c = c.get("url", "")
+                par_chaine[chan_by_url.get(str(c or "").rstrip("/"), "?")] += n
+
+        # NOTE : `total` compte TOUTES les vues enregistrées, y compris celles de
+        # vidéos supprimées depuis. Le classement `top`, lui, n'affiche que les
+        # vidéos encore présentes. La somme du classement peut donc être
+        # inférieure au total — c'est voulu : le total reflète l'activité réelle
+        # de la plateforme, le classement ne montre que ce qui est consultable.
+        return {
+            "total": total,
+            "videos_vues": len(par_video),
+            "top": top,
+            "par_mois": dict(sorted(par_mois.items())),
+            "par_chaine": dict(par_chaine),
+            "par_proprio": dict(par_proprio),
+            "periode": (min(dates), max(dates)) if dates else ("", ""),
+        }
+
+    def _compute_stats(self, videos, user_by_url, type_by_url, chan_by_url,
+                       vues=None) -> dict:
+        """Calcule tous les agrégats (logique pure, testable sans interface).
+
+        `vues` : entrées de consultation {video, date, count}. Facultatif — sans
+        elles, l'inventaire garde son contenu d'origine et les blocs de
+        consultation restent simplement vides."""
         from collections import defaultdict
         total = len(videos)
         total_dur = sum(int(v.get("duration") or 0) for v in videos)
@@ -5126,11 +5118,14 @@ class App(_AppBase):
                 "Ajoutée le": str(v.get("date_added", ""))[:10],
             })
 
+        agregats_vues = self._compute_views(videos, vues or [], user_by_url, chan_by_url)
+
         return {
             "total": total, "total_dur": total_dur, "drafts": drafts,
             "unencoded": unencoded, "restricted": restricted,
             "by_owner": dict(by_owner), "by_type": dict(by_type),
             "by_chan": dict(by_chan), "rows": rows,
+            "vues": agregats_vues,
         }
 
     # ── Rendu ──────────────────────────────────────────────────────────────
@@ -5140,18 +5135,59 @@ class App(_AppBase):
         if not d:
             return
         # Chiffres clés
+        vues = d.get("vues") or {}
+        ligne_vues = ""
+        if vues.get("total"):
+            debut, fin = vues.get("periode", ("", ""))
+            periode = f"  ·  du {debut} au {fin}" if debut else ""
+            ligne_vues = (f"\n👁  {vues['total']} vue(s) sur "
+                          f"{vues['videos_vues']} vidéo(s){periode}")
         self.stats_summary.configure(
             text=(f"📁  {d['total']} vidéos       "
                   f"⏱  {self._fmt_duration(d['total_dur'])} au total\n"
                   f"📝  {d['drafts']} brouillon(s)     "
                   f"⚙️  {d['unencoded']} non-encodée(s)     "
-                  f"🔒  {d['restricted']} restreinte(s)"))
+                  f"🔒  {d['restricted']} restreinte(s)"
+                  + ligne_vues))
 
         # Tableau de répartition selon la dimension choisie
         for w in self.stats_table.winfo_children():
             w.destroy()
 
         dimension = self.stats_dim.get()
+
+        # ── Dimensions de CONSULTATION ────────────────────────────────────
+        if dimension.startswith("👁"):
+            if not vues.get("total"):
+                ctk.CTkLabel(self.stats_table,
+                             text="Aucune consultation enregistrée pour l'instant.\n"
+                                  "Les vues apparaîtront ici une fois la plateforme "
+                                  "ouverte aux utilisateurs.",
+                             text_color="gray", justify="left").pack(pady=20, padx=10)
+                return
+            if "vidéos" in dimension:
+                self._stats_header(("Vidéo", "Vues", "Propriétaire"))
+                for e in vues["top"][:200]:
+                    self._stats_row((e["titre"][:60], str(e["vues"]), e["proprio"]))
+            elif "chaînes" in dimension:
+                self._stats_header(("Chaîne", "Vues", ""))
+                for nom, n in sorted(vues["par_chaine"].items(), key=lambda kv: -kv[1]):
+                    self._stats_row((nom, str(n), ""))
+            elif "utilisateurs" in dimension:
+                self._stats_header(("Utilisateur", "Vues", ""))
+                for nom, n in sorted(vues["par_proprio"].items(), key=lambda kv: -kv[1]):
+                    self._stats_row((nom, str(n), ""))
+            else:      # par mois — dans l'ordre chronologique, pas par volume
+                self._stats_header(("Mois", "Vues", "Évolution"))
+                mois = vues["par_mois"]
+                maxi = max(mois.values()) if mois else 1
+                for m, n in mois.items():
+                    # Petite barre en caractères : lisible sans bibliothèque
+                    # graphique, et suffisante pour repérer une tendance.
+                    barre = "█" * max(1, round(20 * n / maxi))
+                    self._stats_row((m, str(n), barre))
+            return
+
         if dimension == "Utilisateur":
             # [nombre, durée] → on trie par nombre décroissant
             items = sorted(d["by_owner"].items(), key=lambda kv: kv[1][0], reverse=True)
@@ -5229,6 +5265,12 @@ class App(_AppBase):
             ws.append(["Brouillons", d["drafts"]])
             ws.append(["Non-encodées", d["unencoded"]])
             ws.append(["Restreintes", d["restricted"]])
+            vues = d.get("vues") or {}
+            if vues.get("total"):
+                debut, fin = vues.get("periode", ("", ""))
+                ws.append(["Vues (total)", vues["total"]])
+                ws.append(["Vidéos consultées", vues["videos_vues"]])
+                ws.append(["Période des consultations", f"{debut} → {fin}"])
 
             # Feuille 2 : Par utilisateur
             ws = wb.create_sheet("Par utilisateur")
@@ -5264,6 +5306,66 @@ class App(_AppBase):
                     c.font = bold
                 for r in d["rows"]:
                     ws.append([r[h] for h in headers])
+
+            # ── Feuilles de CONSULTATION (si des vues existent) ──────────────
+
+            vues = d.get("vues") or {}
+
+            if vues.get("total"):
+
+                ws = wb.create_sheet("Vues par vidéo")
+
+                ws.append(["Vidéo", "Vues", "Propriétaire"])
+
+                for c in ws[1]:
+
+                    c.font = bold
+
+                for e in vues["top"]:
+
+                    ws.append([e["titre"], e["vues"], e["proprio"]])
+
+
+                ws = wb.create_sheet("Vues par chaîne")
+
+                ws.append(["Chaîne", "Vues"])
+
+                for c in ws[1]:
+
+                    c.font = bold
+
+                for nom, n in sorted(vues["par_chaine"].items(), key=lambda kv: -kv[1]):
+
+                    ws.append([nom, n])
+
+
+                ws = wb.create_sheet("Vues par utilisateur")
+
+                ws.append(["Utilisateur", "Vues"])
+
+                for c in ws[1]:
+
+                    c.font = bold
+
+                for nom, n in sorted(vues["par_proprio"].items(), key=lambda kv: -kv[1]):
+
+                    ws.append([nom, n])
+
+
+                # Ordre CHRONOLOGIQUE ici (et non par volume) : c'est une évolution.
+
+                ws = wb.create_sheet("Vues par mois")
+
+                ws.append(["Mois", "Vues"])
+
+                for c in ws[1]:
+
+                    c.font = bold
+
+                for mois, n in vues["par_mois"].items():
+
+                    ws.append([mois, n])
+
 
             wb.save(path)
             self._ui(self.stats_status.configure,
@@ -6359,14 +6461,35 @@ class App(_AppBase):
             "Le bouton ✉️ est grisé si aucune adresse n'est connue pour le compte.")
 
         section(
+            "👁  Statistiques de consultation",
+            "L'onglet Inventaire affiche désormais les VUES, en plus de la volumétrie.\n\n"
+            "Le nombre total de vues et la période couverte apparaissent dans les "
+            "chiffres clés. Le menu « Répartition par » propose quatre vues "
+            "supplémentaires :\n"
+            "• Vues — vidéos : le classement des plus consultées, avec leur propriétaire ;\n"
+            "• Vues — chaînes : quelles chaînes sont réellement regardées ;\n"
+            "• Vues — utilisateurs : quels enseignants ont de l'audience ;\n"
+            "• Vues — par mois : l'évolution dans le temps, avec une barre de "
+            "proportion.\n\n"
+            "Tout est repris dans l'export Excel, en quatre feuilles distinctes.\n\n"
+            "À savoir : le total compte TOUTES les vues enregistrées, y compris "
+            "celles de vidéos supprimées depuis ; le classement, lui, ne montre que "
+            "les vidéos encore présentes. La somme du classement peut donc être "
+            "inférieure au total — c'est normal.\n\n"
+            "Tant que la plateforme n'est pas ouverte, ces chiffres restent faibles : "
+            "c'est attendu.")
+
+        section(
             "🛠  Réglages non accessibles depuis l'application",
             "Certains paramètres de Pod ne sont pas exposés par l'API : l'application "
             "ne peut donc pas les modifier. C'est le cas de la PAGE D'ACCUEIL de la "
             "plateforme, qui relève de la configuration du serveur.\n\n"
             "L'onglet Configuration propose, tout en bas, une section « Réglages de "
-            "l'instance » avec trois boutons qui ouvrent l'administration de Pod "
-            "directement à la bonne page, dans votre navigateur : page d'accueil, "
-            "jetons, administration générale.\n\n"
+            "l'instance » avec quatre boutons qui ouvrent l'administration de Pod "
+            "directement à la bonne page.\n\n"
+            "La page d'accueil se règle à DEUX endroits distincts :\n"
+            "• « Accueil : texte » — le texte de présentation (page statique) ;\n"
+            "• « Accueil : blocs » — les vignettes et encarts affichés.\n\n"
             "Vous devez y être connecté en administrateur — c'est votre session de "
             "navigateur qui vous authentifie, l'application ne détient aucun mot de "
             "passe privilégié.")
@@ -6422,7 +6545,7 @@ class App(_AppBase):
             "restreindre au groupe, suppression).\n"
             "• Chaînes : chaînes et thèmes, ajout de vidéos, restriction/visibilité.\n"
             "• Groupes d'accès : gestion des groupes.\n"
-            "• Co-auteurs : crédits réutilisables.\n"
+
             "• Journal : historique horodaté — le premier endroit à consulter en cas de "
             "souci. Il est aussi ENREGISTRÉ SUR LE DISQUE (un fichier par mois) : le "
             "bouton « Effacer » ne vide que l'affichage, et « 📂 Ouvrir les journaux » "

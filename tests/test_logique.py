@@ -525,3 +525,82 @@ class TestEtatMiseAJour:
     def test_url_vide_desactive_la_verification(self):
         import maj
         assert maj.recuperer_info("") is None
+
+
+class TestConsultations:
+    """Agrégation des vues (`_compute_views`) : fonction pure, sans réseau."""
+
+    VIDEOS = [
+        {"url": "https://v/rest/videos/1/", "title": "Cours A",
+         "owner": "https://v/rest/users/6/", "channel": ["https://v/rest/channels/3/"]},
+        {"url": "https://v/rest/videos/2/", "title": "Cours B",
+         "owner": "https://v/rest/users/9/", "channel": []},
+    ]
+    VUES = [
+        {"video": "https://v/rest/videos/1/", "date": "2026-05-20", "count": 8},
+        {"video": "https://v/rest/videos/1/", "date": "2026-06-02", "count": 12},
+        {"video": "https://v/rest/videos/2/", "date": "2026-06-15", "count": 30},
+        {"video": "https://v/rest/videos/1/", "date": "2026-06-20", "count": 0},
+    ]
+    USERS = {"https://v/rest/users/6": "alice", "https://v/rest/users/9": "bob"}
+    CHANS = {"https://v/rest/channels/3": "eformation"}
+
+    def _calc(self, vues=None):
+        import app
+        return app.App._compute_views(self.VIDEOS,
+                                      self.VUES if vues is None else vues,
+                                      self.USERS, self.CHANS)
+
+    def test_total(self):
+        assert self._calc()["total"] == 50
+
+    def test_entree_a_zero_ignoree(self):
+        """Une entrée à 0 vue ne doit pas compter comme une vidéo consultée."""
+        assert self._calc()["videos_vues"] == 2
+
+    def test_classement_decroissant(self):
+        top = self._calc()["top"]
+        assert top[0]["titre"] == "Cours B"
+        assert top[0]["vues"] == 30
+        assert [e["vues"] for e in top] == sorted([e["vues"] for e in top], reverse=True)
+
+    def test_proprietaire_resolu(self):
+        assert self._calc()["top"][0]["proprio"] == "bob"
+
+    def test_regroupement_par_mois(self):
+        par_mois = self._calc()["par_mois"]
+        assert par_mois["2026-05"] == 8
+        assert par_mois["2026-06"] == 42
+
+    def test_mois_par_ordre_chronologique(self):
+        """L'évolution doit être chronologique, pas triée par volume."""
+        mois = list(self._calc()["par_mois"].keys())
+        assert mois == sorted(mois)
+
+    def test_par_chaine_et_hors_chaine(self):
+        par_chaine = self._calc()["par_chaine"]
+        assert par_chaine["eformation"] == 20
+        assert par_chaine["(hors chaîne)"] == 30
+
+    def test_par_proprietaire(self):
+        par_proprio = self._calc()["par_proprio"]
+        assert par_proprio["alice"] == 20
+        assert par_proprio["bob"] == 30
+
+    def test_periode_couverte(self):
+        assert self._calc()["periode"] == ("2026-05-20", "2026-06-15")
+
+    def test_video_supprimee_comptee_mais_hors_classement(self):
+        """Les vues d'une vidéo supprimée comptent dans le total (activité
+        réelle) mais n'apparaissent pas au classement (plus consultable)."""
+        vues = self.VUES + [{"video": "https://v/rest/videos/99/",
+                             "date": "2026-07-01", "count": 5}]
+        r = self._calc(vues)
+        assert r["total"] == 55
+        assert len(r["top"]) == 2
+
+    def test_aucune_vue(self):
+        r = self._calc([])
+        assert r["total"] == 0
+        assert r["top"] == []
+        assert r["periode"] == ("", "")

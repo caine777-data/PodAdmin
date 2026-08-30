@@ -771,6 +771,19 @@ class PodAPI:
     #  IMAGES — bannières de chaînes et de thèmes
     # ══════════════════════════════════════════════════════════════════
 
+    def get_view_counts(self, max_pages: int = 60) -> list[dict]:
+        """Récupère les compteurs de consultation.
+
+        Chaque entrée est un couple (vidéo, date, nombre de vues ce jour-là) :
+            {"video": "<url>", "date": "2026-05-20", "count": 8}
+
+        Pod enregistre donc le détail JOUR PAR JOUR, ce qui permet aussi bien un
+        classement des vidéos les plus vues qu'une évolution dans le temps.
+
+        Attention : l'absence d'entrée pour une vidéo signifie « aucune vue
+        enregistrée », et non « donnée manquante »."""
+        return self._paginate("/view_count/", {"limit": 200}, max_pages=max_pages)
+
     def get_images(self, max_pages: int = 20) -> list[dict]:
         """Liste les images de l'instance (bannières, vignettes…).
 

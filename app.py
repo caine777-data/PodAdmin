@@ -263,14 +263,17 @@ class App(_AppBase):
         ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=8)
 
-        # Emplacement du bandeau « nouvelle version disponible ».
-        # ATTENTION : le cadre est créé mais VOLONTAIREMENT PAS affiché ici.
-        # Un CTkFrame vide conserve sa hauteur par défaut (200 px) : l'afficher
-        # d'avance amputerait la barre latérale de 200 px et tronquerait les
-        # derniers onglets en fenêtre réduite. Il n'est inséré qu'au moment où
-        # une mise à jour est réellement détectée (voir _afficher_bandeau_maj).
-        self.maj_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent",
-                                      height=0)
+        # Bandeau « nouvelle version disponible » : AUCUN widget n'est créé ici.
+        #
+        # Une première version utilisait un cadre conteneur transparent de
+        # hauteur nulle, inséré d'avance. Deux ennuis en ont découlé : sur
+        # Windows il amputait la barre latérale, et sur macOS un cadre
+        # transparent de taille nulle se dessinait en CARRÉ NOIR.
+        #
+        # Le bandeau est donc créé de toutes pièces au moment où une mise à jour
+        # est détectée, puis détruit ensuite : pas de conteneur intermédiaire,
+        # donc pas de comportement dépendant du système.
+        self.maj_bandeau = None
 
         # Zone de navigation DÉFILANTE : sur petit écran, les onglets défilent
         # au lieu de déborder hors de la fenêtre (le haut et le bas restent fixes).
@@ -1725,35 +1728,49 @@ class App(_AppBase):
         titre = ("⚠️  Version obsolète" if urgent
                  else f"⬆️  Version {info['version']} disponible")
 
-        for w in self.maj_frame.winfo_children():
-            w.destroy()
-        # Insertion effective dans la barre latérale, maintenant qu'il y a
-        # quelque chose à montrer (voir le commentaire à la création du cadre).
-        if not self.maj_frame.winfo_manager():
-            self.maj_frame.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
-        cadre = ctk.CTkFrame(self.maj_frame, fg_color=couleur, corner_radius=6)
-        cadre.pack(fill="x")
+        # Un éventuel bandeau précédent est retiré avant d'en poser un nouveau.
+        if self.maj_bandeau is not None:
+            try:
+                self.maj_bandeau.destroy()
+            except Exception:
+                pass
+            self.maj_bandeau = None
+
+        # Le bandeau est créé DIRECTEMENT dans la barre latérale, sans cadre
+        # conteneur : c'est ce conteneur transparent qui apparaissait en carré
+        # noir sur macOS.
+        cadre = ctk.CTkFrame(self.sidebar, fg_color=couleur, corner_radius=6)
+        cadre.pack(side="bottom", fill="x", padx=8, pady=(0, 2))
+        self.maj_bandeau = cadre
         ctk.CTkLabel(cadre, text=titre, font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="white", wraplength=190,
-                     justify="left").pack(anchor="w", padx=8, pady=(6, 0))
+                     text_color="#ffffff", wraplength=190,
+                     justify="left").pack(anchor="w", padx=8, pady=(6, 2))
         if urgent:
             ctk.CTkLabel(cadre,
                          text=f"La version {info['version']} corrige un point important. "
                               "Mettez à jour dès que possible.",
-                         font=ctk.CTkFont(size=10), text_color="white",
+                         font=ctk.CTkFont(size=10), text_color="#ffffff",
                          wraplength=190, justify="left").pack(anchor="w", padx=8)
         elif info.get("notes"):
             ctk.CTkLabel(cadre, text=info["notes"], font=ctk.CTkFont(size=10),
-                         text_color="white", wraplength=190,
+                         text_color="#ffffff", wraplength=190,
                          justify="left").pack(anchor="w", padx=8)
         if info.get("url"):
-            ctk.CTkButton(cadre, text="Télécharger", height=24,
-                          fg_color="white", text_color=couleur,
-                          hover_color="gray90",
+            # Bouton clair sur fond coloré. Les couleurs sont données en
+            # hexadécimal plutôt que par leur nom : les noms symboliques
+            # (« white », « gray90 ») ne sont pas rendus de la même façon
+            # partout, et macOS s'en accommode mal.
+            ctk.CTkButton(cadre, text="Télécharger", height=26,
+                          fg_color="#ffffff", text_color=couleur,
+                          hover_color="#e5e7eb",
+                          font=ctk.CTkFont(size=11, weight="bold"),
                           command=lambda u=info["url"]: self._ouvrir_lien_maj(u)
-                          ).pack(fill="x", padx=8, pady=(4, 8))
+                          ).pack(fill="x", padx=8, pady=(6, 8))
         else:
-            ctk.CTkLabel(cadre, text="", height=4).pack()
+            # Simple marge basse. On ajuste l'espacement du dernier libellé
+            # plutôt que d'ajouter un widget vide, qui pouvait laisser une
+            # trace visible sur certains systèmes.
+            cadre.configure(height=0)      # laisse le contenu fixer la hauteur
         self._log(f"⬆️ Version {info['version']} disponible"
                   + (" (mise à jour recommandée sans délai)." if urgent else "."))
 
@@ -3106,7 +3123,7 @@ class App(_AppBase):
                 filetypes=[("Sous-titres", "*.vtt *.srt"), ("Tous", "*.*")])
             if p:
                 path_var["p"] = p
-                path_lbl.configure(text=os.path.basename(p), text_color="white")
+                path_lbl.configure(text=os.path.basename(p), text_color="#ffffff")
 
         ctk.CTkButton(win, text="📄  Choisir un fichier .vtt / .srt",
                       command=choose, fg_color="gray35").pack(padx=16, pady=(4, 2), anchor="w")

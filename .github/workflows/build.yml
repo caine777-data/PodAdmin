@@ -59,6 +59,8 @@ jobs:
             --collect-all keyring `
             --collect-all tkinterdnd2 `
             --collect-all openpyxl `
+            --collect-all certifi `
+            --collect-all requests `
             --add-data "assets;assets" `
             app.py
 
@@ -80,7 +82,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.1.1
+          AppVersion=1.1.2
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
@@ -158,6 +160,8 @@ jobs:
             --collect-all keyring \
             --collect-all tkinterdnd2 \
             --collect-all openpyxl \
+            --collect-all certifi \
+            --collect-all requests \
             --add-data "assets:assets" \
             app.py
 

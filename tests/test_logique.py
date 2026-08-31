@@ -494,19 +494,19 @@ class TestEtatMiseAJour:
 
     def test_deja_a_jour_aucun_signalement(self, monkeypatch):
         import maj
-        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: {"version": "1.0.0"})
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5, journal=None: {"version": "1.0.0"})
         assert maj.etat_mise_a_jour("1.0.0", "http://x") is None
 
     def test_version_locale_plus_recente(self, monkeypatch):
         """Compilation locale en avance : pas de bandeau."""
         import maj
-        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: {"version": "1.0.0"})
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5, journal=None: {"version": "1.0.0"})
         assert maj.etat_mise_a_jour("1.5.0", "http://x") is None
 
     def test_mise_a_jour_disponible(self, monkeypatch):
         import maj
         monkeypatch.setattr(maj, "recuperer_info",
-                            lambda u, t=5: {"version": "1.1.0", "url": "http://dl"})
+                            lambda u, t=5, journal=None: {"version": "1.1.0", "url": "http://dl"})
         info = maj.etat_mise_a_jour("1.0.0", "http://x")
         assert info["version"] == "1.1.0"
         assert info["urgent"] is False
@@ -514,12 +514,12 @@ class TestEtatMiseAJour:
     def test_version_perimee_marquee_urgente(self, monkeypatch):
         import maj
         monkeypatch.setattr(maj, "recuperer_info",
-                            lambda u, t=5: {"version": "2.0.0", "version_minimale": "1.5.0"})
+                            lambda u, t=5, journal=None: {"version": "2.0.0", "version_minimale": "1.5.0"})
         assert maj.etat_mise_a_jour("1.0.0", "http://x")["urgent"] is True
 
     def test_reseau_indisponible_silence(self, monkeypatch):
         import maj
-        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5: None)
+        monkeypatch.setattr(maj, "recuperer_info", lambda u, t=5, journal=None: None)
         assert maj.etat_mise_a_jour("1.0.0", "http://x") is None
 
     def test_url_vide_desactive_la_verification(self):
@@ -604,3 +604,32 @@ class TestConsultations:
         assert r["total"] == 0
         assert r["top"] == []
         assert r["periode"] == ("", "")
+
+
+class TestTracabiliteMiseAJour:
+    """Un échec de vérification doit laisser une trace.
+
+    Sans elle, une panne est indétectable : l'utilisateur ne voit simplement
+    jamais de bandeau, sans pouvoir en connaître la raison. C'est ce qui a rendu
+    difficile le diagnostic d'une panne sur macOS (certificats TLS introuvables
+    dans l'application compilée)."""
+
+    def test_echec_reseau_trace(self):
+        import maj
+        messages = []
+        maj.recuperer_info("https://adresse-inexistante-xyz.invalid/v.json",
+                           timeout=2, journal=messages.append)
+        assert messages, "un échec doit être consigné"
+
+    def test_url_vide_silencieuse(self):
+        """Vérification désactivée : pas de message inutile."""
+        import maj
+        messages = []
+        assert maj.recuperer_info("", journal=messages.append) is None
+        assert messages == []
+
+    def test_journal_facultatif(self):
+        """L'absence de journal ne doit rien casser."""
+        import maj
+        assert maj.recuperer_info("https://adresse-inexistante-xyz.invalid/v.json",
+                                  timeout=2) is None

@@ -1,6 +1,6 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Correctif d'affichage du bandeau sur macOS.",
+  "notes": "Correctif de la vérification de mise à jour sur macOS.",
   "version_minimale": ""
 }

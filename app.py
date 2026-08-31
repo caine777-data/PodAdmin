@@ -1705,15 +1705,30 @@ class App(_AppBase):
         et l'utilisateur ne voit rien."""
         def travail():
             """(Thread) Interroge le fichier de version publié."""
+            def tracer(message):
+                """Consigne un échec de vérification dans le Journal.
+
+                Sans cette trace, une panne était indétectable : la vérification
+                échouait en silence et l'utilisateur ne voyait simplement jamais
+                de bandeau, sans pouvoir en connaître la raison."""
+                self._ui(self._log, f"ℹ Mise à jour — {message}")
+
             try:
                 info = maj.etat_mise_a_jour(
                     APP_VERSION,
                     getattr(cfg, "UPDATE_URL", ""),
-                    getattr(cfg, "UPDATE_TIMEOUT_S", 5))
-            except Exception:
+                    getattr(cfg, "UPDATE_TIMEOUT_S", 5),
+                    journal=tracer)
+            except Exception as e:
                 info = None              # jamais bloquant
+                self._ui(self._log, f"ℹ Mise à jour — vérification interrompue : {e}")
             if info:
                 self._ui(self._afficher_bandeau_maj, info)
+            else:
+                # Cas normal le plus fréquent : on est à jour. On le note
+                # discrètement pour confirmer que la vérification a bien eu lieu.
+                self._ui(self._log,
+                         f"ℹ Mise à jour — version {APP_VERSION} : aucune plus récente.")
         self._run(travail)
 
     def _afficher_bandeau_maj(self, info: dict):

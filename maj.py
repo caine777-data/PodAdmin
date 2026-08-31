@@ -74,29 +74,79 @@ def comparer_versions(a: str, b: str) -> int:
     return 0
 
 
-def recuperer_info(url: str, timeout: float = 5.0) -> dict | None:
+def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
     """Télécharge et analyse le fichier de version. Renvoie None en cas d'échec.
 
     Toute erreur est absorbée : réseau coupé, adresse fausse, dépôt supprimé,
     JSON malformé… La vérification est un confort, pas une dépendance.
+
+    `journal` : fonction appelée avec un message en cas d'échec. Sans elle,
+    l'échec est totalement silencieux — pratique pour l'utilisateur, mais
+    impossible à diagnostiquer. C'est précisément ce qui a rendu difficile
+    l'analyse d'une panne sur macOS.
+
+    DEUX MOYENS D'ACCÈS, dans cet ordre :
+
+    1. `requests`, quand il est disponible — c'est le cas ici, l'application
+       s'en sert déjà pour l'API. Il embarque ses propres certificats
+       racine (certifi), ce qui le rend fiable partout.
+    2. `urllib` en repli.
+
+    Pourquoi cet ordre : `urllib` s'appuie sur les certificats du système.
+    Sous Windows cela fonctionne, mais dans une application macOS compilée les
+    certificats racine sont souvent introuvables, et la requête échoue avec une
+    erreur de vérification TLS — sans que rien ne l'indique.
     """
     if not url:
         return None                      # vérification désactivée
+
+    entetes = {"User-Agent": "PodAdmin-MAJ", "Accept": "application/json"}
+    brut = None
+
+    # 1. Voie principale : requests (certificats embarqués)
     try:
-        requete = urllib.request.Request(
-            url, headers={"User-Agent": "PodAdmin-MAJ", "Accept": "application/json"})
-        with urllib.request.urlopen(requete, timeout=timeout) as reponse:
-            if getattr(reponse, "status", 200) != 200:
-                return None
-            donnees = json.loads(reponse.read().decode("utf-8", "replace"))
-        if not isinstance(donnees, dict) or not donnees.get("version"):
-            return None                  # fichier présent mais inexploitable
-        return donnees
-    except Exception:
-        return None                      # jamais bloquant
+        import requests
+        r = requests.get(url, headers=entetes, timeout=timeout)
+        if r.status_code != 200:
+            if journal:
+                journal(f"vérification de mise à jour : HTTP {r.status_code}")
+            return None
+        brut = r.text
+    except ImportError:
+        pass                             # on tente urllib plus bas
+    except Exception as e:
+        if journal:
+            journal(f"vérification de mise à jour impossible ({type(e).__name__}) : {e}")
+        return None
+
+    # 2. Repli : urllib
+    if brut is None:
+        try:
+            requete = urllib.request.Request(url, headers=entetes)
+            with urllib.request.urlopen(requete, timeout=timeout) as reponse:
+                if getattr(reponse, "status", 200) != 200:
+                    return None
+                brut = reponse.read().decode("utf-8", "replace")
+        except Exception as e:
+            if journal:
+                journal(f"vérification de mise à jour impossible ({type(e).__name__}) : {e}")
+            return None
+
+    try:
+        donnees = json.loads(brut)
+    except Exception as e:
+        if journal:
+            journal(f"fichier de version illisible : {e}")
+        return None
+    if not isinstance(donnees, dict) or not donnees.get("version"):
+        if journal:
+            journal("fichier de version présent mais sans numéro exploitable.")
+        return None
+    return donnees
 
 
-def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0) -> dict | None:
+def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
+                     journal=None) -> dict | None:
     """Compare la version installée à celle publiée.
 
     Renvoie None si tout va bien (à jour, ou vérification impossible), sinon un
@@ -107,7 +157,7 @@ def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0) -> d
     `version_minimale` annoncée : le bandeau est alors plus visible, mais
     l'application reste utilisable.
     """
-    infos = recuperer_info(url, timeout)
+    infos = recuperer_info(url, timeout, journal=journal)
     if not infos:
         return None
     derniere = str(infos.get("version", "")).strip()

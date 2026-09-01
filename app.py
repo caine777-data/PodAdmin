@@ -85,6 +85,10 @@ FIELD_360 = "is_360"
 # Reprise dans le message de délivrance du jeton (onglet Comptes).
 MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
 
+# Adresse du support, mise en COPIE CACHÉE des messages de délivrance de jeton :
+# cela garde une trace de l'envoi sans exposer l'adresse au destinataire.
+SUPPORT_MAIL = "support-pod@utoulouse.fr"
+
 
 # ════════════════════════════════════════════════════════════════════════════
 #  MODÈLE : une entrée de la file d'attente
@@ -1968,8 +1972,10 @@ class App(_AppBase):
             return
         # Texte officiel du service (modèle fourni par le support Pod).
         # Le jeton n'est PAS inséré : l'application ne le connaît pas. Le
-        # marqueur « [TOKEN À REMPLACER] » reste bien visible pour être
-        # remplacé par le jeton copié depuis l'administration.
+        # marqueur « >>> COLLER ICI LE TOKEN <<< », encadré de lignes de
+        # tirets, reste impossible à manquer. Un lien « mailto: » ne transporte
+        # que du TEXTE BRUT : ni gras ni couleur ne sont possibles, d'où ce
+        # repère typographique.
         objet = "Dépôt de vidéos sur Pod"
         corps = (
             "Madame, Monsieur,\n\n"
@@ -1993,7 +1999,9 @@ class App(_AppBase):
             "l'application est diffusée en interne.\n\n"
             "Enfin, activez l'application. Au premier démarrage, elle vous demandera une "
             "clé d'activation personnelle. Voici la vôtre :\n\n"
-            "[TOKEN À REMPLACER]\n\n"
+            "----------------------------------------------------------\n"
+            "  >>>  COLLER ICI LE TOKEN  <<<\n"
+            "----------------------------------------------------------\n\n"
             "Cette clé vous est propre et vaut accès à votre compte : merci de la garder "
             "confidentielle et de ne pas la transmettre. Sélectionnez ensuite le "
             "propriétaire des vidéos à téléverser (vous-même) par la sélection de votre "
@@ -2010,8 +2018,11 @@ class App(_AppBase):
         try:
             import urllib.parse
             import webbrowser
+            # Copie cachée au support : trace de la délivrance du jeton, sans
+            # exposer l'adresse interne au destinataire.
             lien = (f"mailto:{urllib.parse.quote(email)}"
                     f"?subject={urllib.parse.quote(objet)}"
+                    f"&bcc={urllib.parse.quote(SUPPORT_MAIL)}"
                     f"&body={urllib.parse.quote(corps)}")
             webbrowser.open(lien)
             self._log(f"✉️ Brouillon de réponse ouvert pour {email}.")
@@ -6480,7 +6491,8 @@ class App(_AppBase):
             "   • S'il a DÉJÀ un jeton : recopiez-le simplement.\n"
             "   • Sinon : « Ajouter », choisir le compte, « Enregistrer », copier.\n"
             "4. Bouton « ✉️ » : ouvre votre messagerie avec le message d'accueil déjà "
-            "rédigé. Remplacez [TOKEN À REMPLACER] par le jeton copié, puis envoyez.\n\n"
+            "rédigé, avec le support en copie cachée. Remplacez le repère\n"
+            "   « >>> COLLER ICI LE TOKEN <<< » par le jeton copié, puis envoyez.\n\n"
             "⚠️ UN SEUL JETON PAR COMPTE : Pod n'en autorise qu'un. Tenter d'en créer "
             "un second échoue avec une erreur. Et surtout, ne supprimez PAS un jeton "
             "existant pour en refaire un : l'ancien devient aussitôt invalide et "

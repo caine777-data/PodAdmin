@@ -1972,49 +1972,55 @@ class App(_AppBase):
             return
         # Texte officiel du service (modèle fourni par le support Pod).
         # Le jeton n'est PAS inséré : l'application ne le connaît pas. Le
-        # marqueur « >>> COLLER ICI LE TOKEN <<< », encadré de lignes de
+        # marqueur « >>> COLLER ICI LA CLÉ <<< », encadré de lignes de
         # tirets, reste impossible à manquer. Un lien « mailto: » ne transporte
         # que du TEXTE BRUT : ni gras ni couleur ne sont possibles, d'où ce
         # repère typographique.
-        objet = "Dépôt de vidéos sur Pod"
+        # Texte validé par le service (version simplifiée) : les explications
+        # d'installation ne sont plus dans le message, elles sont sur Moodle.
+        #
+        # VOCABULAIRE : on parle de « clé d'activation » vers les enseignants,
+        # et non de « token ». Le terme technique reste employé côté
+        # administration (PodAdmin, administration Django), mais il n'évoque
+        # rien pour un utilisateur.
+        objet = "Votre accès au dépôt de vidéos (videos.utoulouse.fr)"
         corps = (
-            "Madame, Monsieur,\n\n"
-            "Vous avez fait une demande de dépôt de vidéos sur la plateforme Pod de "
-            "l'Université de Toulouse. Ce message vous donne tout ce qu'il faut pour "
-            "démarrer avec PodTéléverseur, l'application qui vous permettra de déposer "
-            "vos vidéos sur videos.utoulouse.fr par lot sans manipulation technique "
-            "particulière.\n\n"
-            "La marche à suivre tient en trois temps.\n\n"
-            "Commencez par télécharger l'application depuis notre page Moodle :\n"
-            f"{MOODLE_URL}\n"
-            "Vous y trouverez deux fichiers, à choisir selon votre ordinateur : "
-            "« Setup.exe » pour Windows, le fichier « .dmg » pour macOS.\n\n"
-            "Installez-la ensuite. Sous Windows, double-cliquez sur « Setup.exe » et "
-            "laissez-vous guider ; si un avertissement de sécurité apparaît, cliquez sur "
-            "« Informations complémentaires » puis « Exécuter quand même ». Sous macOS, "
-            "ouvrez le « .dmg » et glissez l'application dans votre dossier Applications ; "
-            "si le premier lancement est bloqué, allez dans Réglages Système, puis "
-            "Confidentialité et sécurité, et cliquez sur « Ouvrir quand même ». Ces "
-            "avertissements sont normaux : ils s'affichent simplement parce que "
-            "l'application est diffusée en interne.\n\n"
-            "Enfin, activez l'application. Au premier démarrage, elle vous demandera une "
-            "clé d'activation personnelle. Voici la vôtre :\n\n"
+            "Bonjour,\n\n"
+            "Vous pouvez, maintenant, déposer des vidéos sur le serveur vidéo "
+            "institutionnel de l'Université de Toulouse : "
+            "https://videos.utoulouse.fr (POD).\n\n"
+            "Pour publier des vidéos, connectez-vous à la plateforme : "
+            "https://videos.utoulouse.fr avec vos identifiants institutionnels.\n\n"
+            "Une autre option consiste à utiliser notre application dédiée, "
+            "PODTéléverseur, qui est compatible avec les systèmes d'exploitation "
+            "Windows et macOS.\n\n"
+            "L'application vous permettra de facilement accéder à toutes les "
+            "fonctionnalités de téléversement vidéo. Nous vous recommandons "
+            "d'utiliser PODTéléverseur, qui offre notamment la possibilité de "
+            "téléverser des lots de vidéos, une fonctionnalité qui n'est pas "
+            "disponible sur la version web.\n\n"
+            "Le tutoriel vous guidera dans l'installation de l'application :\n"
+            f"{MOODLE_URL}\n\n"
+            "Au premier lancement, l'application vous demandera une clé "
+            "d'activation. Voici la vôtre :\n\n"
             "----------------------------------------------------------\n"
-            "  >>>  COLLER ICI LE TOKEN  <<<\n"
+            "  >>>  COLLER ICI LA CLÉ  <<<\n"
             "----------------------------------------------------------\n\n"
-            "Cette clé vous est propre et vaut accès à votre compte : merci de la garder "
-            "confidentielle et de ne pas la transmettre. Sélectionnez ensuite le "
-            "propriétaire des vidéos à téléverser (vous-même) par la sélection de votre "
-            "identifiant institutionnel.\n\n"
-            "Une fois cette étape passée, vous pourrez déposer vos vidéos directement "
-            "depuis votre ordinateur. Un guide d'utilisation est disponible dans le menu "
-            "« Aide » de l'application.\n\n"
-            "En cas de question ou de difficulté, écrivez-nous à "
-            "support-pod@utoulouse.fr, nous vous répondrons.\n\n"
-            "Bien cordialement,\n\n"
-            "L'équipe support Pod\n"
-            "Université de Toulouse\n"
-            "Contact : support-pod@utoulouse.fr")
+            "Cette clé est personnelle et vaut accès à votre compte : "
+            "NE PAS LA TRANSMETTRE. Vous n'en avez besoin que pour l'application ; "
+            "l'accès par navigateur se fait avec vos identifiants habituels.\n\n"
+            "N'utilisez plus PRISMES pour déposer des vidéos, vos nouvelles vidéos "
+            "DOIVENT IMPÉRATIVEMENT être déposées sur videos.utoulouse.fr.\n\n"
+            "Nous migrons actuellement les vidéos de PRISMES vers "
+            "videos.utoulouse.fr. Vos liens Moodle resteront valides. Nous vous "
+            "contacterons par email lors de la migration de votre compte.\n\n"
+            "Pour toute aide ou accompagnement spécifique, n'hésitez pas à contacter "
+            f"le Support POD à {SUPPORT_MAIL}.\n\n"
+            "Bonne Journée\n\n"
+            "—\n"
+            "Support videos.utoulouse.fr (POD)\n"
+            f"{SUPPORT_MAIL}")
+
         try:
             import urllib.parse
             import webbrowser
@@ -6492,7 +6498,9 @@ class App(_AppBase):
             "   • Sinon : « Ajouter », choisir le compte, « Enregistrer », copier.\n"
             "4. Bouton « ✉️ » : ouvre votre messagerie avec le message d'accueil déjà "
             "rédigé, avec le support en copie cachée. Remplacez le repère\n"
-            "   « >>> COLLER ICI LE TOKEN <<< » par le jeton copié, puis envoyez.\n\n"
+            "   « >>> COLLER ICI LA CLÉ <<< » par le jeton copié, puis envoyez.\n"
+            "   (Le message parle de « clé d'activation » : le mot « token » ne dit "
+            "rien aux enseignants.)\n\n"
             "⚠️ UN SEUL JETON PAR COMPTE : Pod n'en autorise qu'un. Tenter d'en créer "
             "un second échoue avec une erreur. Et surtout, ne supprimez PAS un jeton "
             "existant pour en refaire un : l'ancien devient aussitôt invalide et "

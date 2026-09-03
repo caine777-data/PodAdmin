@@ -1,6 +1,6 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.6",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Message de délivrance du jeton : copie cachée au support.",
+  "notes": "Message de délivrance de la clé d'activation, version validée.",
   "version_minimale": ""
 }

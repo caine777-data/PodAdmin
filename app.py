@@ -2636,6 +2636,11 @@ class App(_AppBase):
         self.browse_chan_by_url = {}    # URL chaîne → titre
         self.browse_filtered = []       # sous-ensemble affiché
         self.browse_selected = None     # vidéo en cours d'édition
+        # SÉLECTION MULTIPLE (Ctrl+clic / Maj+clic) : ensemble des slugs retenus.
+        # Vide = mode normal, une seule vidéo affichée dans le panneau de détail.
+        # Non vide = le panneau bascule sur les actions groupées.
+        self.browse_multi: set = set()
+        self.browse_ancre = None        # dernière ligne cliquée, pour Maj+clic
 
         self._browse_render_detail()    # affiche le message d'invite
 
@@ -2841,11 +2846,130 @@ class App(_AppBase):
                 font=police,
                 command=lambda vv=v: self._browse_select(vv))
             btn.pack(fill="x", pady=1)
+            # Sélection multiple à la manière d'un explorateur de fichiers :
+            # Ctrl+clic ajoute ou retire une ligne, Maj+clic prend une plage.
+            # `add="+"` conserve l'action normale du bouton (clic simple).
+            btn.bind("<Control-Button-1>", lambda e, vv=v: self._browse_toggle_multi(vv))
+            btn.bind("<Shift-Button-1>", lambda e, vv=v: self._browse_plage_multi(vv))
             self.browse_rowbtns[slug] = btn
+            # Teinte particulière pour les lignes retenues en sélection multiple.
+            if slug in self.browse_multi:
+                btn.configure(fg_color=("#93c5fd", "#1e3a8a"))
         if len(self.browse_filtered) > CAP:
             ctk.CTkLabel(self.browse_list,
                          text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
                          text_color="gray").pack(pady=4)
+
+    # ── Sélection multiple (Ctrl+clic / Maj+clic) ─────────────────────────
+
+    def _browse_toggle_multi(self, v):
+        """Ctrl+clic : ajoute ou retire une vidéo de la sélection multiple."""
+        slug = v.get("slug")
+        if slug in self.browse_multi:
+            self.browse_multi.discard(slug)
+        else:
+            self.browse_multi.add(slug)
+        self.browse_ancre = slug
+        self._browse_refresh_multi()
+        return "break"          # empêche le clic simple de réinitialiser
+
+    def _browse_plage_multi(self, v):
+        """Maj+clic : sélectionne toute la plage depuis la dernière ligne cliquée."""
+        slugs = [x.get("slug") for x in self.browse_filtered[:300]]
+        cible = v.get("slug")
+        depart = self.browse_ancre or (
+            self.browse_selected.get("slug") if self.browse_selected else None)
+        if depart not in slugs or cible not in slugs:
+            return self._browse_toggle_multi(v)
+        i, j = sorted((slugs.index(depart), slugs.index(cible)))
+        self.browse_multi.update(slugs[i:j + 1])
+        self._browse_refresh_multi()
+        return "break"
+
+    def _browse_vider_multi(self):
+        """Annule la sélection multiple et revient au détail d'une vidéo."""
+        self.browse_multi.clear()
+        self.browse_ancre = None
+        self._browse_refresh_multi()
+
+    def _browse_refresh_multi(self):
+        """Met à jour la teinte des lignes puis rebascule le panneau de droite."""
+        for slug, btn in getattr(self, "browse_rowbtns", {}).items():
+            try:
+                if not btn.winfo_exists():
+                    continue
+                if slug in self.browse_multi:
+                    btn.configure(fg_color=("#93c5fd", "#1e3a8a"))
+                elif self.browse_selected and slug == self.browse_selected.get("slug"):
+                    btn.configure(fg_color=("gray75", "gray30"))
+                else:
+                    btn.configure(fg_color="transparent")
+            except Exception:
+                pass
+        self._browse_render_detail()
+
+    def _browse_videos_multi(self) -> list:
+        """Renvoie les objets vidéo correspondant à la sélection multiple."""
+        return [v for v in self.browse_filtered if v.get("slug") in self.browse_multi]
+
+    def _browse_render_multi_panel(self):
+        """Panneau d'actions groupées, affiché quand plusieurs vidéos sont retenues.
+
+        Il REMPLACE le détail d'une vidéo : afficher les deux serait ambigu
+        (sur laquelle porterait l'action ?). Un bouton permet de revenir au mode
+        normal.
+
+        Les actions réutilisent les mêmes méthodes d'API que l'Explorateur :
+        aucune logique n'est dupliquée, seule la présentation change.
+        """
+        for w in self.browse_detail.winfo_children():
+            w.destroy()
+        videos = self._browse_videos_multi()
+        n = len(videos)
+
+        ctk.CTkLabel(self.browse_detail, text=f"☑  {n} vidéo(s) sélectionnée(s)",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+        ctk.CTkLabel(self.browse_detail,
+                     text="Ctrl+clic pour ajouter ou retirer une vidéo, "
+                          "Maj+clic pour une plage.",
+                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     wraplength=360, justify="left").pack(anchor="w", padx=6)
+
+        # Aperçu des titres retenus, pour éviter d'agir à l'aveugle.
+        apercu = ctk.CTkScrollableFrame(self.browse_detail, height=110,
+                                        label_text="Vidéos concernées")
+        apercu.pack(fill="x", padx=4, pady=8)
+        for v in videos[:60]:
+            ctk.CTkLabel(apercu, text=f"• {(v.get('title') or '(sans titre)')[:46]}",
+                         font=ctk.CTkFont(size=11), anchor="w").pack(anchor="w")
+        if n > 60:
+            ctk.CTkLabel(apercu, text=f"… et {n - 60} autre(s)",
+                         font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w")
+
+        ctk.CTkLabel(self.browse_detail, text="Appliquer à toute la sélection",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+
+        for libelle, action, couleur in (
+                ("📝  Mettre en brouillon", "draft", "gray35"),
+                ("🌐  Rendre public", "public", "#16a34a"),
+                ("🔒  Rendre restreint", "restricted", "#b45309"),
+                ("🔐  Restreindre au groupe…", "groups", "#7c3aed"),
+                ("📺  Affecter à une chaîne…", "channels", "#2563eb")):
+            ctk.CTkButton(self.browse_detail, text=libelle, anchor="w",
+                          fg_color=couleur,
+                          command=lambda a=action: self._browse_multi_action(a)).pack(
+                fill="x", padx=6, pady=2)
+
+        self.browse_multi_msg = ctk.CTkLabel(
+            self.browse_detail, text="", font=ctk.CTkFont(size=11),
+            wraplength=360, justify="left", anchor="w")
+        self.browse_multi_msg.pack(fill="x", padx=6, pady=(6, 2))
+
+        ctk.CTkButton(self.browse_detail, text="✖  Annuler la sélection",
+                      fg_color="gray35", hover_color="gray28",
+                      command=self._browse_vider_multi).pack(fill="x", padx=6, pady=(8, 6))
 
     def _browse_select(self, v):
         """Sélectionne une vidéo et affiche son panneau de détail.
@@ -2871,8 +2995,116 @@ class App(_AppBase):
 
     # ── Panneau de détail / actions ────────────────────────────────────────
 
+    def _browse_multi_action(self, action: str):
+        """Applique une action à toutes les vidéos sélectionnées.
+
+        Les groupes et les chaînes passent par les MÊMES fenêtres de choix que
+        l'Explorateur : un seul comportement à connaître, un seul à maintenir.
+        """
+        videos = self._browse_videos_multi()
+        if not videos:
+            return
+
+        payload, groupes, chaines = None, None, None
+
+        if action == "draft":
+            payload = {"is_draft": True, "is_restricted": False}
+            libelle = "mise en brouillon"
+        elif action == "public":
+            payload = {"is_draft": False, "is_restricted": False}
+            libelle = "passage en public"
+        elif action == "restricted":
+            payload = {"is_draft": False, "is_restricted": True}
+            libelle = "passage en restreint"
+        elif action == "groups":
+            if not self.access_groups:
+                self.browse_multi_msg.configure(
+                    text="Aucun groupe d'accès chargé (voir l'onglet Groupes d'accès).",
+                    text_color="#f59e0b")
+                return
+            groupes = self._clean_pick_groups()      # fenêtre partagée
+            if groupes is None:
+                return                                # annulé
+            libelle = f"restriction à {len(groupes)} groupe(s)"
+        else:                                         # channels
+            if not self.browse_channels:
+                self.browse_multi_msg.configure(
+                    text="Aucune chaîne chargée. Cliquez sur « Rafraîchir ».",
+                    text_color="#f59e0b")
+                return
+            # Le sélecteur de chaînes rend la main par CALLBACK : la suite du
+            # traitement se poursuit donc dans _browse_multi_channels.
+            ChannelPicker(self, self.browse_channels,
+                          on_done=lambda urls, labels: self._browse_multi_channels(
+                              videos, list(urls)),
+                          title=f"Chaînes pour {len(videos)} vidéo(s)")
+            return
+
+        if not messagebox.askyesno(
+                "Confirmer l'action",
+                f"Appliquer « {libelle} » à {len(videos)} vidéo(s) ?"):
+            return
+        self.browse_multi_msg.configure(text="⏳ Application en cours…",
+                                        text_color="gray")
+        self._run(self._do_browse_multi_action, videos, payload, groupes,
+                  chaines, libelle)
+
+    def _browse_multi_channels(self, videos, chaines):
+        """Suite du traitement après le choix des chaînes (appelé en callback)."""
+        if not messagebox.askyesno(
+                "Confirmer l'action",
+                f"Affecter {len(videos)} vidéo(s) à {len(chaines)} chaîne(s) ?\n\n"
+                "Les chaînes actuelles de ces vidéos seront REMPLACÉES."):
+            return
+        self.browse_multi_msg.configure(text="⏳ Application en cours…",
+                                        text_color="gray")
+        self._run(self._do_browse_multi_action, videos, None, None, chaines,
+                  f"affectation à {len(chaines)} chaîne(s)")
+
+    def _do_browse_multi_action(self, videos, payload, groupes, chaines, libelle):
+        """(Thread) Applique l'action à chaque vidéo, une par une.
+
+        Traitement séquentiel : plus lent que des envois simultanés, mais
+        prévisible, et une erreur reste facile à situer."""
+        ok = fail = 0
+        for v in videos:
+            slug = v.get("slug", "?")
+            try:
+                if payload is not None:
+                    self.api.patch_video(v, payload)
+                    self._sync_video_caches(slug, payload)
+                elif groupes is not None:
+                    self.api.set_video_groups(v, groupes)
+                    maj = {"restrict_access_to_groups": list(groupes),
+                           "is_restricted": bool(groupes), "is_draft": False}
+                    self._sync_video_caches(slug, maj)
+                else:
+                    self.api.assign_video_to_channels(v, chaines)
+                    self._sync_video_caches(slug, {"channel": list(chaines)})
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ {slug} : {e}")
+            self._ui(self.browse_multi_msg.configure,
+                     text=f"⏳ {ok + fail}/{len(videos)} traitée(s)…",
+                     text_color="gray")
+
+        self._ui(self._log, f"Sélection multiple — {libelle} : {ok} OK, {fail} échec(s).")
+        self._ui(self.browse_multi_msg.configure,
+                 text=f"✅ Terminé : {ok} réussie(s), {fail} échec(s).",
+                 text_color="#22c55e" if not fail else "#f59e0b")
+        # La sélection est conservée : on peut enchaîner une autre action sur
+        # les mêmes vidéos (restreindre puis affecter à une chaîne, par exemple).
+        self._ui(self._refresh_video_views)
+
     def _browse_render_detail(self):
         """Affiche le panneau de détail de la vidéo sélectionnée."""
+        # Si des vidéos sont retenues en sélection multiple, on affiche les
+        # actions groupées à la place du détail : agir sur « la » vidéo alors
+        # que plusieurs sont cochées serait ambigu.
+        if self.browse_multi:
+            self._browse_render_multi_panel()
+            return
         for w in self.browse_detail.winfo_children():
             w.destroy()
         v = self.browse_selected
@@ -4226,6 +4458,7 @@ class App(_AppBase):
         "Rendre public":                ("patch", {"is_draft": False, "is_restricted": False}),
         "Rendre restreint":             ("patch", {"is_draft": False, "is_restricted": True}),
         "🔒  Restreindre au groupe…":   ("restrict_group", None),
+        "📺  Affecter à une chaîne…":   ("assign_channel", None),
         "🗑  Supprimer définitivement": ("delete", None),
     }
 
@@ -4750,6 +4983,21 @@ class App(_AppBase):
 
         # Action spéciale « Restreindre au groupe… » : on demande le(s) groupe(s),
         # puis on construit un payload cohérent (restreint + publié + groupes).
+        if kind == "assign_channel":
+            # Même sélecteur que l'onglet Vidéos : un seul comportement à
+            # connaître pour l'utilisateur, un seul à maintenir.
+            if not self.browse_channels:
+                self.clean_progress.configure(
+                    text="Aucune chaîne chargée. Ouvrez l'onglet Vidéos et "
+                         "cliquez sur « Rafraîchir ».",
+                    text_color="#f59e0b")
+                return
+            ChannelPicker(self, self.browse_channels,
+                          on_done=lambda urls, labels: self._clean_assign_channels(
+                              todo, list(urls)),
+                          title=f"Chaînes pour {len(todo)} vidéo(s)")
+            return
+
         if kind == "restrict_group":
             if not self.access_groups:
                 self.clean_progress.configure(
@@ -4812,6 +5060,10 @@ class App(_AppBase):
                         if v in self.videos:
                             self.videos.remove(v)
                     self._sync_video_caches(slug, removed=True)
+                elif kind == "channels":
+                    # `payload` porte ici la liste des URLs de chaînes.
+                    self.api.assign_video_to_channels(v, payload)
+                    self._sync_video_caches(slug, {"channel": list(payload)})
                 else:
                     # Statut : PATCH des deux booléens d'un coup (cohérent)
                     self.api.patch_video(v, payload)
@@ -4836,6 +5088,17 @@ class App(_AppBase):
         # Le lot est traité : on vide la sélection pour éviter de rejouer par
         # inadvertance la même action (sur des vidéos déjà supprimées, notamment).
         self._ui(self._clean_clear_selection)
+
+    def _clean_assign_channels(self, todo, chaines):
+        """Affecte les vidéos cochées aux chaînes choisies (appelé en callback)."""
+        if not messagebox.askyesno(
+                "Confirmer l'action",
+                f"Affecter {len(todo)} vidéo(s) à {len(chaines)} chaîne(s) ?\n\n"
+                "Les chaînes actuelles de ces vidéos seront REMPLACÉES."):
+            return
+        self.clean_apply_btn.configure(state="disabled")
+        self._clean_action_label = "Affecter à une chaîne"
+        self._run(self._do_clean_apply, "channels", chaines, todo)
 
     def _clean_pick_groups(self):
         """Modale : cocher un ou plusieurs groupes d'accès. Renvoie la liste des
@@ -6579,6 +6842,23 @@ class App(_AppBase):
             "À savoir : la page d'ACCUEIL de la plateforme n'est pas modifiable depuis "
             "l'application — elle relève de la configuration du serveur, et non de "
             "l'API.")
+
+        section(
+            "☑  Traiter plusieurs vidéos à la fois (onglet Vidéos)",
+            "Dans la liste de l'onglet Vidéos :\n"
+            "• Ctrl + clic pour ajouter ou retirer une vidéo de la sélection ;\n"
+            "• Maj + clic pour sélectionner toute une plage.\n\n"
+            "Les lignes retenues passent en bleu, et le panneau de droite bascule sur "
+            "les actions groupées : mettre en brouillon, rendre public, rendre "
+            "restreint, restreindre à des groupes, affecter à une ou plusieurs "
+            "chaînes.\n\n"
+            "La sélection est CONSERVÉE après une action : on peut enchaîner "
+            "(restreindre à un groupe, puis affecter à une chaîne) sans tout "
+            "recocher. « Annuler la sélection » revient au détail d'une vidéo.\n\n"
+            "⚠️ Affecter à une chaîne REMPLACE les chaînes actuelles des vidéos "
+            "concernées ; l'action ne s'ajoute pas aux affectations existantes.\n\n"
+            "La suppression en masse reste réservée à l'Explorateur : elle est "
+            "irréversible, et l'onglet Vidéos sert au travail quotidien.")
 
         section(
             "🧹  Explorateur : agir sur plus de 300 vidéos",

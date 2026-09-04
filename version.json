@@ -1,6 +1,6 @@
 {
-  "version": "1.1.9",
+  "version": "1.2.0",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Vérification automatique des dimensions de fenêtres.",
+  "notes": "Sélection multiple dans l'onglet Vidéos (Ctrl/Maj+clic).",
   "version_minimale": ""
 }

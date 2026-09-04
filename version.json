@@ -1,6 +1,6 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.9",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Message de délivrance de la clé d'activation, version validée.",
+  "notes": "Vérification automatique des dimensions de fenêtres.",
   "version_minimale": ""
 }

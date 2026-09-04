@@ -633,3 +633,39 @@ class TestTracabiliteMiseAJour:
         import maj
         assert maj.recuperer_info("https://adresse-inexistante-xyz.invalid/v.json",
                                   timeout=2) is None
+
+
+class TestNonRenvoiDesVideosDejaEnvoyees:
+    """Une vidéo déjà téléversée ne doit pas repartir au clic suivant.
+
+    Bug réel : le libellé posé après un envoi réussi était « ✅ terminé », alors
+    que la condition testait l'égalité avec « terminé ». L'émoji faisait échouer
+    la comparaison, et TOUT le lot était renvoyé dès qu'on ajoutait un fichier —
+    créant des doublons sur la plateforme.
+
+    La correction s'appuie sur un indicateur booléen `done`, insensible au
+    libellé affiché."""
+
+    @staticmethod
+    def _item(tmp_path, nom="v.mp4"):
+        import app
+        p = tmp_path / nom
+        p.write_bytes(b"0" * 2048)
+        return app.UploadItem(str(p))
+
+    def test_indicateur_faux_au_depart(self, tmp_path):
+        assert self._item(tmp_path).done is False
+
+    def test_libelle_avec_emoji_ne_vaut_pas_egalite(self):
+        """Illustre la cause du bug : la comparaison de texte échouait."""
+        assert ("✅ terminé" == "terminé") is False
+        assert "✅ terminé".endswith("terminé") is True
+
+    def test_indicateur_independant_du_libelle(self, tmp_path):
+        """L'indicateur ne dépend pas du texte affiché : c'est tout l'intérêt."""
+        it = self._item(tmp_path)
+        it.status = "✅ terminé"
+        assert it.done is False          # le libellé seul ne suffit pas
+        it.done = True
+        it.status = "n'importe quel libellé"
+        assert it.done is True           # l'indicateur fait foi

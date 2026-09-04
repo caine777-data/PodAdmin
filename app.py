@@ -103,7 +103,13 @@ class UploadItem:
         # Titre par défaut = nom de fichier sans extension, nettoyé
         base = os.path.splitext(self.filename)[0]
         self.title = base.replace("_", " ").replace("-", " ").strip()
-        self.status = "en attente"     # en attente | en cours | terminé | échec
+        self.status = "en attente"     # libellé AFFICHÉ (peut contenir un émoji)
+        # Indicateur de réussite, distinct du libellé affiché. Comparer le texte
+        # du statut était fragile : le libellé posé après un envoi réussi est
+        # « ✅ terminé », alors que le test portait sur « terminé » — l'égalité
+        # échouait toujours, et une vidéo déjà envoyée repartait à chaque clic
+        # sur « Lancer le téléversement », créant des doublons.
+        self.done = False
         self.slug = ""
         self.video_url = ""
         self.error = ""
@@ -859,7 +865,9 @@ class App(_AppBase):
         chunked = None      # session véhicule, ouverte à la 1re nécessité
 
         for idx, it in enumerate(self.items, 1):
-            if it.status == "terminé":
+            # On saute les vidéos DÉJÀ envoyées avec succès : sans cela, ajouter
+            # un fichier à une file déjà traitée renverrait tout le lot.
+            if it.done:
                 ok += 1
                 self._ui(self.batch_progress.set, idx / total)
                 continue
@@ -1004,6 +1012,7 @@ class App(_AppBase):
                         self._ui(self._log, f"Encodage non lancé ({it.title}) : {e}")
 
                 ok += 1
+                it.done = True            # marque le succès : ne sera pas relancé
                 self._ui(self._set_item_status, it, "✅ terminé", "#22c55e")
                 self._ui(self._log,
                          f"Téléversé{' (chunké)' if big else ''} : {it.title}  (slug={it.slug})")
@@ -1042,7 +1051,11 @@ class App(_AppBase):
 
     def _update_retry_button(self):
         """Affiche le bouton de relance uniquement s'il y a des vidéos en échec."""
-        n_fail = sum(1 for it in self.items if str(it.status).endswith("échec"))
+        # On s'appuie sur l'indicateur `done` plutôt que sur le libellé affiché :
+        # une vidéo non réussie et non en cours est à relancer, quel que soit le
+        # texte de son statut.
+        n_fail = sum(1 for it in self.items
+                     if not it.done and str(it.status).endswith("échec"))
         if n_fail:
             self.retry_btn.configure(text=f"🔄  Relancer les échecs ({n_fail})")
             if not self.retry_btn.winfo_ismapped():
@@ -1070,7 +1083,8 @@ class App(_AppBase):
             self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
             return
         # Réinitialiser le statut des échecs pour qu'ils soient re-tentés
-        failed = [it for it in self.items if str(it.status).endswith("échec")]
+        failed = [it for it in self.items
+                  if not it.done and str(it.status).endswith("échec")]
         if not failed:
             self.global_msg.configure(text="Aucune vidéo en échec.", text_color="gray")
             return
@@ -6836,7 +6850,13 @@ class ProgressModal(ctk.CTkToplevel):
         self.master_app = master
         self._done = False                 # opération terminée ? (pilote la fermeture)
         self.title(title)
-        self.geometry("470x250")
+        # 470 x 250 était trop court : le contenu réclame environ 265 px au
+        # départ, et jusqu'à 290 quand le message de fin est long (cas d'une
+        # finalisation coupée par la passerelle). Le bouton « Fermer » se
+        # retrouvait alors hors de la fenêtre, qui n'est pas redimensionnable.
+        # On prévoit une marge, et la fenêtre s'ajustera d'elle-même si un
+        # message plus long survient (voir _ajuster_hauteur).
+        self.geometry("470x320")
         self.resizable(False, False)
         # Tant que l'opération tourne, la croix de fermeture est NEUTRALISÉE :
         # fermer la fenêtre laisserait un envoi orphelin en arrière-plan.
@@ -6883,6 +6903,24 @@ class ProgressModal(ctk.CTkToplevel):
 
     # ── Mises à jour (appelées depuis le thread de travail via App._ui) ────
 
+    def _ajuster_hauteur(self):
+        """Agrandit la fenêtre si son contenu dépasse la hauteur disponible.
+
+        Les messages de fin varient beaucoup en longueur (une ligne pour un
+        succès, cinq pour une finalisation interrompue). Plutôt que de figer une
+        taille suffisante pour le pire cas — ce qui laisserait un grand vide la
+        plupart du temps — on ajuste après coup, uniquement si nécessaire."""
+        if not self.winfo_exists():
+            return
+        try:
+            self.update_idletasks()
+            requise = self.winfo_reqheight()
+            actuelle = self.winfo_height()
+            if requise > actuelle:
+                self.geometry(f"470x{requise + 20}")
+        except Exception:
+            pass
+
     def set_phase(self, text: str, color: str = None):
         """Change le libellé de l'étape en cours (envoi, finalisation, encodage…)."""
         if not self.winfo_exists():
@@ -6924,6 +6962,7 @@ class ProgressModal(ctk.CTkToplevel):
         self.warn_lbl.configure(text="Opération terminée. Vous pouvez fermer cette fenêtre.",
                                 text_color="gray")
         self.close_btn.configure(state="normal")
+        self._ajuster_hauteur()            # le message de fin peut être long
         try:
             self.grab_release()            # rend la main à la fenêtre principale
         except Exception:

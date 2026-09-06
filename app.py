@@ -706,6 +706,11 @@ class App(_AppBase):
                      fg_color=S_FILET).pack(side="left", fill="y")
 
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        # Les onglets sont empilés dans une grille à UNE seule cellule, qui
+        # occupe toute la zone : c'est ce qui permet de basculer par `tkraise`
+        # sans recalculer la mise en page.
+        self.content.rowconfigure(0, weight=1)
+        self.content.columnconfigure(0, weight=1)
         self.content.pack(side="right", fill="both", expand=True, padx=14, pady=14)
 
         self.tabs = {}
@@ -768,10 +773,44 @@ class App(_AppBase):
             pass
 
     def _show_tab(self, key: str):
-        """Affiche l'onglet `key` et met en surbrillance son bouton de navigation."""
-        for f in self.tabs.values():
-            f.pack_forget()
-        self.tabs[key].pack(fill="both", expand=True)
+        """Affiche l'onglet `key` et met en surbrillance son bouton de navigation.
+
+        EMPILEMENT plutôt que dépack/repack.
+
+        La version précédente retirait les TREIZE onglets du gestionnaire de
+        géométrie, puis replaçait le bon. Tk recalculait donc la mise en page
+        quatorze fois par clic, en repassant par un écran vide : d'où le
+        clignotement, et la page qu'on voyait se reconstruire.
+
+        Ici, chaque onglet est placé UNE SEULE FOIS, au même endroit de la
+        grille, et tous restent empilés. Changer d'onglet ne fait que remonter
+        le bon au-dessus des autres (`tkraise`) : aucun recalcul, aucun écran
+        vide, donc aucun clignotement.
+
+        Le placement est fait à la demande plutôt qu'à la construction : un
+        onglet jamais ouvert n'est jamais placé, ce qui évite de payer treize
+        mises en page au démarrage."""
+        cible = self.tabs[key]
+        # ⚠️ On teste et on place le widget EMPILABLE, jamais le composite.
+        #
+        # `winfo_manager()` sur un CTkScrollableFrame répond « canvas » — le
+        # gestionnaire de son widget INTERNE. La condition « pas encore placé »
+        # était donc toujours fausse pour l'onglet Configuration, qui n'était
+        # jamais posé dans la grille : on demandait Configuration et l'écran
+        # affichait Vidéos, sans la moindre erreur.
+        empilable = self._widget_empilable(cible)
+        if not empilable.winfo_manager():
+            empilable.grid(row=0, column=0, sticky="nsew")
+        # ⚠️ `tkraise` doit porter sur le widget qui est RÉELLEMENT enfant de
+        # la zone de contenu.
+        #
+        # L'onglet Configuration est un CTkScrollableFrame, c'est-à-dire un
+        # widget composite : CustomTkinter redirige bien `grid` vers son
+        # conteneur interne, mais PAS `tkraise`. Appelé directement, celui-ci
+        # remontait un widget imbriqué au lieu de l'onglet, et Configuration
+        # restait sous les autres — invisible, sans aucune erreur.
+        empilable.tkraise()
+
         for k, b in self.nav_btns.items():
             b.configure(fg_color=S_SELECTION if k == key else "transparent")
         # Chargement paresseux à la première ouverture de l'onglet Groupes
@@ -789,6 +828,23 @@ class App(_AppBase):
         # `_on_connexion_etablie()` rejoue alors le chargement.
         self.onglet_courant = key
         self._auto_charger(key)
+
+    def _widget_empilable(self, widget):
+        """Remonte jusqu'au widget effectivement placé dans `self.content`.
+
+        Renvoie `widget` lui-même s'il l'est déjà (cas des CTkFrame ordinaires),
+        sinon son ancêtre qui l'est (cas des composites comme
+        CTkScrollableFrame). En dernier recours, renvoie `widget` : mieux vaut
+        un empilement inopérant qu'une exception au changement d'onglet."""
+        courant = widget
+        for _ in range(6):                    # garde-fou contre une boucle
+            parent = getattr(courant, "master", None)
+            if parent is None:
+                break
+            if parent is self.content:
+                return courant
+            courant = parent
+        return widget
 
     # Onglets qui chargent leur liste à la première ouverture. Ensuite le cache
     # est réutilisé ; le bouton « 🔄 Rafraîchir » force une relecture serveur.

@@ -97,7 +97,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.5.5
+          AppVersion=1.5.6
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin

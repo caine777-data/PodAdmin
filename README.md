@@ -112,6 +112,26 @@ python -m PyInstaller --onedir --windowed --name PodAdmin ^
 
 ---
 
+## Bascule d'onglet
+
+Les onglets sont **empilés** dans une grille à une seule cellule ; changer
+d'onglet ne fait que remonter le bon (`tkraise`). L'ancienne version dépackait
+les treize onglets puis replaçait le bon : quatorze recalculs de mise en page
+par clic, en repassant par un écran vide — d'où le clignotement.
+
+⚠️ **`winfo_manager()` sur un widget composite ment.** Sur un
+`CTkScrollableFrame` (l'onglet Configuration), il répond « canvas », le
+gestionnaire de son widget *interne*. Tester et placer doit se faire sur le
+widget réellement enfant de la zone de contenu, que `_widget_empilable`
+retrouve. Sans cela, Configuration n'était jamais posé dans la grille : on
+demandait Configuration, l'écran affichait Vidéos, **sans aucune erreur**.
+
+Ce défaut n'a été vu que par capture d'écran — les tests qui cherchaient le
+titre *à l'intérieur* du widget le trouvaient et concluaient à tort.
+`TestBasculeDOnglet` vérifie désormais le placement et l'ordre d'empilement.
+
+---
+
 ## Performance
 
 La bascule clair/sombre parcourt **tous** les widgets de l'application. Mesuré :
@@ -264,7 +284,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.5.5**
+Version : **1.5.6**
 
 ---
 

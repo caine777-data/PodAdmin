@@ -1552,3 +1552,68 @@ class TestVerrouillageSuppressionType:
 def ctk_module():
     import app as module_app
     return module_app.ctk
+
+
+class TestBasculeDOnglet:
+    """La bascule se fait par EMPILEMENT, pas par dépack/repack.
+
+    L'ancienne version retirait les treize onglets du gestionnaire de
+    géométrie puis replaçait le bon : quatorze recalculs par clic, en repassant
+    par un écran vide — d'où le clignotement et la page qu'on voyait se
+    reconstruire.
+
+    ⚠️ Le passage à l'empilement a introduit un bug muet, attrapé par capture
+    d'écran et non par ces tests : `winfo_manager()` sur un CTkScrollableFrame
+    répond « canvas », le gestionnaire de son widget INTERNE. La condition
+    « pas encore placé » était donc toujours fausse pour l'onglet
+    Configuration, jamais posé dans la grille. On demandait Configuration et
+    l'écran affichait Vidéos, sans la moindre erreur."""
+
+    def test_chaque_onglet_est_reellement_place(self, app):
+        """Le widget empilable de CHAQUE onglet doit finir dans la grille."""
+        for cle in app.tabs:
+            app._show_tab(cle)
+            app.update()
+            empilable = app._widget_empilable(app.tabs[cle])
+            assert empilable.winfo_manager() == "grid", (
+                f"l'onglet « {cle} » n'est pas placé "
+                f"(manager = {empilable.winfo_manager()!r})")
+
+    def test_l_onglet_demande_est_au_dessus(self, app):
+        """Preuve que le bon onglet est visible : il est le dernier enfant de
+        la zone de contenu, donc au sommet de l'empilement."""
+        for cle in app.tabs:
+            app._show_tab(cle)
+            app.update()
+            app.update_idletasks()
+            attendu = app._widget_empilable(app.tabs[cle])
+            dessus = app.content.winfo_children()[-1]
+            assert dessus is attendu, (
+                f"« {cle} » demandé mais un autre onglet est au sommet")
+
+    def test_composite_ramene_a_son_conteneur(self, app):
+        """Cas précis du CTkScrollableFrame : `_widget_empilable` doit remonter
+        au widget réellement enfant de la zone de contenu."""
+        import app as module_app
+        config = app.tabs["config"]
+        assert isinstance(config, module_app.ctk.CTkScrollableFrame), (
+            "l'onglet Configuration n'est plus un composite : ce test perd son "
+            "objet, mais la règle reste valable pour tout autre composite.")
+        assert config not in app.content.winfo_children()
+        assert app._widget_empilable(config) in app.content.winfo_children()
+
+    def test_widget_ordinaire_renvoye_tel_quel(self, app):
+        """Un CTkFrame simple est déjà l'enfant direct : rien à remonter."""
+        browse = app.tabs["browse"]
+        assert app._widget_empilable(browse) is browse
+
+    def test_plus_aucun_depack_a_la_bascule(self):
+        """Garde-fou sur la source : le retour au `pack_forget` en boucle
+        ramènerait le clignotement."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._show_tab)
+        assert "pack_forget" not in source, (
+            "la bascule dépacke à nouveau les onglets")
+        assert "tkraise" in source

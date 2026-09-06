@@ -1613,10 +1613,23 @@ class TestBasculeDOnglet:
         import inspect
 
         import app as module_app
-        source = inspect.getsource(module_app.App._show_tab)
+        brut = inspect.getsource(module_app.App._show_tab)
+        # On ne garde que le CODE : les commentaires citent volontairement
+        # « pack_forget » pour expliquer pourquoi on ne l'emploie plus, et le
+        # test échouait sur sa propre explication.
+        source = "\n".join(l for l in brut.split("\n")
+                           if not l.strip().startswith("#"))
         assert "pack_forget" not in source, (
             "la bascule dépacke à nouveau les onglets")
         assert "tkraise" in source
+        # `grid_remove` et non `grid_forget` : le premier CONSERVE les options
+        # de placement, le second les oublie et impose un recalcul complet —
+        # c'est-à-dire le clignotement qu'on vient de supprimer.
+        assert "grid_forget" not in source, (
+            "grid_forget oublie les options de placement : utiliser grid_remove")
+        assert "grid_remove" in source, (
+            "l'onglet précédent doit être retiré de l'affichage, sans quoi les "
+            "treize onglets restent visibles et alourdissent tout le reste")
 
 
 class TestCoherenceDuWorkflow:
@@ -1678,3 +1691,62 @@ class TestCoherenceDuWorkflow:
         texte = self._workflow()
         assert 'Test-Path "dist/PodAdmin/PodAdmin.exe"' in texte, (
             "l'existence de l'exécutable n'est pas vérifiée avant archivage")
+
+
+class TestPanneauDetailSansSaccade:
+    """Le panneau de détail est construit MASQUÉ, puis affiché d'un coup.
+
+    Il crée 94 widgets à chaque clic sur une vidéo. Créés dans un conteneur
+    visible, Tk les dessine au fur et à mesure : on voyait le panneau se
+    remplir par saccades. Le temps total est le même — ce sont les 94 mêmes
+    widgets — mais l'utilisateur ne voit plus qu'une seule transition."""
+
+    def _preparer(self, app):
+        base = "https://exemple.invalid/rest"
+        app.videos = [{"slug": f"v{i}", "title": f"Vidéo {i}", "is_draft": False,
+                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
+                       "owner": f"u{i}", "date_added": "2026-01-01",
+                       "url": f"{base}/videos/v{i}/"} for i in range(5)]
+        app.browse_chan_by_url = {}
+        app.type_map = {"Cours": f"{base}/types/1/"}
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app.update()
+
+    def test_le_panneau_revient_visible_apres_construction(self, app):
+        """Le point critique : si le panneau restait masqué, il serait vide
+        pour toute la session."""
+        self._preparer(app)
+        app._browse_select(app.videos[0])
+        app.update()
+        app.update_idletasks()
+        conteneur = app._widget_empilable(app.browse_detail)
+        assert conteneur.winfo_manager() == "grid", (
+            "le panneau de détail est resté masqué après reconstruction")
+        assert len(app.browse_detail.winfo_children()) > 10, (
+            "le panneau est visible mais vide")
+
+    def test_le_panneau_revient_meme_si_la_construction_echoue(self, app,
+                                                              monkeypatch):
+        """Sans le `finally`, une exception laisserait le panneau invisible
+        jusqu'au redémarrage — un défaut bien pire que les saccades."""
+        self._preparer(app)
+
+        def casse():
+            raise RuntimeError("panne simulée pendant la construction")
+
+        monkeypatch.setattr(app, "_browse_construire_detail", casse)
+        try:
+            app._browse_select(app.videos[0])
+        except RuntimeError:
+            pass
+        app.update()
+        conteneur = app._widget_empilable(app.browse_detail)
+        assert conteneur.winfo_manager() == "grid", (
+            "le panneau reste masqué après une erreur de construction")
+
+    def test_construction_isolee_dans_sa_methode(self):
+        """`_browse_construire_detail` doit rester séparée : c'est elle qu'on
+        appelle pendant que le panneau est masqué."""
+        import app as module_app
+        assert hasattr(module_app.App, "_browse_construire_detail")

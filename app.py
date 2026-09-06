@@ -799,8 +799,26 @@ class App(_AppBase):
         # jamais posé dans la grille : on demandait Configuration et l'écran
         # affichait Vidéos, sans la moindre erreur.
         empilable = self._widget_empilable(cible)
+        # `grid_remove` sur le PRÉCÉDENT plutôt que de laisser les treize
+        # onglets affichés en permanence.
+        #
+        # Tout empiler supprimait bien le clignotement, mais laissait Tk gérer
+        # treize onglets visibles : mesuré, la reconstruction du panneau de
+        # détail passait de 77 à 100 ms. `grid_remove` retire l'onglet de
+        # l'affichage EN CONSERVANT ses options de placement, si bien que le
+        # remettre ne coûte presque rien — contrairement à `pack_forget`, qui
+        # les oublie et impose un recalcul complet, ce qui produisait le
+        # clignotement d'origine.
+        precedent = getattr(self, "_onglet_affiche", None)
+        if precedent is not None and precedent is not empilable:
+            try:
+                precedent.grid_remove()
+            except Exception:
+                pass
         if not empilable.winfo_manager():
             empilable.grid(row=0, column=0, sticky="nsew")
+        else:
+            empilable.grid()          # remise en place sans reconfiguration
         # ⚠️ `tkraise` doit porter sur le widget qui est RÉELLEMENT enfant de
         # la zone de contenu.
         #
@@ -810,6 +828,7 @@ class App(_AppBase):
         # remontait un widget imbriqué au lieu de l'onglet, et Configuration
         # restait sous les autres — invisible, sans aucune erreur.
         empilable.tkraise()
+        self._onglet_affiche = empilable
 
         for k, b in self.nav_btns.items():
             b.configure(fg_color=S_SELECTION if k == key else "transparent")
@@ -4499,6 +4518,39 @@ class App(_AppBase):
         if self.browse_multi:
             self._browse_render_multi_panel()
             return
+        # CONSTRUCTION À L'ÉCART, puis affichage d'un seul coup.
+        #
+        # Ce panneau crée 94 widgets à chaque clic sur une vidéo. Créés
+        # directement dans un conteneur VISIBLE, Tk les dessine au fur et à
+        # mesure : on voyait le panneau se remplir par saccades.
+        #
+        # `grid_remove` le retire de l'affichage le temps de la reconstruction,
+        # sans perdre ses options de placement ; il revient complet. Le nombre
+        # de widgets ne change pas, mais l'utilisateur ne voit plus qu'une
+        # seule transition au lieu de quatre-vingt-quatorze.
+        #
+        # Le `try` est indispensable : une exception pendant la construction
+        # laisserait sinon le panneau invisible pour toute la session. Le
+        # `finally` le remet en place quoi qu'il arrive.
+        conteneur = self._widget_empilable(self.browse_detail)
+        cache = False
+        try:
+            if conteneur.winfo_manager():
+                conteneur.grid_remove()
+                cache = True
+        except Exception:
+            cache = False
+        try:
+            self._browse_construire_detail()
+        finally:
+            if cache:
+                try:
+                    conteneur.grid()
+                except Exception:
+                    pass
+
+    def _browse_construire_detail(self):
+        """Peuple le panneau de détail (appelé pendant qu'il est masqué)."""
         for w in self.browse_detail.winfo_children():
             w.destroy()
         v = self.browse_selected

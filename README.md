@@ -138,6 +138,13 @@ Ce défaut n'a été vu que par capture d'écran — les tests qui cherchaient l
 titre *à l'intérieur* du widget le trouvaient et concluaient à tort.
 `TestBasculeDOnglet` vérifie désormais le placement et l'ordre d'empilement.
 
+**Rendu par saccades** — un panneau qui crée des dizaines de widgets doit être
+construit MASQUÉ (`grid_remove`), puis réaffiché d'un coup. Le panneau de détail
+de l'onglet Vidéos crée 94 widgets à chaque clic : dessinés au fur et à mesure,
+on le voyait se remplir. Le temps total est identique, seule la perception
+change. ⚠️ La remise en place doit être dans un `finally` : une exception
+laisserait sinon le panneau invisible pour toute la session.
+
 ---
 
 ## Performance
@@ -292,7 +299,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.5.7**
+Version : **1.5.8**
 
 ---
 

@@ -1,6 +1,6 @@
 {
-  "version": "1.5.7",
+  "version": "1.5.8",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Changement d'onglet sans clignotement, correction de l'onglet Configuration, compilation corrigee.",
+  "notes": "Affichage plus fluide : plus de clignotement au changement d'onglet ni de saccades dans le panneau de detail.",
   "version_minimale": ""
 }

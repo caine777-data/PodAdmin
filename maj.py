@@ -53,6 +53,7 @@ def comparer_versions(a: str, b: str) -> int:
     différentes sont complétées par des zéros (« 1.2 » équivaut à « 1.2.0 »).
     """
     def morceaux(v: str) -> list:
+        """Découpe « 1.10.0 » en [1, 10, 0], en ignorant tout suffixe."""
         out = []
         for bloc in str(v or "0").strip().split("."):
             chiffres = ""

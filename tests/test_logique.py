@@ -669,3 +669,54 @@ class TestNonRenvoiDesVideosDejaEnvoyees:
         it.done = True
         it.status = "n'importe quel libellé"
         assert it.done is True           # l'indicateur fait foi
+
+
+class TestTroncatureParRessource:
+    """Une alerte de liste incomplète ne doit pas pouvoir être effacée par un
+    autre scan.
+
+    Défaut d'origine : `last_scan_truncated` était un attribut de l'objet
+    `PodAPI`, partagé par tous les onglets et remis à zéro à chaque appel. Deux
+    scans qui se chevauchent — cas courant — et le dernier terminé imposait son
+    verdict. L'alerte disparaissait alors qu'une liste était bien tronquée."""
+
+    @staticmethod
+    def _api():
+        from pod_api import PodAPI
+        api = PodAPI.__new__(PodAPI)
+        api.troncatures = {}
+        return api
+
+    def test_scan_complet_pas_d_alerte(self):
+        api = self._api()
+        api.troncatures["/videos/"] = False
+        assert api.est_tronque() is False
+
+    def test_scan_tronque_leve_l_alerte(self):
+        api = self._api()
+        api.troncatures["/videos/"] = True
+        assert api.est_tronque() is True
+
+    def test_un_scan_complet_n_efface_pas_l_alerte_d_un_autre(self):
+        """LE cas du bug : les comptes sont tronqués, les vidéos non.
+
+        Avec le drapeau unique, le second scan écrasait le verdict du premier
+        et l'alerte était perdue."""
+        api = self._api()
+        api.troncatures["/users/"] = True
+        api.troncatures["/videos/"] = False
+        assert api.est_tronque() is True, (
+            "l'alerte des comptes a été effacée par le scan des vidéos")
+
+    def test_interrogation_ciblee(self):
+        """On peut demander l'état d'une ressource précise."""
+        api = self._api()
+        api.troncatures["/users/"] = True
+        api.troncatures["/videos/"] = False
+        assert api.est_tronque("/videos/") is False
+        assert api.est_tronque("/users/") is True
+        assert api.est_tronque("/videos/", "/users/") is True
+
+    def test_ressource_jamais_lue(self):
+        api = self._api()
+        assert api.est_tronque("/inconnue/") is False

@@ -32,7 +32,7 @@ import urllib.parse
 from datetime import datetime
 
 import customtkinter as ctk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
 import config as cfg
 import maj                                  # vérification des mises à jour
@@ -81,6 +81,129 @@ REFRESH_DELAY_MS = 1500
 # instance le nommait autrement (à confirmer via verifier_champ_360.py).
 FIELD_360 = "is_360"
 
+# ══════════════════════════════════════════════════════════════════════════
+#  PALETTE — une couleur = un sens
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Les couleurs étaient écrites en hexadécimal directement dans les appels de
+# widgets : 24 teintes distinctes, dont #f59e0b répété 75 fois. Changer la
+# nuance d'avertissement demandait 75 modifications, et le même vert servait
+# tantôt à signaler une réussite, tantôt à marquer un bouton d'action — rôle
+# que le bleu tenait ailleurs.
+#
+# Chaque constante est un COUPLE (mode clair, mode sombre). CustomTkinter
+# choisit automatiquement selon le thème actif : c'est ce qui rend le
+# basculement clair/sombre possible. Une couleur unique resterait identique
+# dans les deux modes, et donnerait par endroits du texte pâle sur fond clair.
+
+# — Couleurs d'action ——————————————————————————————————————————————————
+C_ACTION       = ("#2563eb", "#2563eb")   # UNIQUE action principale de l'écran
+C_ACTION_SURV  = ("#1d4ed8", "#1d4ed8")
+# ⚠️ Les UTILITAIRES ne prennent PAS cette teinte : « Rafraîchir », « Recharger »,
+# « Parcourir… » sont en C_NEUTRE. Un écran ne porte qu'un seul bouton coloré,
+# celui de son action propre. Le commentaire citait « Rafraîchir » en exemple
+# alors que les quatre boutons de ce nom sont neutres depuis la 1.5.2 : c'est
+# ainsi qu'un onglet ajouté plus tard aurait repris le bleu.
+C_SUCCES       = ("#15803d", "#16a34a")   # validation : Lancer, Enregistrer
+C_SUCCES_SURV  = ("#166534", "#15803d")
+C_ALERTE       = ("#b45309", "#b45309")   # avertissement, interruption
+C_ALERTE_SURV  = ("#92400e", "#92400e")
+C_ERREUR       = ("#b91c1c", "#ef4444")   # échec, message d'erreur
+C_DESTRUCTIF   = ("#7f1d1d", "#7f1d1d")   # suppression définitive UNIQUEMENT
+C_DESTR_SURV   = ("#991b1b", "#991b1b")
+C_NEUTRE       = ("gray65", "gray35")     # secondaire : Annuler, Fermer
+C_NEUTRE_SURV  = ("gray55", "gray28")
+# Un bouton gris gardait le texte BLANC par défaut de CustomTkinter : en mode
+# clair, blanc sur gris65 donne un bouton qui paraît DÉSACTIVÉ. Le texte des
+# boutons secondaires doit donc être foncé en clair, pâle en sombre. Un bouton
+# réellement désactivé reste distinct : CustomTkinter lui applique sa propre
+# teinte « text_color_disabled ».
+T_SUR_NEUTRE   = ("gray10", "gray95")
+C_ACCENT       = ("#6d28d9", "#7c3aed")   # actions particulières : Habillage
+C_ACCENT_SURV  = ("#5b21b6", "#6d28d9")
+
+# — Échelle de SURFACES ————————————————————————————————————————————————
+# Douze gris différents cohabitaient pour désigner quatre choses seulement.
+# « gray85 » et « gray86 » servaient au même usage sans qu'on puisse dire
+# lequel était le bon, et un panneau changeait de teinte selon l'onglet.
+#
+# Quatre niveaux suffisent, du plus proche du fond au plus détaché :
+#   S_CARTE      un panneau posé sur le fond de la fenêtre
+#   S_LIGNE      une ligne de liste, un en-tête de tableau, un encart
+#   S_SELECTION  l'élément actif ou sélectionné
+#   S_PUCE       une pastille ou un aperçu à l'intérieur d'une ligne
+#
+# Toute nouvelle surface doit reprendre l'un de ces quatre niveaux. En ajouter
+# un cinquième « juste pour cet écran » est précisément ce qui a produit les
+# douze précédents.
+# Le fond de la fenêtre et la barre latérale tombaient sur la MÊME teinte en
+# mode clair (219,219,219), et `S_LIGNE` valait exactement le fond : d'où une
+# impression de gris uniforme, où rien ne se détachait de rien.
+#
+# L'échelle suit désormais une élévation. En mode clair, une surface posée est
+# plus CLAIRE que son support ; en mode sombre, plus claire aussi — mais on
+# part du bas. Le fond de fenêtre est le niveau le plus bas des deux côtés.
+S_FOND       = ("gray88", "gray11")   # fond de la fenêtre
+S_BARRE      = ("gray92", "gray15")   # barre latérale
+S_CARTE      = ("gray96", "gray18")   # panneau posé sur le fond
+S_LIGNE      = ("gray91", "gray22")   # ligne de liste, en-tête, encart
+S_LIGNE_ALT  = ("gray95", "gray19")   # zébrure : alterne avec S_LIGNE
+S_SELECTION  = ("gray78", "gray30")   # élément actif
+S_PUCE       = ("gray84", "gray26")   # pastille ou aperçu dans une ligne
+# Un filet de séparation : « gray30 » était écrit seul, donc appliqué tel quel
+# dans les DEUX modes — un trait presque noir en travers d'un panneau clair.
+S_FILET      = ("gray80", "gray32")
+
+# — Contrôles de saisie ————————————————————————————————————————————————
+# Les listes déroulantes prenaient le bleu par défaut de CustomTkinter, c'est-
+# à-dire EXACTEMENT la teinte des boutons d'action. Sur l'onglet Vidéos, cinq
+# filtres, le bouton « Rafraîchir » et le bouton « Appliquer » criaient donc
+# aussi fort : l'œil n'avait aucun point d'entrée.
+#
+# Un filtre n'est pas une action, c'est un réglage. Il doit se voir sans
+# appeler. D'où ces teintes neutres, plus claires que C_NEUTRE (réservé aux
+# boutons secondaires) pour rester distinguables d'un bouton désactivé.
+C_CHAMP        = ("gray80", "gray30")     # fond d'une liste déroulante
+C_CHAMP_BOUTON = ("gray70", "gray38")     # sa partie cliquable (la flèche)
+C_CHAMP_SURV   = ("gray62", "gray45")
+T_CHAMP        = ("gray10", "gray90")     # texte d'un contrôle
+
+# Style complet d'une liste déroulante, à déplier avec ** dans chaque appel :
+#     ctk.CTkOptionMenu(parent, values=[...], **STYLE_CHAMP)
+# Passer par un dictionnaire unique évite qu'un nouveau filtre ajouté plus tard
+# reprenne le bleu par défaut sans que personne ne le remarque — un test vérifie
+# qu'aucun CTkOptionMenu n'est créé sans lui.
+STYLE_CHAMP = {
+    "fg_color": C_CHAMP,
+    "button_color": C_CHAMP_BOUTON,
+    "button_hover_color": C_CHAMP_SURV,
+    "text_color": T_CHAMP,
+}
+
+# Une zone de liste (CTkComboBox) est ÉDITABLE : son fond doit rester clair,
+# comme un champ de saisie. Seule sa flèche est neutralisée.
+STYLE_ZONE = {
+    "button_color": C_CHAMP_BOUTON,
+    "button_hover_color": C_CHAMP_SURV,
+}
+
+# — Couleurs de TEXTE ——————————————————————————————————————————————————
+# `gray` (3,93:1) passait sous le minimum de lisibilité WCAG AA (4,5:1) et
+# était pourtant la teinte secondaire la plus employée : 101 occurrences.
+T_SECONDAIRE   = ("gray45", "gray70")     # mesuré à 7,40:1 sur fond sombre
+T_DISCRET      = ("gray50", "gray60")     # mentions de bas de panneau
+T_SUCCES       = ("#15803d", "#22c55e")
+T_ALERTE       = ("#b45309", "#f59e0b")
+T_ERREUR       = ("#b91c1c", "#ef4444")
+
+# — Tailles de police ——————————————————————————————————————————————————
+# Les tailles allaient de 9 à 26 px sans échelle. Cinq niveaux suffisent.
+T_TITRE   = 20    # titre d'onglet
+T_SOUS    = 16    # titre de section
+T_CORPS   = 13    # texte courant
+T_PETIT   = 12    # libellés de formulaire
+T_MINI    = 11    # mentions, compteurs, aide en ligne
+
 # Page Moodle où les enseignants téléchargent l'application et le tutoriel.
 # Reprise dans le message de délivrance du jeton (onglet Comptes).
 MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
@@ -88,6 +211,151 @@ MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
 # Adresse du support, mise en COPIE CACHÉE des messages de délivrance de jeton :
 # cela garde une trace de l'envoi sans exposer l'adresse au destinataire.
 SUPPORT_MAIL = "support-pod@utoulouse.fr"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  ALIGNEMENT DES LIBELLÉS DE NAVIGATION
+# ════════════════════════════════════════════════════════════════════════════
+
+def _prefixe_aligne(police, icone: str, colonne: int) -> str:
+    """Renvoie l'icône suivie de l'espacement qui amène le texte à `colonne`.
+
+    Les glyphes d'icônes n'ont pas tous la même largeur. Un espacement en dur
+    — trois espaces après chaque icône — décalait donc les libellés jusqu'à
+    11 px les uns des autres. Pire : cette largeur dépend de la police du
+    système, si bien que les entrées fautives changeaient d'un poste à
+    l'autre. Aucun réglage figé ne pouvait convenir.
+
+    On mesure donc le glyphe DANS LA POLICE RÉELLEMENT UTILISÉE, puis on
+    complète avec des espaces ordinaires et, pour le reliquat, des espaces
+    fins (U+2009) — un espace ordinaire étant trop large pour ajuster
+    finement. L'écart résiduel tombe à 2 px.
+
+    `police` doit être l'instance passée au bouton : mesurer avec une autre
+    police donnerait un résultat faux.
+    """
+    try:
+        large = police.measure(" ") or 4
+        # Certaines polices ne possèdent pas l'espace fin et renvoient 0, ce
+        # qui provoquerait une division par zéro : on se rabat sur l'espace
+        # ordinaire, l'alignement restant meilleur qu'avec un espacement figé.
+        fine = police.measure("\u2009") or large
+        manque = max(large, colonne - police.measure(icone))
+        entiers = int(manque // large)
+        reliquat = manque - entiers * large
+        fins = int(round(reliquat / fine)) if fine else 0
+        return icone + " " * entiers + "\u2009" * fins
+    except Exception:
+        # Un défaut d'alignement ne doit jamais empêcher la barre de se
+        # construire.
+        return icone + "   "
+
+
+def bloc_filtre(parent, libelle: str):
+    """Crée un conteneur portant `libelle` AU-DESSUS ; renvoie ce conteneur.
+
+    Les quatre premiers filtres portaient leur intitulé DANS leur valeur par
+    défaut (« Tous statuts », « Toutes chaînes »). Dès qu'on filtrait, ces mots
+    disparaissaient : l'écran affichait « Public », « MFCA », « Cours » sans
+    plus rien dire de ce que chaque valeur filtrait. L'information se perdait
+    exactement au moment où le filtre devenait actif.
+
+    Le libellé ne peut pas être posé À GAUCHE du menu : mesuré, cela coûterait
+    139 px sur une rangée qui n'en a que 3 de marge en fenêtre minimale, et le
+    champ de recherche serait écrasé. Au-dessus, il ne coûte que ~16 px de
+    hauteur et vaut pour les deux rangées, ce qui uniformise du même coup les
+    deux conventions qui cohabitaient.
+    """
+    bloc = ctk.CTkFrame(parent, fg_color="transparent")
+    ctk.CTkLabel(bloc, text=libelle, font=ctk.CTkFont(size=10),
+                 text_color=T_DISCRET, anchor="w").pack(fill="x", padx=2)
+    return bloc
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  INFOBULLE
+# ════════════════════════════════════════════════════════════════════════════
+
+def ajouter_infobulle(widget, texte: str, delai_ms: int = 450):
+    """Affiche `texte` dans une petite étiquette au survol prolongé de `widget`.
+
+    Nécessaire dès qu'un bouton perd son libellé au profit d'une icône seule :
+    une poubelle se comprend, mais rien n'annonce alors ce qui sera supprimé.
+    Le survol rend le mot, sans le laisser occuper la ligne en permanence.
+
+    Le délai évite que l'étiquette clignote quand la souris ne fait que
+    traverser la rangée pour atteindre un autre bouton.
+
+    Prudence d'implémentation :
+      • la fenêtre est créée au survol et DÉTRUITE à la sortie, jamais gardée
+        en attente — un conteneur vide en réserve est précisément ce qui se
+        dessinait en carré noir sur macOS ;
+      • aucune transparence n'est employée, son rendu variant selon le système ;
+      • tout est encadré par `try`, une infobulle ne devant jamais empêcher un
+        clic.
+    """
+    etat = {"fenetre": None, "apres": None}
+
+    def _montrer():
+        etat["apres"] = None
+        try:
+            if etat["fenetre"] is not None or not widget.winfo_exists():
+                return
+            fen = ctk.CTkToplevel(widget)
+            fen.overrideredirect(True)          # ni titre ni bordure
+            fen.attributes("-topmost", True)
+            cadre = ctk.CTkFrame(fen, fg_color=S_SELECTION, corner_radius=4)
+            cadre.pack()
+            ctk.CTkLabel(cadre, text=texte, font=ctk.CTkFont(size=T_MINI),
+                         text_color=T_CHAMP).pack(padx=8, pady=3)
+            # Sous le widget, légèrement décalée : au-dessus, le curseur la
+            # masquerait.
+            #
+            # Le décalage horizontal est BORNÉ à l'écran : ces boutons sont en
+            # bout de rangée, donc collés au bord droit. Aligné naïvement sur
+            # le bord gauche du bouton, le texte sortait de l'écran et se
+            # lisait « Supprimer ce… ».
+            fen.update_idletasks()
+            largeur = fen.winfo_reqwidth()
+            x = widget.winfo_rootx()
+            marge = 8
+            debord = x + largeur - widget.winfo_screenwidth() + marge
+            if debord > 0:
+                x -= debord
+            fen.geometry(f"+{max(marge, x)}"
+                         f"+{widget.winfo_rooty() + widget.winfo_height() + 4}")
+            etat["fenetre"] = fen
+        except Exception:
+            etat["fenetre"] = None
+
+    def _cacher(_evt=None):
+        if etat["apres"] is not None:
+            try:
+                widget.after_cancel(etat["apres"])
+            except Exception:
+                pass
+            etat["apres"] = None
+        if etat["fenetre"] is not None:
+            try:
+                etat["fenetre"].destroy()
+            except Exception:
+                pass
+            etat["fenetre"] = None
+
+    def _entrer(_evt=None):
+        _cacher()
+        try:
+            etat["apres"] = widget.after(delai_ms, _montrer)
+        except Exception:
+            pass
+
+    widget.bind("<Enter>", _entrer, add="+")
+    widget.bind("<Leave>", _cacher, add="+")
+    # Un clic ouvre une fenêtre de confirmation : l'infobulle ne doit pas
+    # rester posée par-dessus.
+    widget.bind("<Button-1>", _cacher, add="+")
+    widget.bind("<Destroy>", _cacher, add="+")
+    return widget
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -150,6 +418,10 @@ class App(_AppBase):
         self.title(APP_TITLE)
         self.geometry("1180x760")
         self.minsize(1000, 660)
+        # Fond de la fenêtre : niveau le plus bas de l'échelle d'élévation.
+        # Sans cela, CustomTkinter donne au fond la teinte par défaut d'un
+        # cadre, c'est-à-dire exactement celle de la barre latérale.
+        self.configure(fg_color=S_FOND)
 
         self.config_data = cfg.load_config()
         self.token = cfg.load_token()
@@ -225,7 +497,8 @@ class App(_AppBase):
     def _build_ui(self):
         """Construit la barre latérale (logo, état, navigation) et la zone de contenu."""
         # Sidebar
-        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0)
+        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0,
+                                    fg_color=S_BARRE)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
@@ -236,12 +509,12 @@ class App(_AppBase):
                 logo_path = resource_path(os.path.join("assets", "logo_ut.png"))
                 if os.path.exists(logo_path):
                     pil = PILImage.open(logo_path)
-                    W = 178
+                    W = 156
                     H = round(W * pil.height / pil.width)
                     self.logo_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(W, H))
                     card = ctk.CTkFrame(self.sidebar, fg_color="white", corner_radius=8)
-                    card.pack(padx=12, pady=(18, 6), fill="x")
-                    ctk.CTkLabel(card, image=self.logo_img, text="").pack(padx=10, pady=10)
+                    card.pack(padx=12, pady=(10, 4), fill="x")
+                    ctk.CTkLabel(card, image=self.logo_img, text="").pack(padx=8, pady=7)
                     logo_loaded = True
             except Exception:
                 logo_loaded = False
@@ -254,24 +527,40 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(2, 0), padx=14)
 
         # État connexion
-        box = ctk.CTkFrame(self.sidebar, fg_color="gray20", corner_radius=8)
+        box = ctk.CTkFrame(self.sidebar, fg_color=S_LIGNE,
+                           corner_radius=8)
         box.pack(padx=12, pady=14, fill="x")
         self.status_dot = ctk.CTkLabel(box, text="⚫", font=ctk.CTkFont(size=13))
         self.status_dot.pack(side="left", padx=8, pady=6)
         self.status_lbl = ctk.CTkLabel(box, text="Non connecté",
-                                       font=ctk.CTkFont(size=11), text_color="gray")
+                                       font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE)
         self.status_lbl.pack(side="left")
 
-        # Agent identifié
+        # Agent identifié — « Dépôt au nom de : … »
+        #
+        # Ce libellé reste VIDE tant qu'aucun dépôt délégué n'est choisi, c'est-
+        # à-dire la plupart du temps. Il occupait pourtant ses 34 px en
+        # permanence, pris directement sur la zone de navigation. Il n'est donc
+        # placé que lorsqu'il a quelque chose à dire (voir `_definir_agent`).
         self.agent_lbl = ctk.CTkLabel(self.sidebar, text="", font=ctk.CTkFont(size=11),
-                                      text_color="gray70", wraplength=190, justify="left")
-        self.agent_lbl.pack(padx=14, pady=(0, 6), anchor="w")
+                                      text_color=T_SECONDAIRE, wraplength=190, justify="left")
+        self.agent_visible = False
 
-        ctk.CTkFrame(self.sidebar, height=1, fg_color="gray30").pack(fill="x", padx=12, pady=4)
+        self.sidebar_separateur = ctk.CTkFrame(self.sidebar, height=1, fg_color=S_FILET)
+        self.sidebar_separateur.pack(fill="x", padx=12, pady=3)
 
         # Version épinglée en bas (hors zone défilante)
         ctk.CTkLabel(self.sidebar, text=f"v{APP_VERSION}",
-                     font=ctk.CTkFont(size=9), text_color="gray40").pack(side="bottom", pady=8)
+                     font=ctk.CTkFont(size=9), text_color=T_DISCRET).pack(side="bottom", pady=(0, 8))
+
+        # Bascule clair / sombre, juste au-dessus du numéro de version.
+        # Le choix est mémorisé : l'application rouvre dans le mode retenu.
+        self.theme_btn = ctk.CTkButton(
+            self.sidebar, text="", width=150, height=26,
+            font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
+            hover_color=C_NEUTRE_SURV, command=self._basculer_theme, text_color=T_SUR_NEUTRE)
+        self.theme_btn.pack(side="bottom", pady=(6, 2))
+        self._maj_libelle_theme()
 
         # Bandeau « nouvelle version disponible » : AUCUN widget n'est créé ici.
         #
@@ -291,32 +580,130 @@ class App(_AppBase):
                                             width=200)
         nav_scroll.pack(side="top", fill="both", expand=True, padx=0, pady=0)
 
+        # Navigation groupée par MÉTIER plutôt qu'en liste continue.
+        #
+        # Douze entrées à plat obligeaient l'œil à tout relire pour trouver la
+        # bonne, et la dernière (« À propos ») sortait de l'écran sur un
+        # portable en 800 px de haut. Quatre blocs de trois ou quatre entrées se
+        # parcourent d'un coup d'œil.
+        #
+        # L'ordre suit la fréquence d'usage : « Vidéos » est l'onglet du
+        # quotidien, il remonte ; « Comptes » sert à délivrer un jeton de temps
+        # en temps, il rejoint le bloc des accès.
+        #
+        # Les boutons passent de 40 à 32 px : les intitulés de section ajoutent
+        # de la hauteur, cette réduction la compense et fait tenir l'ensemble
+        # sans défilement dans une fenêtre courante.
+        #
+        # ICÔNE ET LIBELLÉ SONT SÉPARÉS, et l'espacement calculé à l'exécution.
+        # Auparavant chaque entrée portait trois espaces en dur après son
+        # icône : les glyphes n'ayant pas la même largeur, les libellés se
+        # décalaient jusqu'à 11 px les uns des autres. Et comme cette largeur
+        # dépend de la police du système, les entrées fautives n'étaient même
+        # pas les mêmes d'un poste à l'autre — donc impossible à corriger par
+        # un réglage figé.
+        #
+        # `_prefixe_aligne` mesure le glyphe et complète jusqu'à une colonne
+        # fixe, ce qui ramène l'écart à 2 px sur toute plateforme.
+        COLONNE_ICONE = 34      # largeur réservée à l'icône, en pixels
+        NAVIGATION = [
+            ("CONTENUS", [
+                ("📂", "Téléversement", "upload"),
+                ("🎬", "Encodage", "encode"),
+                ("🎞️", "Vidéos", "browse"),
+                ("🔄", "Réaffectation", "reassign"),
+            ]),
+            ("ORGANISATION", [
+                ("📺", "Chaînes", "ct"),
+                ("📊", "Inventaire", "stats"),
+            ]),
+            ("ACCÈS", [
+                ("👤", "Comptes", "comptes"),
+                ("🔐", "Groupes d'accès", "groups"),
+            ]),
+            ("SYSTÈME", [
+                ("⚙️", "Configuration", "config"),
+                ("📋", "Journal", "log"),
+            ]),
+        ]
+
+        # « Aide » et « À propos » sortent du flux défilant, épinglés en pied
+        # sur UNE SEULE LIGNE à deux colonnes.
+        #
+        # La navigation débordait à la taille par défaut (1180×760) : « À
+        # propos » était hors champ dès l'ouverture, pour tout le monde. Le
+        # défaut avait échappé aux mesures précédentes, faites à tort en
+        # 1280×800.
+        #
+        # Les épingler sans les compacter n'aurait rien rapporté — ils
+        # occuperaient la même hauteur ailleurs. C'est la mise sur une seule
+        # ligne qui rend les 32 px : ce sont les deux entrées les moins
+        # consultées, et deux mots courts y tiennent sans être tronqués.
+        EPINGLES = [("❓", "Aide", "help"), ("ℹ️", "À propos", "about")]
+
         self.nav_btns = {}
-        for label, key in [
-            ("📂   Téléversement", "upload"),
-            ("⚙️   Encodage",      "encode"),
-            ("👤   Comptes",       "comptes"),
-            ("🎞️   Vidéos",        "browse"),
-            ("🔄   Réaffectation", "reassign"),
-            ("🗂   Explorateur",   "clean"),
-            ("📊   Inventaire",    "stats"),
-            ("📺   Chaînes",       "ct"),
-            ("🔐   Groupes d'accès", "groups"),
-            ("⚙️   Configuration", "config"),
-            ("❓   Aide",          "help"),
-            ("📋   Journal",       "log"),
-            ("ℹ️   À propos",      "about"),
-        ]:
-            b = ctk.CTkButton(nav_scroll, text=label, anchor="w", height=40,
-                              fg_color="transparent", text_color=("gray10", "gray90"),
-                              hover_color=("gray75", "gray28"),
-                              font=ctk.CTkFont(size=13),
-                              command=lambda k=key: self._show_tab(k))
-            b.pack(fill="x", padx=4, pady=2)
+        for i, (section, entrees) in enumerate(NAVIGATION):
+            # Intitulé de section : volontairement discret (petit, gris). Il
+            # sépare sans attirer l'œil — ce n'est pas un élément cliquable et
+            # il ne doit pas se confondre avec un onglet.
+            ctk.CTkLabel(nav_scroll, text=section, anchor="w",
+                         font=ctk.CTkFont(size=10, weight="bold"),
+                         text_color=T_DISCRET).pack(
+                             fill="x", padx=10, pady=((6 if i else 2), 0))
+            for icone, libelle, key in entrees:
+                police = ctk.CTkFont(size=13)
+                b = ctk.CTkButton(
+                    nav_scroll,
+                    text=_prefixe_aligne(police, icone, COLONNE_ICONE) + libelle,
+                    anchor="w", height=32,
+                    fg_color="transparent", text_color=("gray10", "gray90"),
+                    hover_color=("gray75", "gray28"),
+                    font=police,
+                    command=lambda k=key: self._show_tab(k))
+                b.pack(fill="x", padx=4)
+                self.nav_btns[key] = b
+
+        # Rangée épinglée, posée AVANT le bouton de thème dans l'ordre `bottom`
+        # pour se retrouver juste au-dessus de lui.
+        rangee_bas = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=30)
+        rangee_bas.pack(side="bottom", fill="x", padx=4, pady=(2, 0))
+        # GRID et non pack : avec `expand=True, fill="x"`, chaque bouton
+        # conservait sa largeur naturelle (140 px pour CTkButton par défaut),
+        # si bien que « Aide » occupait 140 px et « À propos » 68 — deux
+        # colonnes visiblement inégales. `uniform` force la stricte moitié.
+        rangee_bas.columnconfigure(0, weight=1, uniform="epingles")
+        rangee_bas.columnconfigure(1, weight=1, uniform="epingles")
+        for colonne, (icone, libelle, key) in enumerate(EPINGLES):
+            police = ctk.CTkFont(size=12)
+            b = ctk.CTkButton(
+                rangee_bas,
+                # Même préfixe calculé que dans le flux : sans lui, ces deux
+                # libellés étaient CENTRÉS alors que les dix autres sont
+                # alignés à gauche — l'œil voyait un décalage.
+                # Colonne plus étroite qu'en flux : sur une demi-largeur, l'écart
+                # de 34 px laissait l'icône seule à gauche et le mot très loin.
+                text=_prefixe_aligne(police, icone, COLONNE_ICONE - 14) + libelle,
+                anchor="w", width=1, height=28,
+                fg_color="transparent", text_color=("gray10", "gray90"),
+                hover_color=("gray75", "gray28"), font=police,
+                command=lambda k=key: self._show_tab(k))
+            b.grid(row=0, column=colonne, sticky="ew", padx=1)
+            # Ils restent dans `nav_btns` : le surlignage de l'onglet actif et
+            # tout le reste continuent de fonctionner sans cas particulier.
             self.nav_btns[key] = b
 
 
         # Zone principale
+        # Filet de séparation entre la barre latérale et le contenu.
+        #
+        # L'élévation seule ne suffit pas en mode CLAIR : l'écart barre/fond
+        # est de 11 niveaux de gris, soit 26 % en sombre mais seulement 4,7 %
+        # en clair. À forte luminance, l'œil exige un écart bien plus grand
+        # pour percevoir la même différence — la frontière ne se lisait donc
+        # pas. Un filet de 1 px pose la limite sans toucher à l'échelle.
+        ctk.CTkFrame(self, width=1, corner_radius=0,
+                     fg_color=S_FILET).pack(side="left", fill="y")
+
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.content.pack(side="right", fill="both", expand=True, padx=14, pady=14)
 
@@ -326,7 +713,6 @@ class App(_AppBase):
         self._build_tab_comptes()
         self._build_tab_browse()
         self._build_tab_reassign()
-        self._build_tab_clean()
         self._build_tab_stats()
         self._build_tab_ct()
         self._build_tab_groups()
@@ -335,13 +721,38 @@ class App(_AppBase):
         self._build_tab_log()
         self._build_tab_about()
 
+    def _basculer_theme(self):
+        """Passe du mode sombre au mode clair, et inversement.
+
+        Les couleurs de la palette sont des COUPLES (clair, sombre) :
+        CustomTkinter choisit la bonne teinte automatiquement, sans qu'aucun
+        widget n'ait à être reconstruit. C'est la raison d'être des couples —
+        une couleur unique resterait identique dans les deux modes."""
+        nouveau = "light" if ctk.get_appearance_mode().lower() == "dark" else "dark"
+        ctk.set_appearance_mode(nouveau)
+        self.config_data["theme"] = nouveau
+        try:
+            cfg.save_config(self.config_data)      # mémorisé pour la prochaine fois
+        except Exception:
+            pass
+        self._maj_libelle_theme()
+        self._log(f"Thème : mode {'clair' if nouveau == 'light' else 'sombre'}.")
+
+    def _maj_libelle_theme(self):
+        """Le bouton annonce le mode vers lequel il fait basculer."""
+        sombre = ctk.get_appearance_mode().lower() == "dark"
+        try:
+            self.theme_btn.configure(text="☀  Mode clair" if sombre else "🌙  Mode sombre")
+        except Exception:
+            pass
+
     def _show_tab(self, key: str):
         """Affiche l'onglet `key` et met en surbrillance son bouton de navigation."""
         for f in self.tabs.values():
             f.pack_forget()
         self.tabs[key].pack(fill="both", expand=True)
         for k, b in self.nav_btns.items():
-            b.configure(fg_color=("gray75", "gray24") if k == key else "transparent")
+            b.configure(fg_color=S_SELECTION if k == key else "transparent")
         # Chargement paresseux à la première ouverture de l'onglet Groupes
         if key == "groups":
             self._show_groups_tab_hook()
@@ -349,16 +760,44 @@ class App(_AppBase):
         # session. Ensuite le cache est réutilisé (affichage instantané) ; le
         # bouton « 🔄 Rafraîchir » de chaque onglet force une relecture serveur
         # (utile si des modifs ont été faites via le site web Pod).
-        auto = {
+        # On MÉMORISE l'onglet courant : si l'utilisateur ouvre un onglet à
+        # liste AVANT que la connexion (asynchrone, 1 à 5 s) n'ait abouti, le
+        # chargement automatique ne peut pas partir. Sans cette mémoire, il ne
+        # partirait JAMAIS tant qu'il reste sur cet onglet — l'écran resterait
+        # vide, ce qui ressemble à une panne de l'instance.
+        # `_on_connexion_etablie()` rejoue alors le chargement.
+        self.onglet_courant = key
+        self._auto_charger(key)
+
+    # Onglets qui chargent leur liste à la première ouverture. Ensuite le cache
+    # est réutilisé ; le bouton « 🔄 Rafraîchir » force une relecture serveur.
+    def _auto_loaders(self) -> dict:
+        """Table des chargements automatiques, par onglet."""
+        return {
             "encode": self._encode_scan,
             "browse": self._browse_load,
-            "clean":  self._clean_scan,
             "stats":  self._stats_scan,
             "ct":     self._ct_load,
         }
+
+    def _auto_charger(self, key: str):
+        """Déclenche le chargement automatique d'un onglet, si possible.
+
+        Ne fait rien tant que la connexion n'est pas établie : c'est
+        `_on_connexion_etablie()` qui rappellera cette méthode."""
+        auto = self._auto_loaders()
         if key in auto and self.api and key not in self._auto_loaded:
             self._auto_loaded.add(key)
             auto[key]()
+
+    def _on_connexion_etablie(self):
+        """Appelée dès que la connexion à l'instance aboutit.
+
+        Rejoue le chargement de l'onglet actuellement affiché : sans cela, un
+        onglet ouvert pendant la connexion resterait définitivement vide."""
+        courant = getattr(self, "onglet_courant", None)
+        if courant:
+            self._auto_charger(courant)
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET TÉLÉVERSEMENT
@@ -377,19 +816,21 @@ class App(_AppBase):
         sel.pack(fill="x", pady=(0, 6))
 
         ctk.CTkButton(sel, text="➕  Ajouter des fichiers", width=190,
-                      command=self._add_files).pack(side="left", padx=(0, 8))
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._add_files, text_color=T_SUR_NEUTRE).pack(side="left", padx=(0, 8))
         ctk.CTkButton(sel, text="📁  Ajouter un dossier", width=190,
-                      command=self._add_folder).pack(side="left", padx=(0, 8))
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._add_folder, text_color=T_SUR_NEUTRE).pack(side="left", padx=(0, 8))
         ctk.CTkButton(sel, text="🗑  Vider la liste", width=140,
-                      fg_color="gray35", hover_color="gray28",
-                      command=self._clear_items).pack(side="left")
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._clear_items, text_color=T_SUR_NEUTRE).pack(side="left")
 
-        self.count_lbl = ctk.CTkLabel(sel, text="0 vidéo(s)", text_color="gray",
+        self.count_lbl = ctk.CTkLabel(sel, text="0 vidéo(s)", text_color=T_SECONDAIRE,
                                       font=ctk.CTkFont(size=11))
         self.count_lbl.pack(side="right")
 
         # — Réglages communs (appliqués à tout le lot) —
-        common = ctk.CTkFrame(frame)
+        common = ctk.CTkFrame(frame, fg_color=S_CARTE)
         common.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(common, text="Réglages communs au lot",
@@ -397,12 +838,14 @@ class App(_AppBase):
                                                            padx=12, pady=(10, 4), sticky="w")
 
         ctk.CTkLabel(common, text="Type :").grid(row=1, column=0, padx=(12, 4), pady=8, sticky="e")
-        self.type_combo = ctk.CTkComboBox(common, values=["(chargement…)"], width=200)
+        self.type_combo = ctk.CTkComboBox(common, values=["(chargement…)"], width=200,
+                                          **STYLE_ZONE)
         self.type_combo.grid(row=1, column=1, padx=4, pady=8, sticky="w")
 
         ctk.CTkLabel(common, text="Visibilité :").grid(row=1, column=2, padx=(20, 4), pady=8, sticky="e")
         self.visibility_combo = ctk.CTkComboBox(
-            common, width=200, values=["Brouillon / Privé", "Public"])
+            common, width=200, values=["Brouillon / Privé", "Public"],
+            **STYLE_ZONE)
         self.visibility_combo.set("Brouillon / Privé")
         self.visibility_combo.grid(row=1, column=3, padx=4, pady=8, sticky="w")
 
@@ -415,19 +858,20 @@ class App(_AppBase):
         ctk.CTkLabel(common, text="Propriétaire :").grid(row=4, column=0, padx=(12, 4),
                                                          pady=8, sticky="e")
         ctk.CTkButton(common, text="🎯  Choisir le propriétaire…", width=200,
-                      command=self._upload_pick_owner).grid(row=4, column=1, padx=4,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._upload_pick_owner, text_color=T_SUR_NEUTRE).grid(row=4, column=1, padx=4,
                                                             pady=8, sticky="w")
         self.upload_owner_lbl = ctk.CTkLabel(
-            common, text="⚠️  à définir avant l'envoi", text_color="#f59e0b",
+            common, text="⚠️  à définir avant l'envoi", text_color=T_ALERTE,
             font=ctk.CTkFont(size=11, weight="bold"))
         self.upload_owner_lbl.grid(row=4, column=2, columnspan=2, padx=12, pady=8, sticky="w")
 
         # Propriétaires additionnels communs
         ctk.CTkButton(common, text="👥  Propriétaires additionnels…", width=240,
-                      fg_color="gray35", hover_color="gray28",
-                      command=self._edit_additional_owners).grid(
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._edit_additional_owners, text_color=T_SUR_NEUTRE).grid(
             row=2, column=2, columnspan=2, padx=12, pady=(0, 6), sticky="w")
-        self.add_owners_lbl = ctk.CTkLabel(common, text="aucun", text_color="gray",
+        self.add_owners_lbl = ctk.CTkLabel(common, text="aucun", text_color=T_SECONDAIRE,
                                            font=ctk.CTkFont(size=11))
         self.add_owners_lbl.grid(row=3, column=2, columnspan=2, padx=12, pady=(0, 8), sticky="w")
 
@@ -440,7 +884,7 @@ class App(_AppBase):
                 "Vérifiez / corrigez les titres avant l'envoi :")
         ctk.CTkLabel(frame, text=hint, font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(2, 2))
 
-        self.list_frame = ctk.CTkScrollableFrame(frame, height=240)
+        self.list_frame = ctk.CTkScrollableFrame(frame, height=240, fg_color=S_CARTE)
         self.list_frame.pack(fill="both", expand=True)
 
         # Activer le glisser-déposer sur la zone de liste
@@ -455,7 +899,7 @@ class App(_AppBase):
                       "ou utilisez les boutons ci-dessus."
                       if getattr(self, "dnd_ok", False) else
                       "Aucune vidéo.\nUtilisez « Ajouter des fichiers » ou « Ajouter un dossier ».")
-        self._empty_hint = ctk.CTkLabel(self.list_frame, text=empty_text, text_color="gray")
+        self._empty_hint = ctk.CTkLabel(self.list_frame, text=empty_text, text_color=T_SECONDAIRE)
         self._empty_hint.pack(pady=40)
 
         # — Lancement + progression —
@@ -464,7 +908,7 @@ class App(_AppBase):
 
         self.launch_btn = ctk.CTkButton(
             launch, text="🚀  Lancer le téléversement", height=40,
-            fg_color="#16a34a", hover_color="#15803d",
+            fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._start_upload)
         self.launch_btn.pack(side="left")
@@ -473,27 +917,79 @@ class App(_AppBase):
         # Masqué tant qu'il n'y a pas d'échec à relancer.
         self.retry_btn = ctk.CTkButton(
             launch, text="🔄  Relancer les échecs", height=40,
-            fg_color="#f59e0b", hover_color="#d97706",
+            fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
             font=ctk.CTkFont(size=13, weight="bold"),
             command=self._retry_failed)
         # (pas de .pack ici : affiché seulement s'il y a des échecs)
 
-        self.global_msg = ctk.CTkLabel(launch, text="", text_color="gray",
+        self.global_msg = ctk.CTkLabel(launch, text="", text_color=T_SECONDAIRE,
                                        font=ctk.CTkFont(size=12))
         self.global_msg.pack(side="left", padx=14)
 
-        # Progression fichier courant
+        # — Progression —
+        #
+        # Les deux barres restaient affichées en permanence, à zéro : deux
+        # traits inertes en bas de l'écran, qui n'informaient de rien tant
+        # qu'aucun envoi n'était en cours.
+        #
+        # Elles sont donc CRÉÉES ici mais pas placées : `_afficher_progression()`
+        # les fait apparaître au lancement du lot, `_masquer_progression()` les
+        # retire à la fin.
+        #
+        # ⚠️ Les widgets sont créés une fois pour toutes et masqués par
+        # `pack_forget`. Surtout PAS de cadre conteneur vide en attente : un
+        # CTkFrame vide occupe 200 px par défaut, et transparent en hauteur
+        # nulle il se dessine en CARRÉ NOIR sur macOS. C'est exactement l'ennui
+        # qu'avait connu le bandeau de mise à jour.
         self.file_progress = ctk.CTkProgressBar(frame)
-        self.file_progress.pack(fill="x", pady=(8, 0))
         self.file_progress.set(0)
-        self.file_progress_lbl = ctk.CTkLabel(frame, text="", text_color="gray",
+        self.file_progress_lbl = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
                                               font=ctk.CTkFont(size=10))
-        self.file_progress_lbl.pack(anchor="w")
-
-        # Progression globale du lot
-        self.batch_progress = ctk.CTkProgressBar(frame, progress_color="#16a34a")
-        self.batch_progress.pack(fill="x", pady=(4, 0))
+        self.batch_progress = ctk.CTkProgressBar(frame, progress_color=C_SUCCES)
         self.batch_progress.set(0)
+        self.progression_visible = False
+
+    def _definir_agent(self, texte: str):
+        """Renseigne le libellé « Dépôt au nom de : … » et le place s'il y a lieu.
+
+        Un libellé vide est retiré de l'affichage plutôt que laissé en place :
+        sa hauteur était prise sur la navigation, où elle manquait.
+
+        Le widget n'est jamais détruit, seulement retiré : le recréer à chaque
+        changement exposerait aux ennuis d'affichage déjà rencontrés sur macOS."""
+        self.agent_lbl.configure(text=texte)
+        if texte and not self.agent_visible:
+            # `before` : sans lui, `pack` placerait le libellé en toute fin de
+            # barre latérale, sous la navigation, et non à sa place logique.
+            self.agent_lbl.pack(padx=14, pady=(0, 6), anchor="w",
+                                before=self.sidebar_separateur)
+            self.agent_visible = True
+        elif not texte and self.agent_visible:
+            self.agent_lbl.pack_forget()
+            self.agent_visible = False
+
+    def _afficher_progression(self):
+        """Fait apparaître les deux barres de progression (début d'un lot).
+
+        Idempotent : appelée deux fois, elle ne place rien en double."""
+        if self.progression_visible:
+            return
+        self.file_progress.pack(fill="x", pady=(8, 0))
+        self.file_progress_lbl.pack(anchor="w")
+        self.batch_progress.pack(fill="x", pady=(4, 0))
+        self.progression_visible = True
+
+    def _masquer_progression(self):
+        """Retire les barres de l'affichage (fin d'un lot).
+
+        Les widgets ne sont pas détruits : ils resserviront au lot suivant, et
+        les recréer exposerait aux ennuis de cadres transparents sur macOS."""
+        if not self.progression_visible:
+            return
+        self.batch_progress.pack_forget()
+        self.file_progress_lbl.pack_forget()
+        self.file_progress.pack_forget()
+        self.progression_visible = False
 
     # ── Ajout de fichiers / dossier ──────────────────────────────────────
 
@@ -517,7 +1013,7 @@ class App(_AppBase):
                     found.append(os.path.join(root, name))
         if not found:
             self.global_msg.configure(text="Aucune vidéo trouvée dans ce dossier.",
-                                      text_color="#f59e0b")
+                                      text_color=T_ALERTE)
             return
         self._add_paths(sorted(found))
 
@@ -543,10 +1039,10 @@ class App(_AppBase):
             self._show_tab("upload")
             self._add_paths(sorted(found))
             self.global_msg.configure(
-                text=f"{len(found)} vidéo(s) ajoutée(s) par glisser-déposer.", text_color="#22c55e")
+                text=f"{len(found)} vidéo(s) ajoutée(s) par glisser-déposer.", text_color=T_SUCCES)
         else:
             self.global_msg.configure(
-                text="Aucune vidéo reconnue dans les éléments déposés.", text_color="#f59e0b")
+                text="Aucune vidéo reconnue dans les éléments déposés.", text_color=T_ALERTE)
 
     def _add_paths(self, paths):
         """Ajoute des chemins à la file en évitant les doublons, puis rafraîchit l'affichage."""
@@ -576,12 +1072,12 @@ class App(_AppBase):
                           "ou utilisez les boutons ci-dessus."
                           if getattr(self, "dnd_ok", False) else
                           "Aucune vidéo.\nUtilisez « Ajouter des fichiers » ou « Ajouter un dossier ».")
-            ctk.CTkLabel(self.list_frame, text=empty_text, text_color="gray").pack(pady=40)
+            ctk.CTkLabel(self.list_frame, text=empty_text, text_color=T_SECONDAIRE).pack(pady=40)
             self.count_lbl.configure(text="0 vidéo(s)")
             return
 
         # En-tête
-        hdr = ctk.CTkFrame(self.list_frame, fg_color="gray22", corner_radius=4)
+        hdr = ctk.CTkFrame(self.list_frame, fg_color=S_LIGNE, corner_radius=4)
         hdr.pack(fill="x", pady=(0, 2))
         ctk.CTkLabel(hdr, text="Fichier", width=230, anchor="w",
                      font=ctk.CTkFont(size=11, weight="bold")).pack(side="left", padx=8, pady=4)
@@ -592,7 +1088,8 @@ class App(_AppBase):
 
         for i, it in enumerate(self.items):
             row = ctk.CTkFrame(self.list_frame,
-                               fg_color="gray17" if i % 2 == 0 else "gray14", corner_radius=4)
+                               fg_color=S_LIGNE_ALT if i % 2 == 0 else S_LIGNE,
+                               corner_radius=4)
             row.pack(fill="x", pady=1)
             it.row = row
 
@@ -615,12 +1112,13 @@ class App(_AppBase):
 
             # bouton supprimer
             ctk.CTkButton(row, text="✕", width=28, height=26,
-                          fg_color="gray30", hover_color="#7f1d1d",
+                          fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                          text_color=T_SUR_NEUTRE,
                           command=lambda item=it: self._remove_item(item)).pack(side="right", padx=4)
 
             # état
             it.status_lbl = ctk.CTkLabel(row, text=it.status, width=100,
-                                         text_color="gray60", font=ctk.CTkFont(size=11))
+                                         text_color=T_DISCRET, font=ctk.CTkFont(size=11))
             it.status_lbl.pack(side="right", padx=6)
 
         self.count_lbl.configure(text=f"{len(self.items)} vidéo(s)")
@@ -631,11 +1129,17 @@ class App(_AppBase):
             self.items.remove(item)
             self._refresh_list()
 
-    def _set_item_status(self, item: UploadItem, status: str, color="gray60"):
-        """Met à jour le libellé d'état d'une vidéo dans la liste."""
+    def _set_item_status(self, item: UploadItem, status: str, color=None):
+        """Met à jour le libellé d'état d'une vidéo dans la liste.
+
+        `color` valait « gray60 » par défaut : une teinte unique, appliquée
+        telle quelle aux deux thèmes, à peine lisible sur fond clair. Sans
+        couleur explicite, on retombe désormais sur la teinte secondaire de la
+        palette, qui s'adapte au mode actif."""
         item.status = status
         if item.status_lbl:
-            item.status_lbl.configure(text=status, text_color=color)
+            item.status_lbl.configure(text=status,
+                                      text_color=color or T_SECONDAIRE)
 
     # ── Propriétaires additionnels communs ───────────────────────────────
 
@@ -643,7 +1147,7 @@ class App(_AppBase):
         """Ouvre OwnerPicker pour choisir les co-propriétaires communs au lot."""
         if not self.api:
             self.global_msg.configure(text="Connectez-vous d'abord (onglet Configuration).",
-                                      text_color="#f59e0b")
+                                      text_color=T_ALERTE)
             return
         OwnerPicker(self, on_done=self._on_owners_picked,
                     preselected=dict(self.additional_owner_map))
@@ -653,9 +1157,9 @@ class App(_AppBase):
         self.additional_owner_urls = urls
         self.additional_owner_map = dict(zip(urls, labels))
         if urls:
-            self.add_owners_lbl.configure(text=", ".join(labels)[:60], text_color="#22c55e")
+            self.add_owners_lbl.configure(text=", ".join(labels)[:60], text_color=T_SUCCES)
         else:
-            self.add_owners_lbl.configure(text="aucun", text_color="gray")
+            self.add_owners_lbl.configure(text="aucun", text_color=T_SECONDAIRE)
 
     # ── Lancement du téléversement ───────────────────────────────────────
 
@@ -664,7 +1168,7 @@ class App(_AppBase):
         lot. L'agent est présélectionné (cas le plus fréquent), mais le choix
         reste explicite et modifiable."""
         if not self.api:
-            self.global_msg.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.global_msg.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
         # Présélection : l'agent déposant (compte du token), s'il est connu
         agent_url = self.config_data.get("agent_owner_url", "")
@@ -679,16 +1183,16 @@ class App(_AppBase):
         self.upload_owner_url = u.get("url", "")
         self.upload_owner_label = self._user_label(u)
         self.upload_owner_lbl.configure(text=f"✅  {self.upload_owner_label}",
-                                        text_color="#22c55e")
+                                        text_color=T_SUCCES)
 
     def _start_upload(self):
         """Vérifie les prérequis (connexion, agent, type) puis lance le lot en arrière-plan."""
         if not self.api:
             self.global_msg.configure(text="Non connecté. Voir l'onglet Configuration.",
-                                      text_color="#ef4444")
+                                      text_color=T_ERREUR)
             return
         if not self.items:
-            self.global_msg.configure(text="Aucune vidéo à téléverser.", text_color="#f59e0b")
+            self.global_msg.configure(text="Aucune vidéo à téléverser.", text_color=T_ALERTE)
             return
         # Propriétaire : choix EXPLICITE obligatoire (plus de détection auto
         # silencieuse, qui pouvait déposer sur le mauvais compte).
@@ -696,13 +1200,13 @@ class App(_AppBase):
         if not owner_url:
             self.global_msg.configure(
                 text="⚠️  Choisissez d'abord le propriétaire des vidéos.",
-                text_color="#f59e0b")
+                text_color=T_ALERTE)
             self._upload_pick_owner()      # ouvre le sélecteur (agent présélectionné)
             return
         type_title = self.type_combo.get()
         type_url = self.type_map.get(type_title, "")
         if not type_url:
-            self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
+            self.global_msg.configure(text="Sélectionnez un type valide.", text_color=T_ALERTE)
             return
 
         # Au-delà du seuil, la bascule chunkée se fait automatiquement via le
@@ -713,10 +1217,11 @@ class App(_AppBase):
             self.global_msg.configure(
                 text="⚠️  Compte véhicule indisponible : impossible de téléverser un gros "
                      "fichier. Contactez le support.",
-                text_color="#f59e0b")
+                text_color=T_ALERTE)
             return
 
         self.launch_btn.configure(state="disabled")
+        self._afficher_progression()
         self.batch_progress.set(0)
         # Lecture des widgets ICI (thread principal), puis passage en arguments.
         is_draft = self.visibility_combo.get().startswith("Brouillon")
@@ -764,7 +1269,7 @@ class App(_AppBase):
             self._ui(self.global_msg.configure,
                      text=f"⏳ Finalisation côté serveur (gros fichier)… vérification, "
                           f"{remaining//60} min {remaining%60}s restantes",
-                     text_color="#f59e0b")
+                     text_color=T_ALERTE)
             _t.sleep(cfg.CHUNK_VERIFY_INTERVAL_S)
         return None
 
@@ -875,7 +1380,7 @@ class App(_AppBase):
             self._ui(self._set_item_status, it, "en cours", "#3b82f6")
             self._ui(self.file_progress.set, 0)
             self._ui(self.global_msg.configure,
-                     text=f"Téléversement {idx}/{total} : {it.title}", text_color="gray")
+                     text=f"Téléversement {idx}/{total} : {it.title}", text_color=T_SECONDAIRE)
 
             def progress(sent, tot, item=it):
                 """Callback de progression de l'envoi (met à jour la barre du fichier)."""
@@ -1043,11 +1548,32 @@ class App(_AppBase):
         self.launch_btn.configure(state="normal")
         self.file_progress.set(0)
         self.file_progress_lbl.configure(text="")
+        self._masquer_progression()
         color = "#22c55e" if ok == total else "#f59e0b"
         self.global_msg.configure(text=f"Terminé : {ok}/{total} vidéo(s) téléversée(s).", text_color=color)
         self._log(f"Lot terminé : {ok}/{total} réussis.")
         # Afficher le bouton « Relancer les échecs » s'il reste des échecs
         self._update_retry_button()
+
+        # Les vidéos qui viennent d'être déposées n'existent PAS dans le magasin
+        # partagé : il a été rempli avant l'envoi. Sans relecture, les onglets
+        # Vidéos, Encodage et Inventaire continueraient d'ignorer ces nouvelles
+        # vidéos jusqu'à un rafraîchissement manuel.
+        #
+        # C'est le seul cas où il faut vraiment relire le serveur : une création
+        # ne peut pas se déduire de ce qu'on a en mémoire, contrairement à une
+        # modification ou une suppression.
+        if ok:
+            self._ui(self._recharger_apres_depot)
+
+    def _recharger_apres_depot(self):
+        """Relit l'instance après un dépôt réussi, puis rafraîchit les onglets.
+
+        Une CRÉATION est le seul cas qui impose une relecture serveur : les
+        modifications et suppressions se répercutent en mémoire, mais une vidéo
+        nouvelle est par définition absente du magasin."""
+        self._log("🔄 Mise à jour de la liste après le dépôt…")
+        self.ensure_videos(force=True, on_ready=self._refresh_video_views)
 
     def _update_retry_button(self):
         """Affiche le bouton de relance uniquement s'il y a des vidéos en échec."""
@@ -1070,36 +1596,41 @@ class App(_AppBase):
         réutiliser le même parcours : on remet les échecs « en attente » et on
         relance. Le propriétaire et le type déjà choisis sont réutilisés."""
         if not self.api:
-            self.global_msg.configure(text="Non connecté.", text_color="#ef4444")
+            self.global_msg.configure(text="Non connecté.", text_color=T_ERREUR)
             return
         owner_url = getattr(self, "upload_owner_url", "")
         if not owner_url:
             self.global_msg.configure(
-                text="⚠️  Choisissez d'abord le propriétaire des vidéos.", text_color="#f59e0b")
+                text="⚠️  Choisissez d'abord le propriétaire des vidéos.", text_color=T_ALERTE)
             self._upload_pick_owner()
             return
         type_url = self.type_map.get(self.type_combo.get(), "")
         if not type_url:
-            self.global_msg.configure(text="Sélectionnez un type valide.", text_color="#f59e0b")
+            self.global_msg.configure(text="Sélectionnez un type valide.", text_color=T_ALERTE)
             return
         # Réinitialiser le statut des échecs pour qu'ils soient re-tentés
         failed = [it for it in self.items
                   if not it.done and str(it.status).endswith("échec")]
         if not failed:
-            self.global_msg.configure(text="Aucune vidéo en échec.", text_color="gray")
+            self.global_msg.configure(text="Aucune vidéo en échec.", text_color=T_SECONDAIRE)
             return
         for it in failed:
-            self._set_item_status(it, "en attente", "gray")
+            self._set_item_status(it, "en attente")
         self._log(f"Relance de {len(failed)} vidéo(s) en échec…")
         self.launch_btn.configure(state="disabled")
         self.retry_btn.pack_forget()
+        # La relance n'emprunte PAS `_start_upload` : sans cet appel, les barres
+        # resteraient masquées pendant tout le renvoi.
+        self._afficher_progression()
         # Lecture des widgets ICI (thread principal), puis passage en arguments.
         is_draft = self.visibility_combo.get().startswith("Brouillon")
         do_encode = self.encode_var.get()
         self._run(self._do_batch_upload, owner_url, type_url, is_draft, do_encode)
 
     # ═════════════════════════════════════════════════════════════════════
-    #  ONGLET CO-AUTEURS (sur vidéos existantes)
+    #  (L'onglet Co-auteurs a été SUPPRIMÉ : aucun contributeur n'était utilisé
+    #   sur l'instance. `pod_api.add_contributor()` reste disponible si l'usage
+    #   revenait un jour.)
     # ═════════════════════════════════════════════════════════════════════
 
     # ═════════════════════════════════════════════════════════════════════
@@ -1128,22 +1659,23 @@ class App(_AppBase):
                  "Seuls les groupes manuels (préfixe « grp_ ») sont modifiables ici ; "
                  "les groupes synchronisés par l'annuaire (student, staff…) sont en "
                  "lecture seule pour éviter qu'ils soient écrasés à la synchro.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
         # — Barre d'actions —
         bar = ctk.CTkFrame(frame, fg_color="transparent")
         bar.pack(fill="x")
-        ctk.CTkButton(bar, text="🔄  Recharger", width=130, fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._groups_reload).pack(side="left")
-        ctk.CTkButton(bar, text="➕  Nouveau groupe manuel", width=200, fg_color="gray35",
-                      command=self._groups_create_dialog).pack(side="left", padx=8)
-        self.groups_status = ctk.CTkLabel(bar, text="", text_color="gray",
+        ctk.CTkButton(bar, text="🔄  Recharger", width=130, fg_color=C_ACTION,
+                      hover_color=C_ACTION_SURV, command=self._groups_reload).pack(side="left")
+        ctk.CTkButton(bar, text="➕  Nouveau groupe manuel", width=200, fg_color=C_NEUTRE,
+                      command=self._groups_create_dialog, text_color=T_SUR_NEUTRE).pack(side="left", padx=8)
+        self.groups_status = ctk.CTkLabel(bar, text="", text_color=T_SECONDAIRE,
                                           font=ctk.CTkFont(size=11))
         self.groups_status.pack(side="left", padx=10)
 
         # — Liste des groupes —
-        self.groups_list = ctk.CTkScrollableFrame(frame, label_text="Groupes d'accès")
+        self.groups_list = ctk.CTkScrollableFrame(frame, label_text="Groupes d'accès", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.groups_list.pack(fill="both", expand=True, pady=(8, 0))
 
         self.groups_owners_map = {}   # url compte → url owner (chargé à la demande)
@@ -1171,14 +1703,14 @@ class App(_AppBase):
             # Déjà chargé : on se contente de (re)construire l'affichage.
             self._render_groups_list()
             self.groups_status.configure(
-                text=f"{len(self.access_groups)} groupe(s).", text_color="gray")
+                text=f"{len(self.access_groups)} groupe(s).", text_color=T_SECONDAIRE)
 
     def _groups_reload(self):
         """Recharge la liste des groupes d'accès (avec leurs URLs) en arrière-plan."""
         if not self.api:
-            self.groups_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.groups_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.groups_status.configure(text="⏳  Chargement…", text_color="gray")
+        self.groups_status.configure(text="⏳  Chargement…", text_color=T_SECONDAIRE)
         self._run(self._do_groups_reload)
 
     def _do_groups_reload(self):
@@ -1189,10 +1721,10 @@ class App(_AppBase):
             self.groups_owners_map = self.api.get_owners_map()
             self._groups_loaded = True     # évite un rechargement à chaque ouverture
             self._ui(self.groups_status.configure,
-                     text=f"{len(self.access_groups)} groupe(s).", text_color="gray")
+                     text=f"{len(self.access_groups)} groupe(s).", text_color=T_SECONDAIRE)
             self._ui(self._render_groups_list)
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
 
     def _render_groups_list(self):
         """Affiche une ligne par groupe (manuel = modifiable, SSO = verrouillé)."""
@@ -1200,13 +1732,13 @@ class App(_AppBase):
             w.destroy()
         if not self.access_groups:
             ctk.CTkLabel(self.groups_list, text="Aucun groupe. Cliquez sur « Recharger ».",
-                         text_color="gray").pack(anchor="w", padx=8, pady=8)
+                         text_color=T_SECONDAIRE).pack(anchor="w", padx=8, pady=8)
             return
         for g in self.access_groups:
             manual = self._is_manual_group(g)
             n_members = len(g.get("users") or [])
             row = ctk.CTkFrame(self.groups_list,
-                               fg_color=("gray90", "gray17") if manual else ("gray85", "gray14"),
+                               fg_color=S_LIGNE_ALT if manual else S_LIGNE,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
             tag = "✏️ manuel" if manual else "🔒 annuaire"
@@ -1214,25 +1746,34 @@ class App(_AppBase):
                          anchor="w", font=ctk.CTkFont(size=12)).pack(
                 side="left", padx=10, pady=8, fill="x", expand=True)
             if manual:
-                ctk.CTkButton(row, text="👥 Membres", width=90, fg_color="gray35",
-                              command=lambda gg=g: self._groups_manage_members(gg)
-                              ).pack(side="right", padx=4)
-                ctk.CTkButton(row, text="🗑", width=36, fg_color="#b91c1c",
-                              hover_color="#991b1b",
-                              command=lambda gg=g: self._groups_delete(gg)).pack(side="right", padx=4)
+                # `side="right"` empile de DROITE à GAUCHE : le premier posé se
+                # retrouve le plus à droite. On pose donc la suppression en
+                # premier pour qu'elle soit en bout de rangée, loin de l'action
+                # courante — auparavant elle précédait « Membres » à la lecture.
+                btn_g = ctk.CTkButton(row, text="🗑", width=34,
+                                      fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                                      text_color=T_SUR_NEUTRE,
+                                      font=ctk.CTkFont(size=T_CORPS),
+                                      command=lambda gg=g: self._groups_delete(gg))
+                btn_g.pack(side="right", padx=4)
+                ajouter_infobulle(btn_g, "Supprimer ce groupe")
+                ctk.CTkFrame(row, width=1, height=22,
+                             fg_color=S_PUCE).pack(side="right", padx=6)
+                ctk.CTkButton(row, text="👥 Membres", width=90, fg_color=C_NEUTRE,
+                              command=lambda gg=g: self._groups_manage_members(gg), text_color=T_SUR_NEUTRE).pack(side="right", padx=4)
             else:
-                ctk.CTkLabel(row, text="lecture seule", text_color="gray60",
+                ctk.CTkLabel(row, text="lecture seule", text_color=T_DISCRET,
                              font=ctk.CTkFont(size=11)).pack(side="right", padx=12)
 
     # — Création d'un groupe manuel —
     def _groups_create_dialog(self):
         """Ouvre la fenêtre de création d'un groupe d'accès."""
         if not self.api:
-            self.groups_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.groups_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
         if not self.site_urls:
             self.groups_status.configure(
-                text="Aucun site chargé (requis pour créer un groupe).", text_color="#f59e0b")
+                text="Aucun site chargé (requis pour créer un groupe).", text_color=T_ALERTE)
             return
         win = ctk.CTkToplevel(self)
         win.title("Nouveau groupe manuel")
@@ -1242,11 +1783,11 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 6), anchor="w")
         ctk.CTkLabel(win, text="Nom du groupe (le préfixe « grp_ » est ajouté\n"
                                "automatiquement s'il manque) :",
-                     font=ctk.CTkFont(size=11), text_color="gray70",
+                     font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE,
                      justify="left").pack(padx=16, anchor="w")
         name_entry = ctk.CTkEntry(win, width=360, placeholder_text="ex. eformation  →  grp_eformation")
         name_entry.pack(padx=16, pady=8)
-        msg = ctk.CTkLabel(win, text="", font=ctk.CTkFont(size=11), text_color="#ef4444")
+        msg = ctk.CTkLabel(win, text="", font=ctk.CTkFont(size=11), text_color=T_ERREUR)
         msg.pack(padx=16, anchor="w")
 
         def _do_create():
@@ -1259,10 +1800,10 @@ class App(_AppBase):
             if any(g.get("code_name") == code for g in self.access_groups):
                 msg.configure(text=f"« {code} » existe déjà."); return
             win.destroy()
-            self.groups_status.configure(text=f"⏳  Création de {code}…", text_color="gray")
+            self.groups_status.configure(text=f"⏳  Création de {code}…", text_color=T_SECONDAIRE)
             self._run(self._do_groups_create, code)
 
-        ctk.CTkButton(win, text="Créer", fg_color="#16a34a", hover_color="#15803d",
+        ctk.CTkButton(win, text="Créer", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
                       command=_do_create).pack(padx=16, pady=10, anchor="w")
 
     def _do_groups_create(self, code):
@@ -1270,11 +1811,11 @@ class App(_AppBase):
         try:
             self.api.create_access_group(code, self.site_urls, display_name=code)
             self._ui(self.groups_status.configure,
-                     text=f"✅  Groupe « {code} » créé.", text_color="#22c55e")
+                     text=f"✅  Groupe « {code} » créé.", text_color=T_SUCCES)
             self._ui(self._log, f"Groupe d'accès créé : {code}")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Création groupe {code} : {e}")
 
     # — Suppression d'un groupe manuel —
@@ -1293,11 +1834,11 @@ class App(_AppBase):
         try:
             self.api.delete_access_group(g.get("url"))
             self._ui(self.groups_status.configure,
-                     text=f"✅  Groupe « {g.get('code_name')} » supprimé.", text_color="#22c55e")
+                     text=f"✅  Groupe « {g.get('code_name')} » supprimé.", text_color=T_SUCCES)
             self._ui(self._log, f"Groupe d'accès supprimé : {g.get('code_name')}")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Suppression groupe : {e}")
 
     # — Gestion des membres d'un groupe manuel —
@@ -1306,7 +1847,7 @@ class App(_AppBase):
         À la validation, convertit les comptes choisis en URLs /owners/ et
         remplace la liste des membres du groupe."""
         if not self.all_users:
-            self.groups_status.configure(text="⏳  Chargement des comptes…", text_color="gray")
+            self.groups_status.configure(text="⏳  Chargement des comptes…", text_color=T_SECONDAIRE)
             self._run(lambda: (self._reload_users_for_admin(),
                                self._ui(lambda: self._groups_open_member_picker(g))))
             return
@@ -1360,12 +1901,12 @@ class App(_AppBase):
             self.api.set_access_group_members(g.get("url"), owner_urls)
             self._ui(self.groups_status.configure,
                      text=f"✅  « {g.get('code_name')} » : {len(owner_urls)} membre·s.",
-                     text_color="#22c55e")
+                     text_color=T_SUCCES)
             self._ui(self._log,
                      f"Groupe « {g.get('code_name')} » : {len(owner_urls)} membre·s définis.")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Membres groupe « {g.get('code_name')} » : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -1387,7 +1928,7 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 10))
 
         # — Connexion API —
-        api_box = ctk.CTkFrame(frame)
+        api_box = ctk.CTkFrame(frame, fg_color=S_CARTE)
         api_box.pack(fill="x")
         ctk.CTkLabel(api_box, text="Connexion à l'instance Pod (compte superutilisateur)",
                      font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=3,
@@ -1415,7 +1956,7 @@ class App(_AppBase):
         # token porte des droits d'administration sur toute l'instance.
         self.token_storage_lbl = ctk.CTkLabel(
             api_box, text="", font=ctk.CTkFont(size=11),
-            text_color="#f59e0b", anchor="w", wraplength=620, justify="left")
+            text_color=T_ALERTE, anchor="w", wraplength=620, justify="left")
         self.token_storage_lbl.grid(row=3, column=1, columnspan=2, sticky="w", padx=8)
 
         # — Compte VÉHICULE (local) pour le chunké des gros fichiers —
@@ -1425,7 +1966,7 @@ class App(_AppBase):
                           "puis réattribués au propriétaire choisi.\n"
                           "FACULTATIF : un compte intégré est déjà utilisé par défaut. "
                           "Ne remplissez ces champs que pour employer un autre compte.",
-                     text_color="gray70", font=ctk.CTkFont(size=11)).grid(
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11)).grid(
             row=3, column=0, columnspan=3, padx=12, pady=(6, 0), sticky="w")
 
         ctk.CTkLabel(api_box, text="Identifiant :", width=110, anchor="e").grid(row=4, column=0, padx=8, pady=8)
@@ -1448,26 +1989,26 @@ class App(_AppBase):
 
         btn_row = ctk.CTkFrame(api_box, fg_color="transparent")
         btn_row.grid(row=6, column=1, columnspan=2, padx=8, pady=10, sticky="w")
-        ctk.CTkButton(btn_row, text="🔌  Tester & se connecter", fg_color="#16a34a",
-                      hover_color="#15803d", command=self._connect).pack(side="left")
+        ctk.CTkButton(btn_row, text="🔌  Tester & se connecter", fg_color=C_SUCCES,
+                      hover_color=C_SUCCES_SURV, command=self._connect).pack(side="left")
         ctk.CTkButton(btn_row, text="🚪  Oublier le token / Se déconnecter", width=260,
-                      fg_color="gray35", hover_color="#7f1d1d",
-                      command=self._forget_token).pack(side="left", padx=10)
+                      fg_color=C_NEUTRE, hover_color="#7f1d1d",
+                      command=self._forget_token, text_color=T_SUR_NEUTRE).pack(side="left", padx=10)
         api_box.columnconfigure(1, weight=1)
 
         self.config_msg = ctk.CTkLabel(frame, text="", font=ctk.CTkFont(size=12))
         self.config_msg.pack(anchor="w", pady=4)
 
-        ctk.CTkFrame(frame, height=1, fg_color="gray30").pack(fill="x", pady=8)
+        ctk.CTkFrame(frame, height=1, fg_color=S_FILET).pack(fill="x", pady=8)
 
         # — Agent déposant —
-        agent_box = ctk.CTkFrame(frame)
+        agent_box = ctk.CTkFrame(frame, fg_color=S_CARTE)
         agent_box.pack(fill="x")
         ctk.CTkLabel(agent_box, text="Agent déposant (propriétaire des vidéos)",
                      font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=3,
                                                            padx=12, pady=(12, 2), sticky="w")
         ctk.CTkLabel(agent_box, text="Les vidéos déposées appartiendront à ce compte Pod.",
-                     text_color="gray70", font=ctk.CTkFont(size=11)).grid(
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11)).grid(
             row=1, column=0, columnspan=3, padx=12, pady=(0, 6), sticky="w")
 
         self.agent_filter = ctk.CTkEntry(agent_box, width=300,
@@ -1476,18 +2017,19 @@ class App(_AppBase):
         self.agent_filter.bind("<KeyRelease>",
                                lambda e: self._debounce("users", self._render_users))
         ctk.CTkButton(agent_box, text="🔄  Recharger", width=130,
-                      command=lambda: self._run(self._load_all_users)).grid(row=2, column=2, padx=8, pady=8)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=lambda: self._run(self._load_all_users), text_color=T_SUR_NEUTRE).grid(row=2, column=2, padx=8, pady=8)
 
-        self.users_count_lbl = ctk.CTkLabel(agent_box, text="", text_color="gray",
+        self.users_count_lbl = ctk.CTkLabel(agent_box, text="", text_color=T_SECONDAIRE,
                                             font=ctk.CTkFont(size=11))
         self.users_count_lbl.grid(row=3, column=0, columnspan=3, padx=12, sticky="w")
 
-        self.agent_results = ctk.CTkScrollableFrame(agent_box, height=220)
+        self.agent_results = ctk.CTkScrollableFrame(agent_box, height=220, fg_color=S_CARTE)
         self.agent_results.grid(row=4, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="ew")
         agent_box.columnconfigure(1, weight=1)
 
         # — Aide token —
-        help_box = ctk.CTkFrame(frame, fg_color="gray18", corner_radius=8)
+        help_box = ctk.CTkFrame(frame, fg_color=S_CARTE, corner_radius=8)
         help_box.pack(fill="x", pady=8)
         ctk.CTkLabel(help_box, text="ℹ️  Créer le token de service",
                      font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=14, pady=(10, 2))
@@ -1497,7 +2039,7 @@ class App(_AppBase):
                  "« Add token » → choisissez le compte de service.\n"
                  "⚠️ Le token hérite des droits de ce compte. Il est stocké chiffré "
                  "dans le coffre-fort de votre système (Keychain / Credential Manager).",
-            justify="left", text_color="gray70", wraplength=820).pack(anchor="w", padx=14, pady=(0, 12))
+            justify="left", text_color=T_SECONDAIRE, wraplength=820).pack(anchor="w", padx=14, pady=(0, 12))
 
         # ── Réglages de l'instance (hors API) ────────────────────────────
         # Certains paramètres de Pod ne sont PAS exposés par l'API REST : la
@@ -1507,9 +2049,9 @@ class App(_AppBase):
         # l'administration dans le navigateur, où l'utilisateur est déjà
         # authentifié. Même principe que le bouton « 🔑 Token » de l'onglet
         # Comptes.
-        ctk.CTkFrame(frame, height=1, fg_color="gray30").pack(fill="x", pady=8)
+        ctk.CTkFrame(frame, height=1, fg_color=S_FILET).pack(fill="x", pady=8)
 
-        inst_box = ctk.CTkFrame(frame)
+        inst_box = ctk.CTkFrame(frame, fg_color=S_CARTE)
         inst_box.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(inst_box, text="🛠  Réglages de l'instance",
                      font=ctk.CTkFont(size=14, weight="bold")).pack(
@@ -1521,7 +2063,7 @@ class App(_AppBase):
                  "directement à la bonne page, dans votre navigateur.\n"
                  "La page d'accueil se règle à deux endroits : le TEXTE de "
                  "présentation (page statique) et les VIGNETTES affichées (blocs).",
-            justify="left", text_color="gray70", font=ctk.CTkFont(size=11),
+            justify="left", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
             wraplength=820).pack(anchor="w", padx=14, pady=(0, 8))
 
         rangee = ctk.CTkFrame(inst_box, fg_color="transparent")
@@ -1532,26 +2074,26 @@ class App(_AppBase):
         #   • les VIGNETTES et encarts affichés sont des « blocs ».
         # D'où deux boutons plutôt qu'un seul, pour éviter de chercher.
         ctk.CTkButton(rangee, text="🏠  Accueil : texte", width=170,
-                      fg_color="#7c3aed", hover_color="#6d28d9",
+                      fg_color=C_ACCENT, hover_color=C_ACCENT_SURV,
                       command=lambda: self._ouvrir_admin(
                           "/admin/flatpages/flatpage/",
                           "texte de la page d'accueil")).pack(side="left")
         ctk.CTkButton(rangee, text="🧩  Accueil : blocs", width=170,
-                      fg_color="#7c3aed", hover_color="#6d28d9",
+                      fg_color=C_ACCENT, hover_color=C_ACCENT_SURV,
                       command=lambda: self._ouvrir_admin(
                           "/admin/main/block/",
                           "blocs de la page d'accueil")).pack(side="left", padx=8)
-        ctk.CTkButton(rangee, text="🔑  Jetons", width=120, fg_color="gray35",
-                      hover_color="gray28",
+        ctk.CTkButton(rangee, text="🔑  Jetons", width=120, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
                       command=lambda: self._ouvrir_admin(
-                          "/admin/authtoken/tokenproxy/", "jetons")).pack(side="left")
-        ctk.CTkButton(rangee, text="⚙️  Administration", width=160, fg_color="gray35",
-                      hover_color="gray28",
+                          "/admin/authtoken/tokenproxy/", "jetons"), text_color=T_SUR_NEUTRE).pack(side="left")
+        ctk.CTkButton(rangee, text="⚙️  Administration", width=160, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
                       command=lambda: self._ouvrir_admin(
-                          "/admin/", "administration")).pack(side="left", padx=8)
+                          "/admin/", "administration"), text_color=T_SUR_NEUTRE).pack(side="left", padx=8)
 
         self.config_admin_msg = ctk.CTkLabel(
-            inst_box, text="", font=ctk.CTkFont(size=11), text_color="gray",
+            inst_box, text="", font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE,
             wraplength=820, justify="left", anchor="w")
         self.config_admin_msg.pack(fill="x", padx=14, pady=(0, 10))
 
@@ -1565,7 +2107,7 @@ class App(_AppBase):
         if not base:
             self.config_admin_msg.configure(
                 text="Renseignez d'abord l'adresse de l'instance, plus haut.",
-                text_color="#f59e0b")
+                text_color=T_ALERTE)
             return
         url = f"{base}{chemin}"
         try:
@@ -1575,10 +2117,10 @@ class App(_AppBase):
             self.config_admin_msg.configure(
                 text=f"Page « {libelle} » ouverte dans votre navigateur. "
                      "Connectez-vous en administrateur si ce n'est pas déjà fait.",
-                text_color="#22c55e")
+                text_color=T_SUCCES)
         except Exception as e:
             self.config_admin_msg.configure(text=f"❌ Ouverture impossible : {e}",
-                                            text_color="#ef4444")
+                                            text_color=T_ERREUR)
             self._log(f"❌ Ouverture de l'administration : {e}")
 
     def _forget_token(self):
@@ -1606,7 +2148,7 @@ class App(_AppBase):
         self._set_status(False)
         self.config_msg.configure(
             text="🚪  Token effacé de ce poste. Saisissez-le à nouveau pour vous reconnecter.",
-            text_color="#f59e0b")
+            text_color=T_ALERTE)
         self._log("Token effacé du poste — déconnexion.")
 
     def _connect(self):
@@ -1614,12 +2156,12 @@ class App(_AppBase):
         url = self.url_entry.get().strip()
         token = self.token_entry.get().strip()
         if not url or not token:
-            self.config_msg.configure(text="URL et token requis.", text_color="#ef4444")
+            self.config_msg.configure(text="URL et token requis.", text_color=T_ERREUR)
             return
         # Identifiants véhicule : OPTIONNELS (requis seulement pour les gros fichiers).
         v_user = self.user_entry.get().strip() if hasattr(self, "user_entry") else ""
         v_pass = self.pass_entry.get().rstrip("\r\n") if hasattr(self, "pass_entry") else ""
-        self.config_msg.configure(text="⏳  Connexion…", text_color="gray")
+        self.config_msg.configure(text="⏳  Connexion…", text_color=T_SECONDAIRE)
         self._run(self._do_connect, url, token, v_user, v_pass)
 
     def _do_connect(self, url, token, v_user="", v_pass=""):
@@ -1628,7 +2170,7 @@ class App(_AppBase):
             api = PodAPI(url, token)
             count = api.test_connection()
         except Exception as e:
-            self._ui(self.config_msg.configure, text=f"❌  Échec : {e}", text_color="#ef4444")
+            self._ui(self.config_msg.configure, text=f"❌  Échec : {e}", text_color=T_ERREUR)
             self._ui(self._set_status, False)
             return
         # Test de la session véhicule seulement si des identifiants sont saisis.
@@ -1668,12 +2210,15 @@ class App(_AppBase):
                 self.token_storage_lbl.configure(
                     text="⚠️  Coffre-fort indisponible : token stocké en clair dans un "
                          "fichier de votre dossier personnel.",
-                    text_color="#f59e0b")
+                    text_color=T_ALERTE)
             except Exception:
                 pass
         cfg.save_vehicle_credentials(v_user, v_pass)
         cfg.save_config(self.config_data)
         self._set_status(True)
+        # L'utilisateur a pu ouvrir un onglet à liste pendant la connexion :
+        # on rejoue son chargement, sinon il resterait vide indéfiniment.
+        self._on_connexion_etablie()
         # Message selon l'état de la session véhicule
         if vehicle_ok is True:
             extra = " Compte véhicule OK (gros fichiers activés)."
@@ -1688,6 +2233,8 @@ class App(_AppBase):
                                   text_color=color)
         self._run(self._load_types)
         self._run(self._load_all_users)
+        # Même raison : l'onglet ouvert pendant la reconnexion doit se charger.
+        self._on_connexion_etablie()
         if v_user:
             self._run(self._resolve_vehicle_owner)   # URL Pod du véhicule (pour la vérif post-504)
 
@@ -1831,7 +2378,7 @@ class App(_AppBase):
         self._set_status(True)
         u = self.config_data.get("agent_username", "")
         if u:
-            self.agent_lbl.configure(text=f"Dépôt au nom de :\n{u}")
+            self._definir_agent(f"Dépôt au nom de :\n{u}")
         self._run(self._load_types)
         self._run(self._load_all_users)
         if self.vehicle_username:
@@ -1841,7 +2388,7 @@ class App(_AppBase):
         """Met à jour l'indicateur de connexion (pastille + libellé) de la barre latérale."""
         self.status_dot.configure(text="🟢" if ok else "🔴")
         self.status_lbl.configure(text="Connecté" if ok else "Non connecté",
-                                  text_color="#22c55e" if ok else "#ef4444")
+                                  text_color=T_SUCCES if ok else "#ef4444")
 
     def _load_types(self):
         """(Thread) Charge les types de vidéo et les sites (champ requis à l'upload)."""
@@ -1883,10 +2430,10 @@ class App(_AppBase):
         """(Thread) Charge tous les comptes Pod (paginé) et rafraîchit les vues qui en dépendent."""
         if not self.api:
             self._ui(self.users_count_lbl.configure,
-                     text="Connectez-vous d'abord.", text_color="#f59e0b")
+                     text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
         self._ui(self.users_count_lbl.configure,
-                 text="⏳  Chargement de la liste des utilisateurs…", text_color="gray")
+                 text="⏳  Chargement de la liste des utilisateurs…", text_color=T_SECONDAIRE)
         self._ui(self._log, "Chargement des utilisateurs (/rest/users/)…")
         try:
             users = self.api.get_all_users()
@@ -1902,17 +2449,17 @@ class App(_AppBase):
             if users:
                 self._ui(self.users_count_lbl.configure,
                          text=f"✅  {len(users)} utilisateur(s) chargé(s). Filtrez puis cliquez pour choisir.",
-                         text_color="#22c55e")
+                         text_color=T_SUCCES)
                 self._ui(self._log, f"Utilisateurs chargés : {len(users)}.")
             else:
                 self._ui(self.users_count_lbl.configure,
                          text="⚠️  Aucun utilisateur renvoyé. Le compte du token n'a peut-être "
                               "pas le droit de lister les utilisateurs (compte superutilisateur requis).",
-                         text_color="#f59e0b")
+                         text_color=T_ALERTE)
                 self._ui(self._log, "⚠️ /rest/users/ a renvoyé 0 utilisateur — vérifiez les droits du token "
                                     "(ou lancez verifier.py).")
         except Exception as e:
-            self._ui(self.users_count_lbl.configure, text=f"❌  Erreur : {e}", text_color="#ef4444")
+            self._ui(self.users_count_lbl.configure, text=f"❌  Erreur : {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Erreur chargement utilisateurs : {e}")
 
     def _user_pk(self, u: dict) -> str:
@@ -1970,7 +2517,7 @@ class App(_AppBase):
                 text=f"Jetons ouverts pour « {username} ». S'il en a DÉJÀ un, copiez-le "
                      "(n'en recréez pas : supprimer l'ancien couperait son accès). "
                      "Sinon, cliquez sur « Ajouter » dans l'administration.",
-                text_color="#22c55e")
+                text_color=T_SUCCES)
         except Exception as e:
             self._log(f"❌ Ouverture du navigateur : {e}")
 
@@ -2048,7 +2595,7 @@ class App(_AppBase):
             self._log(f"✉️ Brouillon de réponse ouvert pour {email}.")
             self.comptes_msg.configure(
                 text=f"Message préparé pour {email} — collez le jeton à l'emplacement prévu.",
-                text_color="#22c55e")
+                text_color=T_SUCCES)
         except Exception as e:
             self._log(f"❌ Ouverture du client de messagerie : {e}")
 
@@ -2073,7 +2620,7 @@ class App(_AppBase):
         if not self.all_users:
             ctk.CTkLabel(self.agent_results,
                          text="Liste non chargée. Cliquez sur « Recharger ».",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             return
 
         matches = [u for u in self.all_users if not flt or flt in self._user_label(u).lower()]
@@ -2084,7 +2631,7 @@ class App(_AppBase):
             is_current = (u.get("username", "") == current_username)
             label = ("✅  " if is_current else "      ") + self._user_label(u)
             ctk.CTkButton(self.agent_results, text=label, anchor="w",
-                          fg_color=("gray75", "gray30") if is_current else "transparent",
+                          fg_color=S_SELECTION if is_current else "transparent",
                           text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                           height=28, font=ctk.CTkFont(size=12),
                           command=lambda uu=u: self._pick_agent(uu)).pack(fill="x", pady=1)
@@ -2092,11 +2639,11 @@ class App(_AppBase):
         if len(matches) > CAP:
             ctk.CTkLabel(self.agent_results,
                          text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
         elif not matches:
             ctk.CTkLabel(self.agent_results,
                          text="Aucun résultat ne correspond au filtre.",
-                         text_color="gray").pack(pady=8)
+                         text_color=T_SECONDAIRE).pack(pady=8)
 
     def _pick_agent(self, user: dict):
         """Enregistre le compte choisi comme propriétaire par défaut des dépôts."""
@@ -2104,15 +2651,11 @@ class App(_AppBase):
         self.config_data["agent_owner_url"] = user.get("url", "")
         self.config_data["agent_owner_label"] = self._user_label(user)
         cfg.save_config(self.config_data)
-        self.agent_lbl.configure(text=f"Dépôt au nom de :\n{user.get('username','')}")
+        self._definir_agent(f"Dépôt au nom de :\n{user.get('username','')}")
         self.config_msg.configure(
-            text=f"✅  Propriétaire des vidéos : {user.get('username','')}", text_color="#22c55e")
+            text=f"✅  Propriétaire des vidéos : {user.get('username','')}", text_color=T_SUCCES)
         if hasattr(self, "agent_results"):
             self._render_users()   # met à jour la coche ✅
-
-    # ═════════════════════════════════════════════════════════════════════
-    #  ONGLET COMPTES — statut « équipe » (is_staff)
-    # ═════════════════════════════════════════════════════════════════════
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET ENCODAGE — supervision du transcodage + relance
@@ -2154,22 +2697,22 @@ class App(_AppBase):
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["encode"] = frame
 
-        ctk.CTkLabel(frame, text="⚙️  Encodage",
+        ctk.CTkLabel(frame, text="🎬  Encodage",
                      font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
         ctk.CTkLabel(
             frame,
             text="Supervisez le transcodage : voyez les encodages en cours, terminés ou en "
                  "échec, et relancez l'encodage des vidéos qui posent problème (à l'unité ou "
                  "en masse).",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 8))
 
         # — Ligne : scan + état —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._encode_scan).pack(side="left")
-        self.encode_status = ctk.CTkLabel(top, text="(aucun scan)", text_color="gray",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=self._encode_scan, text_color=T_SUR_NEUTRE).pack(side="left")
+        self.encode_status = ctk.CTkLabel(top, text="(aucun scan)", text_color=T_SECONDAIRE,
                                           font=ctk.CTkFont(size=11))
         self.encode_status.pack(side="left", padx=10)
 
@@ -2185,20 +2728,21 @@ class App(_AppBase):
         self.encode_filter = ctk.CTkOptionMenu(
             bar, width=150,
             values=["Tous", "En cours", "À problème", "Non lancées", "Encodées"],
-            command=lambda _c: self._render_encode())
+            command=lambda _c: self._render_encode(), **STYLE_CHAMP)
         self.encode_filter.set("À problème")
         self.encode_filter.pack(side="left")
         # Relance en masse de tout ce qui est affiché
         self.encode_relaunch_btn = ctk.CTkButton(
             bar, text="🔁  Relancer l'encodage des vidéos affichées",
-            fg_color="#16a34a", hover_color="#15803d", command=self._encode_relaunch_shown)
+            fg_color=C_SUCCES, hover_color=C_SUCCES_SURV, command=self._encode_relaunch_shown)
         self.encode_relaunch_btn.pack(side="left", padx=10)
-        self.encode_progress = ctk.CTkLabel(bar, text="", text_color="gray",
+        self.encode_progress = ctk.CTkLabel(bar, text="", text_color=T_SECONDAIRE,
                                             font=ctk.CTkFont(size=11))
         self.encode_progress.pack(side="left", padx=6)
 
         # — Liste —
-        self.encode_list = ctk.CTkScrollableFrame(frame, label_text="Vidéos")
+        self.encode_list = ctk.CTkScrollableFrame(frame, label_text="Vidéos", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.encode_list.pack(fill="both", expand=True, pady=(4, 0))
 
         # — Données —
@@ -2210,9 +2754,9 @@ class App(_AppBase):
     def _encode_scan(self):
         """Déclenche le scan complet des vidéos (en arrière-plan)."""
         if not self.api:
-            self.encode_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.encode_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.encode_status.configure(text="⏳  Scan…", text_color="gray")
+        self.encode_status.configure(text="⏳  Scan…", text_color=T_SECONDAIRE)
         self._run(self._do_encode_scan)
 
     def _do_encode_scan(self):
@@ -2221,8 +2765,12 @@ class App(_AppBase):
             def prog(n):
                 """Callback de progression (avancement du scan)."""
                 self._ui(self.encode_status.configure,
-                         text=f"⏳  {n} vidéos lues…", text_color="gray")
-            videos = self.api.get_all_videos(progress_cb=prog)
+                         text=f"⏳  {n} vidéos lues…", text_color=T_SECONDAIRE)
+            # MAGASIN PARTAGÉ : plus de scan propre à cet onglet. Auparavant il
+            # relisait toute l'instance et gardait sa copie, que rien ne
+            # rafraîchissait — il proposait donc de relancer l'encodage de
+            # vidéos supprimées depuis.
+            videos = self.ensure_videos_sync(progress_cb=prog)
             self.encode_videos = videos
             self._ui(self._render_encode)
             skipped = getattr(self.api, "last_scan_skipped", 0)
@@ -2231,7 +2779,7 @@ class App(_AppBase):
                          text=f"✅  {len(videos)} vidéos analysées "
                               f"(⚠️ {skipped} ignorée·s : illisibles côté serveur)  ·  "
                               f"{self._loaded_stamp()}",
-                         text_color="#f59e0b")
+                         text_color=T_ALERTE)
                 self._ui(self._log,
                          f"Encodage : {len(videos)} vidéos scannées, {skipped} ignorée·s "
                          f"(erreur serveur sur ces vidéos — à corriger côté Pod/DSI).")
@@ -2239,10 +2787,10 @@ class App(_AppBase):
                 self._ui(self.encode_status.configure,
                          text=f"✅  {len(videos)} vidéos analysées  ·  "
                               f"chargé à {datetime.now().strftime('%H:%M')}",
-                         text_color="#22c55e")
+                         text_color=T_SUCCES)
                 self._ui(self._log, f"Encodage : {len(videos)} vidéos scannées.")
         except Exception as e:
-            self._ui(self.encode_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.encode_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Scan encodage : {e}")
 
     # ── Rendu (compteurs + liste filtrée) ───────────────────────────────────
@@ -2257,7 +2805,7 @@ class App(_AppBase):
         if not self.encode_videos:
             self.encode_counters.configure(text="")
             ctk.CTkLabel(self.encode_list, text="Cliquez sur « Scanner ».",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             return
 
         # Comptage par état
@@ -2286,14 +2834,14 @@ class App(_AppBase):
 
         if not vids:
             ctk.CTkLabel(self.encode_list, text="Aucune vidéo dans cet état.",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             return
 
         # Une ligne par vidéo : [pastille état] titre · slug · étape  [Relancer]
         CAP = 400
         for v in vids[:CAP]:
             st = self._encode_state(v)
-            row = ctk.CTkFrame(self.encode_list, fg_color=("gray85", "gray17"),
+            row = ctk.CTkFrame(self.encode_list, fg_color=S_LIGNE,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
             ctk.CTkLabel(row, text=self._ENCODE_LABELS[st], width=110, anchor="w",
@@ -2306,13 +2854,13 @@ class App(_AppBase):
             # Bouton de relance individuelle (sauf si déjà encodée — relance possible quand même,
             # mais on la réserve aux états non terminés pour éviter les clics inutiles)
             if st != "ok":
-                ctk.CTkButton(row, text="🔁 Relancer", width=100, height=26, fg_color="gray35",
-                              command=lambda vv=v: self._encode_relaunch_one(vv)).pack(
+                ctk.CTkButton(row, text="🔁 Relancer", width=100, height=26, fg_color=C_NEUTRE,
+                              command=lambda vv=v: self._encode_relaunch_one(vv), text_color=T_SUR_NEUTRE).pack(
                     side="right", padx=8)
         if len(vids) > CAP:
             ctk.CTkLabel(self.encode_list,
                          text=f"… +{len(vids) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
 
     # ── Relance de l'encodage ────────────────────────────────────────────────
 
@@ -2349,10 +2897,10 @@ class App(_AppBase):
                 fail += 1
                 self._ui(self._log, f"❌ Relance {slug} : {e}")
             self._ui(self.encode_progress.configure,
-                     text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+                     text=f"⏳  {i}/{len(vids)}…", text_color=T_SECONDAIRE)
         self._ui(self.encode_progress.configure,
                  text=f"Terminé : {ok} relancée(s), {fail} échec(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
+                 text_color=T_SUCCES if not fail else "#f59e0b")
         # Re-scan pour refléter les nouveaux états (en cours d'encodage)
         self._do_encode_scan()
 
@@ -2372,7 +2920,7 @@ class App(_AppBase):
             text="Le statut « équipe » (is_staff) autorise un compte à ajouter et gérer "
                  "des vidéos sur Pod. Activez l'interrupteur pour l'accorder, désactivez-le "
                  "pour le retirer. Chaque changement est confirmé puis appliqué immédiatement.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
         bar = ctk.CTkFrame(frame, fg_color="transparent")
@@ -2386,7 +2934,7 @@ class App(_AppBase):
         self.comptes_statut = ctk.CTkOptionMenu(
             bar, width=150,
             values=["Tous", "Équipe", "Sans statut"],
-            command=lambda _c: self._render_comptes())
+            command=lambda _c: self._render_comptes(), **STYLE_CHAMP)
         self.comptes_statut.set("Tous")
         self.comptes_statut.pack(side="left", padx=6)
         # Regrouper : trie pour rassembler les comptes « équipe » en tête
@@ -2394,19 +2942,20 @@ class App(_AppBase):
         ctk.CTkCheckBox(bar, text="Regrouper", variable=self.comptes_group,
                         command=self._render_comptes, width=90).pack(side="left", padx=6)
         ctk.CTkButton(bar, text="🔄  Recharger", width=130,
-                      command=lambda: self._run(self._reload_users_for_admin)).pack(side="left", padx=8)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=lambda: self._run(self._reload_users_for_admin), text_color=T_SUR_NEUTRE).pack(side="left", padx=8)
 
-        self.comptes_count_lbl = ctk.CTkLabel(frame, text="", text_color="gray",
+        self.comptes_count_lbl = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
                                               font=ctk.CTkFont(size=11))
         self.comptes_count_lbl.pack(anchor="w", pady=(6, 2))
 
         # Retour visuel des actions « 🔑 Token » et « ✉️ » de chaque ligne.
-        self.comptes_msg = ctk.CTkLabel(frame, text="", text_color="gray",
+        self.comptes_msg = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
                                         font=ctk.CTkFont(size=11),
                                         anchor="w", wraplength=900, justify="left")
         self.comptes_msg.pack(anchor="w", fill="x", pady=(0, 4))
 
-        self.comptes_results = ctk.CTkScrollableFrame(frame)
+        self.comptes_results = ctk.CTkScrollableFrame(frame, fg_color=S_CARTE)
         self.comptes_results.pack(fill="both", expand=True, pady=(0, 4))
 
         self._render_comptes()
@@ -2416,10 +2965,10 @@ class App(_AppBase):
         if not self.api:
             self._ui(self.comptes_count_lbl.configure,
                      text="Connectez-vous d'abord (onglet Configuration).",
-                     text_color="#f59e0b")
+                     text_color=T_ALERTE)
             return
         self._ui(self.comptes_count_lbl.configure,
-                 text="⏳  Chargement des comptes…", text_color="gray")
+                 text="⏳  Chargement des comptes…", text_color=T_SECONDAIRE)
         try:
             users = self.api.get_all_users()
             users.sort(key=lambda u: (u.get("username") or "").lower())
@@ -2431,7 +2980,7 @@ class App(_AppBase):
             self._ui(self._log, f"Comptes rechargés : {len(users)}.")
         except Exception as e:
             self._ui(self.comptes_count_lbl.configure,
-                     text=f"❌  Erreur : {e}", text_color="#ef4444")
+                     text=f"❌  Erreur : {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Erreur chargement comptes : {e}")
 
     def _render_comptes(self):
@@ -2445,7 +2994,7 @@ class App(_AppBase):
         if not self.all_users:
             ctk.CTkLabel(self.comptes_results,
                          text="Liste non chargée. Connectez-vous puis cliquez sur « Recharger ».",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             self.comptes_count_lbl.configure(text="")
             return
 
@@ -2471,7 +3020,7 @@ class App(_AppBase):
 
         CAP = 300
         for u in matches[:CAP]:
-            row = ctk.CTkFrame(self.comptes_results, fg_color=("gray85", "gray17"),
+            row = ctk.CTkFrame(self.comptes_results, fg_color=S_LIGNE,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
             ctk.CTkLabel(row, text=self._user_label(u), anchor="w",
@@ -2480,16 +3029,16 @@ class App(_AppBase):
             # Bouton « mail » : prépare la réponse au demandeur (grisé sans adresse).
             a_un_mail = bool((u.get("email") or "").strip())
             ctk.CTkButton(row, text="✉️", width=34, height=26,
-                          fg_color="gray35", hover_color="gray28",
+                          fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                           state="normal" if a_un_mail else "disabled",
-                          command=lambda uu=u: self._compte_mail_token(uu)).pack(
+                          command=lambda uu=u: self._compte_mail_token(uu), text_color=T_SUR_NEUTRE).pack(
                 side="right", padx=(0, 8))
             # Bouton « token » : ouvre le formulaire d'admin Django, utilisateur
             # pré-sélectionné. La création reste faite dans le navigateur, sous
             # l'identité d'administrateur de l'utilisateur — l'application ne
             # manipule aucun identifiant privilégié.
             ctk.CTkButton(row, text="🔑 Token", width=80, height=26,
-                          fg_color="#7c3aed", hover_color="#6d28d9",
+                          fg_color=C_ACCENT, hover_color=C_ACCENT_SURV,
                           command=lambda uu=u: self._compte_creer_token(uu)).pack(
                 side="right", padx=(0, 6))
 
@@ -2501,11 +3050,11 @@ class App(_AppBase):
         if len(matches) > CAP:
             ctk.CTkLabel(self.comptes_results,
                          text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
         elif not matches:
             ctk.CTkLabel(self.comptes_results,
                          text="Aucun résultat ne correspond au filtre.",
-                         text_color="gray").pack(pady=8)
+                         text_color=T_SECONDAIRE).pack(pady=8)
 
     def _on_staff_toggle(self, user: dict, var):
         """Confirme puis applique le changement de statut équipe."""
@@ -2536,7 +3085,7 @@ class App(_AppBase):
         except Exception as e:
             self._ui(var.set, not want)      # échec → revenir à l'état précédent
             self._ui(self.comptes_count_lbl.configure,
-                     text=f"❌  Échec pour {uname} : {e}", text_color="#ef4444")
+                     text=f"❌  Échec pour {uname} : {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Échec MAJ statut de {uname} : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -2559,58 +3108,129 @@ class App(_AppBase):
             frame,
             text="Recherchez une vidéo, sélectionnez-la dans la liste, puis éditez-la dans "
                  "le panneau de droite (titre, statut, co-propriétaires, chaînes, suppression).",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 8))
 
         # — Ligne : charger + statut —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8",
-                      command=lambda: self._browse_load(force=True)).pack(side="left")
-        self.browse_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
+                      command=lambda: self._browse_load(force=True), text_color=T_SUR_NEUTRE).pack(side="left")
+        self.browse_status = ctk.CTkLabel(top, text="(en attente de connexion…)", text_color=T_SECONDAIRE,
                                           font=ctk.CTkFont(size=11))
         self.browse_status.pack(side="left", padx=10)
 
         # — Ligne : filtres —
+        # BARRE DE FILTRES SUR DEUX RANGÉES.
+        # Sur une seule ligne, les huit contrôles réclamaient 1237 px alors que
+        # la zone utile en fenêtre minimale (1000 px) n'en offre que 752 :
+        # 485 px étaient purement TRONQUÉS à droite. Le tri et les filtres de
+        # détection, placés en fin de ligne, étaient donc invisibles — présents
+        # dans le code, inutilisables à l'écran.
         filt = ctk.CTkFrame(frame, fg_color="transparent")
         filt.pack(fill="x", pady=(8, 4))
-        self.browse_text = ctk.CTkEntry(filt, placeholder_text="🔍 titre / slug / propriétaire…")
-        self.browse_text.pack(side="left", fill="x", expand=True)
+        bloc_texte = bloc_filtre(filt, "Rechercher")
+        bloc_texte.pack(side="left", fill="x", expand=True)
+        self.browse_text = ctk.CTkEntry(bloc_texte,
+                                        placeholder_text="🔍 titre / slug / propriétaire…")
+        self.browse_text.pack(fill="x")
         self.browse_text.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
+
+        bloc_statut = bloc_filtre(filt, "Statut")
+        bloc_statut.pack(side="left", padx=6)
         self.browse_statut = ctk.CTkOptionMenu(
-            filt, width=130, values=["Tous statuts", "Brouillon", "Public", "Restreinte"],
-            command=lambda _c: self._browse_apply_filter())
-        self.browse_statut.set("Tous statuts")
-        self.browse_statut.pack(side="left", padx=6)
+            bloc_statut, width=130, values=["Tous", "Brouillon", "Public", "Restreinte"],
+            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_statut.set("Tous")
+        self.browse_statut.pack()
+
+        bloc_encode = bloc_filtre(filt, "Encodage")
+        bloc_encode.pack(side="left", padx=6)
         self.browse_encode = ctk.CTkOptionMenu(
-            filt, width=150, values=["Tout encodage", "Encodées", "Non-encodées"],
-            command=lambda _c: self._browse_apply_filter())
-        self.browse_encode.set("Tout encodage")
-        self.browse_encode.pack(side="left", padx=6)
-        self.browse_chan = ctk.CTkOptionMenu(filt, width=170, values=["Toutes chaînes"],
-                                             command=lambda _c: self._browse_apply_filter())
-        self.browse_chan.set("Toutes chaînes")
-        self.browse_chan.pack(side="left", padx=6)
-        self.browse_type = ctk.CTkOptionMenu(filt, width=150, values=["Tous types"],
-                                             command=lambda _c: self._browse_apply_filter())
-        self.browse_type.set("Tous types")
-        self.browse_type.pack(side="left", padx=6)
+            bloc_encode, width=150, values=["Tout", "Encodées", "Non-encodées"],
+            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_encode.set("Tout")
+        self.browse_encode.pack()
+        bloc_chan = bloc_filtre(filt, "Chaîne")
+        bloc_chan.pack(side="left", padx=6)
+        self.browse_chan = ctk.CTkOptionMenu(bloc_chan, width=150, values=["Toutes"],
+                                             command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_chan.set("Toutes")
+        self.browse_chan.pack()
+
+        bloc_type = bloc_filtre(filt, "Type")
+        bloc_type.pack(side="left", padx=6)
+        self.browse_type = ctk.CTkOptionMenu(bloc_type, width=132, values=["Tous"],
+                                             command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_type.set("Tous")
+        self.browse_type.pack()
+
+        # ── Seconde rangée : tri et détection ────────────────────────────
+        filt2 = ctk.CTkFrame(frame, fg_color="transparent")
+        filt2.pack(fill="x", pady=(4, 6))
+
+
+        # Ordre d'affichage. Par défaut « Plus récentes » : c'est l'ordre
+        # renvoyé par l'API, celui auquel on est habitué. Le tri alphabétique
+        # sert à retrouver une vidéo dont on connaît le titre.
+        bloc_tri = bloc_filtre(filt2, "Trier")
+        bloc_tri.pack(side="left", padx=(0, 14))
+        self.browse_tri = ctk.CTkOptionMenu(
+            bloc_tri, width=160,
+            values=["Plus récentes", "A → Z", "Z → A"],
+            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_tri.set("Plus récentes")
+        self.browse_tri.pack()
+
+        # Filtres de DIAGNOSTIC, repris de l'Explorateur : ils ne cherchent pas
+        # une vidéo précise mais révèlent des anomalies dans le fonds.
+        bloc_detect = bloc_filtre(filt2, "Détecter")
+        bloc_detect.pack(side="left", padx=(0, 6))
+        self.browse_detect = ctk.CTkOptionMenu(
+            bloc_detect, width=175,
+            values=["Aucune", "Doublons de titre", "Vieux brouillons"],
+            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_detect.set("Aucune")
+        self.browse_detect.pack()
+
+        # Ancienneté retenue pour « Vieux brouillons ».
+        ctk.CTkLabel(filt2, text="plus de", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE).pack(side="left", padx=(4, 2))
+        self.browse_months = ctk.CTkEntry(filt2, width=44)
+        self.browse_months.insert(0, "6")
+        self.browse_months.pack(side="left", padx=2)
+        self.browse_months.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
+        ctk.CTkLabel(filt2, text="mois", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE).pack(side="left")
 
         # — Action « en masse » : modifier le type des vidéos AFFICHÉES —
         # On la détache nettement des filtres ci-dessus (séparateur + cadre
         # encadré + libellé d'action) pour qu'on ne la confonde pas avec un filtre.
-        ctk.CTkFrame(frame, height=1, fg_color="gray30").pack(fill="x", pady=(6, 0))
-        massbar = ctk.CTkFrame(frame, fg_color=("gray90", "gray16"),
-                               corner_radius=8, border_width=1, border_color="gray30")
+        ctk.CTkFrame(frame, height=1, fg_color=S_FILET).pack(fill="x", pady=(6, 0))
+        massbar = ctk.CTkFrame(frame, fg_color=S_CARTE,
+                               corner_radius=8, border_width=1, border_color=S_FILET)
         massbar.pack(fill="x", pady=(4, 4))
         ctk.CTkLabel(massbar, text="✏️  Modifier en masse — appliquer ce type aux vidéos affichées :",
-                     font=ctk.CTkFont(size=11), text_color="gray70"
+                     font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE
                      ).pack(side="left", padx=(10, 8), pady=6)
-        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=170, values=["(aucun type)"])
+        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=170, values=["(aucun type)"], **STYLE_CHAMP)
         self.browse_mass_type.pack(side="left", pady=6)
-        ctk.CTkButton(massbar, text="Appliquer", width=110,
-                      command=self._browse_mass_set_type).pack(side="left", padx=8, pady=6)
+        # LE COMPTE EST DANS LE BOUTON.
+        #
+        # « Appliquer » nu, à côté d'un libellé disant « aux vidéos affichées »
+        # sans jamais dire combien, c'était le seul élément saturé de l'écran —
+        # et l'action la plus lourde de conséquences. Porter la cardinalité
+        # dans le bouton est la meilleure protection contre le clic de masse
+        # par inadvertance : on ne peut plus cliquer sans avoir lu le nombre.
+        #
+        # Teinte d'ALERTE et non d'action : ce n'est pas l'opération courante
+        # de l'écran, c'est une opération de masse irréversible.
+        self.browse_mass_btn = ctk.CTkButton(
+            massbar, text="Appliquer", width=170,
+            fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
+            command=self._browse_mass_set_type)
+        self.browse_mass_btn.pack(side="left", padx=8, pady=6)
 
         # — Corps : liste (gauche) + détail (droite) —
         body = ctk.CTkFrame(frame, fg_color="transparent")
@@ -2619,12 +3239,27 @@ class App(_AppBase):
         body.columnconfigure(1, weight=3)
         body.rowconfigure(1, weight=1)
 
-        self.browse_count_lbl = ctk.CTkLabel(body, text="", text_color="gray",
+        # Ligne d'en-tête : compteur à gauche, sélection globale à droite.
+        entete = ctk.CTkFrame(body, fg_color="transparent")
+        entete.grid(row=0, column=0, sticky="ew", pady=(0, 2))
+        entete.columnconfigure(0, weight=1)
+
+        self.browse_count_lbl = ctk.CTkLabel(entete, text="", text_color=T_SECONDAIRE,
                                              font=ctk.CTkFont(size=11), anchor="w")
-        self.browse_count_lbl.grid(row=0, column=0, sticky="w", pady=(0, 2))
-        self.browse_list = ctk.CTkScrollableFrame(body, label_text="Résultats")
+        self.browse_count_lbl.grid(row=0, column=0, sticky="w")
+
+        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées, y compris
+        # celles qui ne sont pas affichées : l'affichage est plafonné à 300
+        # lignes pour rester fluide, mais la sélection ne l'est pas.
+        ctk.CTkButton(entete, text="☑ Tout sélectionner", width=140, height=24,
+                      font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
+                      command=self._browse_tout_selectionner, text_color=T_SUR_NEUTRE).grid(row=0, column=1, padx=4)
+        self.browse_list = ctk.CTkScrollableFrame(body, label_text="Résultats", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.browse_list.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
-        self.browse_detail = ctk.CTkScrollableFrame(body, label_text="Détail / actions")
+        self.browse_detail = ctk.CTkScrollableFrame(body, label_text="Détail / actions", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.browse_detail.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
 
         # — Données —
@@ -2640,6 +3275,11 @@ class App(_AppBase):
         # Vide = mode normal, une seule vidéo affichée dans le panneau de détail.
         # Non vide = le panneau bascule sur les actions groupées.
         self.browse_multi: set = set()
+        # Demande d'interruption d'un traitement par lot. Depuis « Tout
+        # sélectionner », un lot peut porter sur plusieurs centaines de vidéos :
+        # sans ce drapeau, le seul recours serait de tuer l'application, en
+        # laissant le traitement à moitié fait sans savoir où il s'est arrêté.
+        self.lot_interrompu = threading.Event()
         self.browse_ancre = None        # dernière ligne cliquée, pour Maj+clic
 
         self._browse_render_detail()    # affiche le message d'invite
@@ -2654,9 +3294,9 @@ class App(_AppBase):
         magasin partagé répond depuis le cache s'il est déjà chargé — c'est tout
         l'intérêt du cache partagé (aucun rechargement inutile)."""
         if not self.api:
-            self.browse_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.browse_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.browse_status.configure(text="⏳  Chargement…", text_color="gray")
+        self.browse_status.configure(text="⏳  Chargement…", text_color=T_SECONDAIRE)
         self._browse_force_reload = bool(force)
         self._run(self._do_browse_load)
 
@@ -2671,7 +3311,7 @@ class App(_AppBase):
             def prog(n):
                 """Callback de progression (avancement du scan)."""
                 self._ui(self.browse_status.configure,
-                         text=f"⏳  {n} vidéos lues…", text_color="gray")
+                         text=f"⏳  {n} vidéos lues…", text_color=T_SECONDAIRE)
             try:
                 channels = self.api.get_channels()
             except Exception:
@@ -2687,7 +3327,7 @@ class App(_AppBase):
                      force=getattr(self, "_browse_force_reload", False),
                      progress_cb=prog)
         except Exception as e:
-            self._ui(self.browse_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.browse_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Chargement explorateur : {e}")
 
     def _browse_after_videos(self):
@@ -2706,16 +3346,16 @@ class App(_AppBase):
             text=(alerte if alerte else
                   f"✅  {len(self.videos)} vidéos, {len(self.browse_channels)} chaîne(s)  ·  "
                   f"chargé à {datetime.now().strftime('%H:%M')}"),
-            text_color="#ef4444" if alerte else "#22c55e")
+            text_color=T_ERREUR if alerte else "#22c55e")
         if alerte:
             self._log(alerte)
         self._log(f"Onglet Vidéos : {len(self.videos)} vidéos (magasin partagé).")
 
     def _browse_refresh_channel_menu(self):
         """Remplit le filtre par chaîne avec les titres chargés."""
-        vals = ["Toutes chaînes"] + sorted(self.browse_chan_by_url.values(), key=str.lower)
+        vals = ["Toutes"] + sorted(self.browse_chan_by_url.values(), key=str.lower)
         self.browse_chan.configure(values=vals)
-        self.browse_chan.set("Toutes chaînes")
+        self.browse_chan.set("Toutes")
         self._browse_refresh_type_menu()
 
     def _browse_refresh_type_menu(self):
@@ -2723,9 +3363,9 @@ class App(_AppBase):
         Sans danger si appelé avant que les types soient chargés."""
         titles = sorted((self.type_map or {}).keys(), key=str.lower)
         if hasattr(self, "browse_type"):
-            self.browse_type.configure(values=["Tous types"] + titles)
-            if self.browse_type.get() not in (["Tous types"] + titles):
-                self.browse_type.set("Tous types")
+            self.browse_type.configure(values=["Tous"] + titles)
+            if self.browse_type.get() not in (["Tous"] + titles):
+                self.browse_type.set("Tous")
         if hasattr(self, "browse_mass_type"):
             self.browse_mass_type.configure(values=titles or ["(aucun type)"])
             if titles and self.browse_mass_type.get() not in titles:
@@ -2784,7 +3424,7 @@ class App(_AppBase):
             vids = [v for v in vids if PodAPI.is_unencoded(v)]
         # Filtre chaîne
         ch = self.browse_chan.get()
-        if ch and ch != "Toutes chaînes":
+        if ch and ch != "Toutes":
             # On retrouve l'URL de la chaîne à partir de son titre
             wanted = [u for u, t in self.browse_chan_by_url.items() if t == ch]
             def in_chan(v):
@@ -2796,8 +3436,8 @@ class App(_AppBase):
                 return any(w in cs for w in wanted)
             vids = [v for v in vids if in_chan(v)]
         # Filtre type (valeur unique : on compare l'URL du type)
-        ty = self.browse_type.get() if hasattr(self, "browse_type") else "Tous types"
-        if ty and ty != "Tous types":
+        ty = self.browse_type.get() if hasattr(self, "browse_type") else "Tous"
+        if ty and ty != "Tous":
             turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
             def has_type(v):
                 """Teste si une vidéo est du type filtré."""
@@ -2813,6 +3453,23 @@ class App(_AppBase):
                 return f"{v.get('title','')} {v.get('slug','')} {self._browse_owner_label(v)}".lower()
             vids = [v for v in vids if txt in hay(v)]
 
+        # Détection d'anomalies (doublons, brouillons oubliés). Ces filtres
+        # s'appliquent APRÈS les filtres ordinaires : on cherche les doublons
+        # parmi les vidéos retenues, pas dans tout le fonds.
+        detect = self.browse_detect.get() if hasattr(self, "browse_detect") else ""
+        if detect == "Doublons de titre":
+            vids = self._duplicate_title_videos(vids)
+        elif detect == "Vieux brouillons":
+            cutoff = self._months_ago_iso(self._browse_months_value())
+            vids = [v for v in vids if PodAPI.is_stale_draft(v, cutoff)]
+
+        # Tri demandé. Le tri alphabétique ignore la casse et les espaces de
+        # début, sans quoi «  atelier » passerait avant « Anatomie ».
+        tri = self.browse_tri.get() if hasattr(self, "browse_tri") else "Plus récentes"
+        if tri in ("A → Z", "Z → A"):
+            vids = sorted(vids,
+                          key=lambda v: (v.get("title") or "").strip().lower(),
+                          reverse=(tri == "Z → A"))
         self.browse_filtered = vids
         self._render_browse_list()
 
@@ -2821,10 +3478,11 @@ class App(_AppBase):
         for w in self.browse_list.winfo_children():
             w.destroy()
         self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
+        self._maj_bouton_masse()
 
         if not self.browse_filtered:
             ctk.CTkLabel(self.browse_list, text="Aucune vidéo ne correspond.",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             return
 
         CAP = 300
@@ -2841,7 +3499,7 @@ class App(_AppBase):
             tag = "📝" if v.get("is_draft") else "🌐"        # brouillon / public
             btn = ctk.CTkButton(
                 self.browse_list, text=f"{tag}  {title}", anchor="w", height=28,
-                fg_color=("gray75", "gray30") if is_sel else "transparent",
+                fg_color=S_SELECTION if is_sel else "transparent",
                 text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                 font=police,
                 command=lambda vv=v: self._browse_select(vv))
@@ -2858,7 +3516,7 @@ class App(_AppBase):
         if len(self.browse_filtered) > CAP:
             ctk.CTkLabel(self.browse_list,
                          text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
 
     # ── Sélection multiple (Ctrl+clic / Maj+clic) ─────────────────────────
 
@@ -2886,6 +3544,134 @@ class App(_AppBase):
         self._browse_refresh_multi()
         return "break"
 
+    def _browse_months_value(self) -> int:
+        """Lit le champ « mois » de l'onglet Vidéos (entier ≥ 0, défaut 6)."""
+        try:
+            return max(0, int(self.browse_months.get().strip()))
+        except Exception:
+            return 6
+
+    def _lot_interrompre(self):
+        """Demande l'arrêt du traitement par lot en cours.
+
+        L'arrêt est PROPRE : la vidéo en cours est menée à son terme, et le
+        traitement s'arrête avant la suivante. On ne coupe jamais une opération
+        au milieu, ce qui laisserait un état incohérent côté serveur."""
+        self.lot_interrompu.set()
+        try:
+            self.browse_stop_btn.configure(state="disabled",
+                                           text="⏳  Arrêt en cours…")
+            self.browse_multi_msg.configure(
+                text="Arrêt demandé : la vidéo en cours est terminée…",
+                text_color=T_ALERTE)
+        except Exception:
+            pass
+
+    def _lot_debut(self):
+        """Active le bouton d'interruption au démarrage d'un lot."""
+        try:
+            self.browse_stop_btn.configure(state="normal",
+                                           text="🛑  Interrompre le traitement")
+        except Exception:
+            pass
+
+    def _lot_fin(self):
+        """Désactive le bouton d'interruption à la fin d'un lot."""
+        try:
+            self.browse_stop_btn.configure(state="disabled",
+                                           text="🛑  Interrompre le traitement")
+        except Exception:
+            pass
+
+    def _browse_tout_selectionner(self):
+        """Sélectionne TOUTES les vidéos filtrées, affichées ou non.
+
+        L'affichage est plafonné à 300 lignes pour que l'interface reste
+        fluide, mais ce plafond ne doit pas limiter les actions : sans ce
+        bouton, il serait impossible de traiter plus de 300 vidéos d'un coup
+        depuis cet onglet."""
+        if not self.browse_filtered:
+            return
+        self.browse_multi = {v.get("slug") for v in self.browse_filtered}
+        self.browse_ancre = None
+        self._browse_refresh_multi()
+
+    def _browse_multi_delete(self):
+        """Supprime définitivement les vidéos sélectionnées.
+
+        DOUBLE CONFIRMATION : un avertissement, puis la saisie du NOMBRE de
+        vidéos concernées. Recopier un chiffre oblige à regarder combien on
+        s'apprête à détruire — un simple « Oui » se clique sans lire.
+
+        Pod n'a pas de corbeille : l'opération est irréversible.
+        """
+        videos = self._browse_videos_multi()
+        n = len(videos)
+        if not n:
+            return
+
+        if not messagebox.askyesno(
+                "Suppression définitive",
+                f"Supprimer définitivement {n} vidéo(s) ?\n\n"
+                "Cette action est IRRÉVERSIBLE : Pod n'a pas de corbeille, les "
+                "fichiers et leurs métadonnées seront perdus.\n\n"
+                "Astuce : pour masquer des vidéos sans les perdre, utilisez "
+                "plutôt « Mettre en brouillon »."):
+            return
+
+        saisie = simpledialog.askstring(
+            "Confirmation",
+            f"Pour confirmer, saisissez le nombre de vidéos à supprimer :\n\n"
+            f"       {n}\n",
+            parent=self)
+        if saisie is None:
+            return                                   # annulé
+        if saisie.strip() != str(n):
+            self.browse_multi_msg.configure(
+                text="Suppression annulée : le nombre saisi ne correspond pas.",
+                text_color=T_ALERTE)
+            return
+
+        self.browse_multi_msg.configure(text="⏳ Suppression en cours…",
+                                        text_color=T_SECONDAIRE)
+        self._lot_debut()
+        self._run(self._do_browse_multi_delete, videos)
+
+    def _do_browse_multi_delete(self, videos):
+        """(Thread) Supprime les vidéos une par une, puis rafraîchit."""
+        ok = fail = 0
+        self.lot_interrompu.clear()
+        interrompu = False
+        for v in videos:
+            if self.lot_interrompu.is_set():
+                interrompu = True
+                break
+            slug = v.get("slug", "?")
+            try:
+                self.api.delete_video(v)
+                with self._videos_lock:
+                    if v in self.videos:
+                        self.videos.remove(v)
+                self._sync_video_caches(slug, removed=True)
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"❌ Suppression {slug} : {e}")
+            self._ui(self.browse_multi_msg.configure,
+                     text=f"⏳ {ok + fail}/{len(videos)} traitée(s)…", text_color=T_SECONDAIRE)
+
+        reste = len(videos) - ok - fail
+        mention = f" — INTERROMPU, {reste} non supprimée(s)" if interrompu else ""
+        self._ui(self._log,
+                 f"🗑 Suppression multiple : {ok} supprimée(s), {fail} échec(s){mention}.")
+        self._ui(self._lot_fin)
+        # La sélection porte sur des vidéos qui n'existent plus : on la vide.
+        self._ui(self._browse_vider_multi)
+        self._ui(self._browse_set_msg,
+                 f"🗑 {ok} vidéo(s) supprimée(s)" + (f", {fail} échec(s)." if fail else "."),
+                 "#22c55e" if not fail else "#f59e0b")
+        self._ui(self._refresh_video_views)
+
     def _browse_vider_multi(self):
         """Annule la sélection multiple et revient au détail d'une vidéo."""
         self.browse_multi.clear()
@@ -2901,7 +3687,7 @@ class App(_AppBase):
                 if slug in self.browse_multi:
                     btn.configure(fg_color=("#93c5fd", "#1e3a8a"))
                 elif self.browse_selected and slug == self.browse_selected.get("slug"):
-                    btn.configure(fg_color=("gray75", "gray30"))
+                    btn.configure(fg_color=S_SELECTION)
                 else:
                     btn.configure(fg_color="transparent")
             except Exception:
@@ -2909,7 +3695,10 @@ class App(_AppBase):
         self._browse_render_detail()
 
     def _browse_videos_multi(self) -> list:
-        """Renvoie les objets vidéo correspondant à la sélection multiple."""
+        """Renvoie les objets vidéo correspondant à la sélection multiple.
+
+        On parcourt TOUTES les vidéos filtrées, pas seulement les 300 affichées :
+        « Tout sélectionner » peut en retenir davantage."""
         return [v for v in self.browse_filtered if v.get("slug") in self.browse_multi]
 
     def _browse_render_multi_panel(self):
@@ -2930,22 +3719,31 @@ class App(_AppBase):
         ctk.CTkLabel(self.browse_detail, text=f"☑  {n} vidéo(s) sélectionnée(s)",
                      font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=6, pady=(6, 2))
+        # Une sélection peut dépasser les lignes visibles : on le dit clairement,
+        # pour que personne n'agisse sur plus de vidéos qu'il ne croit.
+        caches = n - len(getattr(self, "browse_rowbtns", {}).keys() & self.browse_multi)
+        if caches > 0:
+            ctk.CTkLabel(self.browse_detail,
+                         text=f"⚠  dont {caches} hors affichage (liste limitée à 300 lignes)",
+                         font=ctk.CTkFont(size=11), text_color=T_ALERTE,
+                         wraplength=360, justify="left").pack(anchor="w", padx=6)
         ctk.CTkLabel(self.browse_detail,
                      text="Ctrl+clic pour ajouter ou retirer une vidéo, "
                           "Maj+clic pour une plage.",
-                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET,
                      wraplength=360, justify="left").pack(anchor="w", padx=6)
 
         # Aperçu des titres retenus, pour éviter d'agir à l'aveugle.
         apercu = ctk.CTkScrollableFrame(self.browse_detail, height=110,
-                                        label_text="Vidéos concernées")
+                                        label_text="Vidéos concernées", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         apercu.pack(fill="x", padx=4, pady=8)
         for v in videos[:60]:
             ctk.CTkLabel(apercu, text=f"• {(v.get('title') or '(sans titre)')[:46]}",
                          font=ctk.CTkFont(size=11), anchor="w").pack(anchor="w")
         if n > 60:
             ctk.CTkLabel(apercu, text=f"… et {n - 60} autre(s)",
-                         font=ctk.CTkFont(size=11), text_color="gray").pack(anchor="w")
+                         font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE).pack(anchor="w")
 
         ctk.CTkLabel(self.browse_detail, text="Appliquer à toute la sélection",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(
@@ -2967,9 +3765,33 @@ class App(_AppBase):
             wraplength=360, justify="left", anchor="w")
         self.browse_multi_msg.pack(fill="x", padx=6, pady=(6, 2))
 
+        # Interruption d'un traitement en cours. Désactivé au repos : il ne
+        # sert que pendant un lot, et un bouton toujours cliquable laisserait
+        # croire qu'il fait quelque chose.
+        self.browse_stop_btn = ctk.CTkButton(
+            self.browse_detail, text="🛑  Interrompre le traitement",
+            fg_color=C_ALERTE, hover_color=C_ALERTE_SURV, state="disabled",
+            command=self._lot_interrompre)
+        self.browse_stop_btn.pack(fill="x", padx=6, pady=(0, 2))
+
+        # ── Zone sensible ────────────────────────────────────────────────
+        # La suppression est SÉPARÉE des autres actions, et non alignée avec
+        # elles : dans un onglet de travail quotidien, elle ne doit pas être à
+        # portée de clic distrait. Elle est protégée par une double
+        # confirmation dont la seconde exige de saisir le nombre de vidéos.
+        ctk.CTkFrame(self.browse_detail, height=1,
+                     fg_color=S_FILET).pack(fill="x", padx=6, pady=(10, 6))
+        ctk.CTkLabel(self.browse_detail, text="Zone sensible",
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=T_ERREUR).pack(anchor="w", padx=6)
+        ctk.CTkButton(self.browse_detail,
+                      text=f"🗑  Supprimer définitivement ces {n} vidéo(s)",
+                      anchor="w", fg_color=C_DESTRUCTIF, hover_color=C_DESTR_SURV,
+                      command=self._browse_multi_delete).pack(fill="x", padx=6, pady=4)
+
         ctk.CTkButton(self.browse_detail, text="✖  Annuler la sélection",
-                      fg_color="gray35", hover_color="gray28",
-                      command=self._browse_vider_multi).pack(fill="x", padx=6, pady=(8, 6))
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._browse_vider_multi, text_color=T_SUR_NEUTRE).pack(fill="x", padx=6, pady=(8, 6))
 
     def _browse_select(self, v):
         """Sélectionne une vidéo et affiche son panneau de détail.
@@ -2988,7 +3810,7 @@ class App(_AppBase):
                 b.configure(fg_color="transparent")            # désélection
             b = boutons.get(nouveau)
             if b is not None and b.winfo_exists():
-                b.configure(fg_color=("gray75", "gray30"))     # sélection
+                b.configure(fg_color=S_SELECTION)     # sélection
         else:
             self._render_browse_list()   # repli : liste pas encore construite
         self._browse_render_detail()
@@ -3020,9 +3842,9 @@ class App(_AppBase):
             if not self.access_groups:
                 self.browse_multi_msg.configure(
                     text="Aucun groupe d'accès chargé (voir l'onglet Groupes d'accès).",
-                    text_color="#f59e0b")
+                    text_color=T_ALERTE)
                 return
-            groupes = self._clean_pick_groups()      # fenêtre partagée
+            groupes = self._pick_groups()      # fenêtre partagée
             if groupes is None:
                 return                                # annulé
             libelle = f"restriction à {len(groupes)} groupe(s)"
@@ -3030,7 +3852,7 @@ class App(_AppBase):
             if not self.browse_channels:
                 self.browse_multi_msg.configure(
                     text="Aucune chaîne chargée. Cliquez sur « Rafraîchir ».",
-                    text_color="#f59e0b")
+                    text_color=T_ALERTE)
                 return
             # Le sélecteur de chaînes rend la main par CALLBACK : la suite du
             # traitement se poursuit donc dans _browse_multi_channels.
@@ -3045,21 +3867,76 @@ class App(_AppBase):
                 f"Appliquer « {libelle} » à {len(videos)} vidéo(s) ?"):
             return
         self.browse_multi_msg.configure(text="⏳ Application en cours…",
-                                        text_color="gray")
+                                        text_color=T_SECONDAIRE)
+        self._lot_debut()
         self._run(self._do_browse_multi_action, videos, payload, groupes,
                   chaines, libelle)
 
+    def _demander_mode_chaines(self, nb_videos: int, nb_chaines: int):
+        """Demande s'il faut AJOUTER aux chaînes existantes ou les REMPLACER.
+
+        Une vidéo peut légitimement appartenir à plusieurs chaînes : remplacer
+        systématiquement ferait perdre des affectations sans prévenir. On laisse
+        donc le choix, en proposant l'ajout par défaut — l'option la moins
+        destructrice.
+
+        Renvoie "ajouter", "remplacer", ou None si l'utilisateur annule.
+        """
+        fen = ctk.CTkToplevel(self)
+        fen.title("Affectation aux chaînes")
+        fen.geometry("470x300")
+        fen.resizable(False, False)
+        _focus_toplevel(fen, self)
+        choix = {"mode": None}
+
+        ctk.CTkLabel(fen, text="Comment appliquer ces chaînes ?",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(
+            anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(fen,
+                     text=f"{nb_chaines} chaîne(s) choisie(s) pour {nb_videos} vidéo(s).",
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(
+            anchor="w", padx=20, pady=(0, 12))
+
+        def retenir(mode):
+            """Mémorise le mode choisi et referme la fenêtre."""
+            choix["mode"] = mode
+            fen.destroy()
+
+        ctk.CTkButton(fen, text="➕  Ajouter aux chaînes existantes", height=40,
+                      fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+                      command=lambda: retenir("ajouter")).pack(fill="x", padx=20, pady=4)
+        ctk.CTkLabel(fen,
+                     text="Les vidéos restent dans leurs chaînes actuelles ; "
+                          "les nouvelles s'y ajoutent.",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET,
+                     wraplength=420, justify="left").pack(anchor="w", padx=24)
+
+        ctk.CTkButton(fen, text="🔄  Remplacer les chaînes actuelles", height=40,
+                      fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
+                      command=lambda: retenir("remplacer")).pack(fill="x", padx=20,
+                                                                 pady=(12, 4))
+        ctk.CTkLabel(fen,
+                     text="Les affectations existantes seront PERDUES et remplacées "
+                          "par la nouvelle sélection.",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET,
+                     wraplength=420, justify="left").pack(anchor="w", padx=24)
+
+        ctk.CTkButton(fen, text="Annuler", width=110, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=fen.destroy, text_color=T_SUR_NEUTRE).pack(pady=(14, 10))
+
+        self.wait_window(fen)
+        return choix["mode"]
+
     def _browse_multi_channels(self, videos, chaines):
         """Suite du traitement après le choix des chaînes (appelé en callback)."""
-        if not messagebox.askyesno(
-                "Confirmer l'action",
-                f"Affecter {len(videos)} vidéo(s) à {len(chaines)} chaîne(s) ?\n\n"
-                "Les chaînes actuelles de ces vidéos seront REMPLACÉES."):
-            return
+        mode = self._demander_mode_chaines(len(videos), len(chaines))
+        if mode is None:
+            return                                   # annulé
+        libelle = ("ajout à" if mode == "ajouter" else "remplacement par")
         self.browse_multi_msg.configure(text="⏳ Application en cours…",
-                                        text_color="gray")
-        self._run(self._do_browse_multi_action, videos, None, None, chaines,
-                  f"affectation à {len(chaines)} chaîne(s)")
+                                        text_color=T_SECONDAIRE)
+        self._run(self._do_browse_multi_action, videos, None, None,
+                  (chaines, mode), f"{libelle} {len(chaines)} chaîne(s)")
 
     def _do_browse_multi_action(self, videos, payload, groupes, chaines, libelle):
         """(Thread) Applique l'action à chaque vidéo, une par une.
@@ -3067,7 +3944,15 @@ class App(_AppBase):
         Traitement séquentiel : plus lent que des envois simultanés, mais
         prévisible, et une erreur reste facile à situer."""
         ok = fail = 0
+        self.lot_interrompu.clear()
+        interrompu = False
         for v in videos:
+            # On s'arrête ENTRE deux vidéos, jamais au milieu d'une opération :
+            # la vidéo en cours est toujours menée à son terme, pour ne pas
+            # laisser un état incohérent côté serveur.
+            if self.lot_interrompu.is_set():
+                interrompu = True
+                break
             slug = v.get("slug", "?")
             try:
                 if payload is not None:
@@ -3079,20 +3964,38 @@ class App(_AppBase):
                            "is_restricted": bool(groupes), "is_draft": False}
                     self._sync_video_caches(slug, maj)
                 else:
-                    self.api.assign_video_to_channels(v, chaines)
-                    self._sync_video_caches(slug, {"channel": list(chaines)})
+                    # `chaines` est un couple (liste d'URLs, mode) : « ajouter »
+                    # conserve les chaînes actuelles de CHAQUE vidéo — elles
+                    # diffèrent d'une vidéo à l'autre — tandis que « remplacer »
+                    # impose la même liste à toutes.
+                    urls, mode = chaines
+                    if mode == "ajouter":
+                        # `_rel_urls` : le champ `channel` peut contenir des URLs
+                        # ou des objets imbriqués selon le sérialiseur.
+                        actuelles = self._rel_urls(v.get("channel"), normalise=False)
+                        finales = list(dict.fromkeys(list(actuelles) + list(urls)))
+                    else:
+                        finales = list(urls)
+                    self.api.assign_video_to_channels(v, finales)
+                    self._sync_video_caches(slug, {"channel": finales})
                 ok += 1
             except Exception as e:
                 fail += 1
                 self._ui(self._log, f"❌ {slug} : {e}")
             self._ui(self.browse_multi_msg.configure,
                      text=f"⏳ {ok + fail}/{len(videos)} traitée(s)…",
-                     text_color="gray")
+                     text_color=T_SECONDAIRE)
 
-        self._ui(self._log, f"Sélection multiple — {libelle} : {ok} OK, {fail} échec(s).")
+        reste = len(videos) - ok - fail
+        mention = f" — INTERROMPU, {reste} vidéo(s) non traitée(s)" if interrompu else ""
+        self._ui(self._log,
+                 f"Sélection multiple — {libelle} : {ok} OK, {fail} échec(s){mention}.")
         self._ui(self.browse_multi_msg.configure,
-                 text=f"✅ Terminé : {ok} réussie(s), {fail} échec(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
+                 text=(f"⏹ Interrompu : {ok} traitée(s), {reste} non traitée(s)."
+                       if interrompu
+                       else f"✅ Terminé : {ok} réussie(s), {fail} échec(s)."),
+                 text_color=T_ALERTE if (interrompu or fail) else "#22c55e")
+        self._ui(self._lot_fin)
         # La sélection est conservée : on peut enchaîner une autre action sur
         # les mêmes vidéos (restreindre puis affecter à une chaîne, par exemple).
         self._ui(self._refresh_video_views)
@@ -3111,7 +4014,7 @@ class App(_AppBase):
         if not v:
             ctk.CTkLabel(self.browse_detail,
                          text="Sélectionnez une vidéo dans la liste pour l'éditer.",
-                         text_color="gray").pack(pady=14)
+                         text_color=T_SECONDAIRE).pack(pady=14)
             return
 
         slug = v.get("slug", "?")
@@ -3131,7 +4034,7 @@ class App(_AppBase):
                 f"encodée : {'oui' if v.get('encoded') else 'non'}\n"
                 f"chaînes : {chan_names}")
         ctk.CTkLabel(self.browse_detail, text=info, justify="left", anchor="w",
-                     text_color="gray80", font=ctk.CTkFont(size=12)).pack(
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(
             anchor="w", padx=4, pady=(2, 4))
 
         # Prévisualisation : PodAdmin (Tkinter) n'a pas de lecteur vidéo intégré,
@@ -3147,8 +4050,8 @@ class App(_AppBase):
         self.browse_title_entry = ctk.CTkEntry(ren)
         self.browse_title_entry.insert(0, v.get("title", ""))
         self.browse_title_entry.pack(side="left", fill="x", expand=True)
-        ctk.CTkButton(ren, text="Renommer", width=90, fg_color="gray35",
-                      command=lambda: self._browse_rename(v)).pack(side="left", padx=6)
+        ctk.CTkButton(ren, text="Renommer", width=90, fg_color=C_NEUTRE,
+                      command=lambda: self._browse_rename(v), text_color=T_SUR_NEUTRE).pack(side="left", padx=6)
 
         # — Statut (interrupteurs) —
         # Important : on met à jour le cache local AVANT de lancer le thread,
@@ -3174,7 +4077,7 @@ class App(_AppBase):
         status_seg.pack(fill="x", padx=4, pady=(0, 2))
         ctk.CTkLabel(self.browse_detail,
                      text="Restreint = visible mais connexion requise.",
-                     font=ctk.CTkFont(size=10), text_color="gray60").pack(anchor="w", padx=6)
+                     font=ctk.CTkFont(size=10), text_color=T_DISCRET).pack(anchor="w", padx=6)
         def _apply_status(choice):
             # Calcule les deux booléens à partir du statut choisi
             payload = {"Brouillon": {"is_draft": True, "is_restricted": False},
@@ -3206,7 +4109,7 @@ class App(_AppBase):
         ctk.CTkLabel(self.browse_detail,
                      text="À cocher pour une vidéo filmée à 360°, afin que Pod utilise le "
                           "lecteur immersif.",
-                     font=ctk.CTkFont(size=10), text_color="gray60",
+                     font=ctk.CTkFont(size=10), text_color=T_DISCRET,
                      wraplength=360, justify="left").pack(anchor="w", padx=6)
 
         # — Restreindre à des groupes d'accès —
@@ -3217,7 +4120,7 @@ class App(_AppBase):
         if not self.access_groups:
             ctk.CTkLabel(self.browse_detail,
                          text="(aucun groupe d'accès chargé)",
-                         font=ctk.CTkFont(size=11), text_color="gray60").pack(anchor="w", padx=6)
+                         font=ctk.CTkFont(size=11), text_color=T_DISCRET).pack(anchor="w", padx=6)
         else:
             # URLs des groupes actuellement appliqués à la vidéo (normalisées)
             cur = v.get("restrict_access_to_groups") or []
@@ -3248,7 +4151,7 @@ class App(_AppBase):
                     status_seg.set("Restreint")
                 self._browse_patch(v, payload, f"groupes → {len(urls)} groupe(s)")
             ctk.CTkButton(self.browse_detail, text="Appliquer les groupes", width=180,
-                          height=26, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
+                          height=26, fg_color=C_ACTION, hover_color=C_ACTION_SURV, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
 
 
         ctk.CTkLabel(self.browse_detail, text="Type", anchor="w",
@@ -3259,7 +4162,7 @@ class App(_AppBase):
         url_to_title = {str(u).rstrip("/"): t for t, u in (self.type_map or {}).items()}
         cur_title = url_to_title.get(str(cur_url).rstrip("/"), "(non défini)")
         titles = sorted((self.type_map or {}).keys(), key=str.lower) or ["(aucun type)"]
-        type_menu = ctk.CTkOptionMenu(self.browse_detail, width=220, values=titles)
+        type_menu = ctk.CTkOptionMenu(self.browse_detail, width=220, values=titles, **STYLE_CHAMP)
         type_menu.set(cur_title if cur_title in titles else titles[0])
         type_menu.pack(anchor="w", padx=4)
         def _apply_type(choice):
@@ -3275,10 +4178,10 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
         rel = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         rel.pack(fill="x", padx=4)
-        ctk.CTkButton(rel, text="👥  Co-propriétaires…", fg_color="gray35",
-                      command=lambda: self._browse_edit_owners(v)).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(rel, text="🗂  Chaînes…", fg_color="gray35",
-                      command=lambda: self._browse_edit_channels(v)).pack(side="left")
+        ctk.CTkButton(rel, text="👥  Co-propriétaires…", fg_color=C_NEUTRE,
+                      command=lambda: self._browse_edit_owners(v), text_color=T_SUR_NEUTRE).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(rel, text="🗂  Chaînes…", fg_color=C_NEUTRE,
+                      command=lambda: self._browse_edit_channels(v), text_color=T_SUR_NEUTRE).pack(side="left")
 
         # — Sous-titres —
         ctk.CTkLabel(self.browse_detail, text="Sous-titres", anchor="w",
@@ -3286,12 +4189,12 @@ class App(_AppBase):
         # Conteneur listant les pistes existantes (rempli en arrière-plan)
         self.browse_subs = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         self.browse_subs.pack(fill="x", padx=4)
-        ctk.CTkLabel(self.browse_subs, text="Chargement…", text_color="gray",
+        ctk.CTkLabel(self.browse_subs, text="Chargement…", text_color=T_SECONDAIRE,
                      font=ctk.CTkFont(size=11)).pack(anchor="w")
         # Bouton d'ajout d'un fichier .vtt / .srt
         ctk.CTkButton(self.browse_detail, text="➕  Ajouter un sous-titre (.vtt / .srt)",
-                      fg_color="gray35",
-                      command=lambda: self._sub_add_dialog(v)).pack(anchor="w", padx=4, pady=(6, 0))
+                      fg_color=C_NEUTRE,
+                      command=lambda: self._sub_add_dialog(v), text_color=T_SUR_NEUTRE).pack(anchor="w", padx=4, pady=(6, 0))
         # Chargement des pistes de cette vidéo en arrière-plan
         self._run(self._sub_load, v)
 
@@ -3301,22 +4204,22 @@ class App(_AppBase):
         ctk.CTkLabel(self.browse_detail,
                      text="Remplace le fichier vidéo par un nouveau puis relance l'encodage. "
                           "La vidéo garde son titre, ses chaînes, ses droits… seul le média change.",
-                     text_color="gray70", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
                      justify="left", wraplength=360).pack(anchor="w", padx=4)
         ctk.CTkButton(self.browse_detail, text="🎬  Remplacer le fichier & ré-encoder",
-                      fg_color="#b45309", hover_color="#92400e",
+                      fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
                       command=lambda: self._browse_replace_source(v)).pack(anchor="w", padx=4, pady=(4, 0))
 
         # — Suppression —
         ctk.CTkLabel(self.browse_detail, text="Zone sensible", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#ef4444").pack(anchor="w", padx=4, pady=(14, 2))
+                     text_color=T_ERREUR).pack(anchor="w", padx=4, pady=(14, 2))
         ctk.CTkButton(self.browse_detail, text="🗑  Supprimer cette vidéo",
-                      fg_color="#b91c1c", hover_color="#991b1b",
+                      fg_color=C_DESTRUCTIF, hover_color=C_DESTR_SURV,
                       command=lambda: self._browse_delete(v)).pack(anchor="w", padx=4, pady=(0, 8))
 
         # Zone de message du panneau
-        self.browse_msg = ctk.CTkLabel(self.browse_detail, text="", text_color="gray",
+        self.browse_msg = ctk.CTkLabel(self.browse_detail, text="", text_color=T_SECONDAIRE,
                                        font=ctk.CTkFont(size=11), wraplength=420, justify="left")
         self.browse_msg.pack(anchor="w", padx=4, pady=(4, 8))
 
@@ -3340,18 +4243,18 @@ class App(_AppBase):
         for w in self.browse_subs.winfo_children():
             w.destroy()
         if err:
-            ctk.CTkLabel(self.browse_subs, text=f"❌ {err}", text_color="#ef4444",
+            ctk.CTkLabel(self.browse_subs, text=f"❌ {err}", text_color=T_ERREUR,
                          font=ctk.CTkFont(size=11)).pack(anchor="w")
             return
         if not tracks:
-            ctk.CTkLabel(self.browse_subs, text="Aucun sous-titre.", text_color="gray",
+            ctk.CTkLabel(self.browse_subs, text="Aucun sous-titre.", text_color=T_SECONDAIRE,
                          font=ctk.CTkFont(size=11)).pack(anchor="w")
             return
         # Dictionnaires code→libellé pour un affichage lisible
         langs = dict(SUBTITLE_LANGS)
         kinds = dict(SUBTITLE_KINDS)
         for t in tracks:
-            row = ctk.CTkFrame(self.browse_subs, fg_color=("gray85", "gray17"),
+            row = ctk.CTkFrame(self.browse_subs, fg_color=S_LIGNE,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
             lang = langs.get(t.get("lang"), t.get("lang"))
@@ -3359,9 +4262,14 @@ class App(_AppBase):
             ctk.CTkLabel(row, text=f"{lang} · {kind}", anchor="w",
                          font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=5,
                                                          fill="x", expand=True)
-            ctk.CTkButton(row, text="🗑", width=34, fg_color="#b91c1c",
-                          hover_color="#991b1b",
-                          command=lambda tt=t: self._sub_delete(v, tt)).pack(side="right", padx=6)
+            # Déjà une icône seule, mais rouge en permanence : même motif
+            # répété en liste que les chaînes et les thèmes.
+            btn_s = ctk.CTkButton(row, text="🗑", width=34,
+                                  fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                                  text_color=T_SUR_NEUTRE,
+                                  command=lambda tt=t: self._sub_delete(v, tt))
+            btn_s.pack(side="right", padx=6)
+            ajouter_infobulle(btn_s, "Supprimer ce sous-titre")
 
     def _sub_add_dialog(self, v):
         """Fenêtre d'ajout : choix langue + type + fichier .vtt/.srt."""
@@ -3378,20 +4286,20 @@ class App(_AppBase):
         # Menu Langue
         ctk.CTkLabel(win, text="Langue :").pack(padx=16, anchor="w")
         lang_labels = [f"{lbl} ({code})" for code, lbl in SUBTITLE_LANGS]
-        lang_menu = ctk.CTkOptionMenu(win, values=lang_labels, width=260)
+        lang_menu = ctk.CTkOptionMenu(win, values=lang_labels, width=260, **STYLE_CHAMP)
         lang_menu.set("Français (fr)")
         lang_menu.pack(padx=16, pady=(0, 8), anchor="w")
 
         # Menu Type
         ctk.CTkLabel(win, text="Type :").pack(padx=16, anchor="w")
         kind_menu = ctk.CTkOptionMenu(
-            win, values=[lbl for _c, lbl in SUBTITLE_KINDS], width=260)
+            win, values=[lbl for _c, lbl in SUBTITLE_KINDS], width=260, **STYLE_CHAMP)
         kind_menu.set("Sous-titres")
         kind_menu.pack(padx=16, pady=(0, 8), anchor="w")
 
         # Sélection du fichier
         path_var = {"p": None}
-        path_lbl = ctk.CTkLabel(win, text="Aucun fichier choisi.", text_color="gray",
+        path_lbl = ctk.CTkLabel(win, text="Aucun fichier choisi.", text_color=T_SECONDAIRE,
                                 font=ctk.CTkFont(size=11), wraplength=400, justify="left")
 
         def choose():
@@ -3404,7 +4312,7 @@ class App(_AppBase):
                 path_lbl.configure(text=os.path.basename(p), text_color="#ffffff")
 
         ctk.CTkButton(win, text="📄  Choisir un fichier .vtt / .srt",
-                      command=choose, fg_color="gray35").pack(padx=16, pady=(4, 2), anchor="w")
+                      command=choose, fg_color=C_NEUTRE, text_color=T_SUR_NEUTRE).pack(padx=16, pady=(4, 2), anchor="w")
         path_lbl.pack(padx=16, anchor="w")
 
         def valider():
@@ -3415,17 +4323,17 @@ class App(_AppBase):
             path = path_var["p"]
             if not path:
                 path_lbl.configure(text="⚠️ Choisissez d'abord un fichier.",
-                                   text_color="#f59e0b")
+                                   text_color=T_ALERTE)
                 return
             # Garde-fou d'extension (la conversion gère .srt, sinon .vtt attendu)
             if not path.lower().endswith((".vtt", ".srt")):
                 path_lbl.configure(text="⚠️ Le fichier doit être .vtt ou .srt.",
-                                   text_color="#f59e0b")
+                                   text_color=T_ALERTE)
                 return
             win.destroy()
             self._run(self._sub_do_add, v, lang_code, kind_code, path)
 
-        ctk.CTkButton(win, text="Ajouter", fg_color="#16a34a", hover_color="#15803d",
+        ctk.CTkButton(win, text="Ajouter", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
                       command=valider).pack(pady=14)
 
     def _sub_do_add(self, v, lang, kind, path):
@@ -3458,6 +4366,26 @@ class App(_AppBase):
         except Exception as e:
             self._ui(self._log, f"❌ Suppression sous-titre : {e}")
             self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+
+    def _maj_bouton_masse(self):
+        """Inscrit le nombre de vidéos concernées dans le bouton de masse.
+
+        Appelée à chaque rendu de la liste filtrée : le compte doit suivre le
+        filtre, sinon il devient un mensonge — pire qu'une absence de compte.
+
+        À zéro vidéo le bouton est DÉSACTIVÉ plutôt qu'affiché avec « 0 » : il
+        n'y a rien à appliquer, et un bouton actif qui ne fait rien laisse
+        croire à un échec."""
+        bouton = getattr(self, "browse_mass_btn", None)
+        if bouton is None:
+            return
+        n = len(getattr(self, "browse_filtered", []) or [])
+        if n == 0:
+            bouton.configure(text="Appliquer", state="disabled")
+        elif n == 1:
+            bouton.configure(text="Appliquer à 1 vidéo", state="normal")
+        else:
+            bouton.configure(text=f"Appliquer aux {n} vidéos", state="normal")
 
     def _browse_mass_set_type(self):
         """Affecte le type choisi à TOUTES les vidéos actuellement affichées
@@ -3497,10 +4425,10 @@ class App(_AppBase):
                 fail += 1
                 self._ui(self._log, f"❌ {v.get('slug')} : {e}")
             self._ui(self.browse_status.configure,
-                     text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+                     text=f"⏳  {i}/{len(vids)}…", text_color=T_SECONDAIRE)
         self._ui(self.browse_status.configure,
                  text=f"✅  Type « {choice} » : {ok} modifiée(s), {skip} déjà OK, {fail} échec(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
+                 text_color=T_SUCCES if not fail else "#f59e0b")
         self._ui(self._log,
                  f"Type en masse « {choice} » : {ok} modifiée(s), {skip} inchangée(s), "
                  f"{fail} échec(s).")
@@ -3690,21 +4618,43 @@ class App(_AppBase):
                 self._ui(self._flush_videos_waiters)
         return self.videos
 
-    def scan_truncated_warning(self) -> str:
-        """Renvoie un avertissement si le dernier scan a été TRONQUÉ, sinon "".
+    def scan_truncated_warning(self, *endpoints) -> str:
+        """Renvoie un avertissement si une lecture a été TRONQUÉE, sinon "".
 
         La pagination s'arrête sur une limite de sécurité (`max_pages`). Si
         cette limite est atteinte alors qu'il restait des pages, la liste est
-        incomplète : les totaux de l'Inventaire sont faux, l'Explorateur ne voit
-        pas toutes les vidéos, la Réaffectation en oublie. Sans message, rien ne
-        le laisse deviner — c'est le défaut le plus trompeur possible pour un
-        outil d'inventaire, puisqu'il produit des chiffres crédibles mais faux.
+        incomplète : les totaux de l'Inventaire sont faux, des vidéos manquent.
+        Sans message, rien ne le laisse deviner — c'est le défaut le plus
+        trompeur possible pour un outil d'inventaire, puisqu'il produit des
+        chiffres crédibles mais faux.
+
+        On interroge le registre PAR RESSOURCE (`api.troncatures`) et non le
+        drapeau global : celui-ci était remis à zéro par chaque nouveau scan,
+        si bien qu'une lecture terminée après coup pouvait EFFACER l'alerte
+        d'une autre.
+
+        `endpoints` : ressources à vérifier, par exemple "/videos/". Sans
+        argument, on vérifie toutes celles lues depuis le démarrage.
         """
-        if not getattr(self.api, "last_scan_truncated", False):
+        api = self.api
+        if not api:
             return ""
-        return ("⚠️  LISTE INCOMPLÈTE : la limite de pagination a été atteinte. "
-                "Les totaux affichés sont FAUX et certaines vidéos manquent. "
-                "Signalez-le au support (support-pod@utoulouse.fr).")
+        try:
+            tronque = api.est_tronque(*endpoints)
+        except AttributeError:              # client plus ancien
+            tronque = bool(getattr(api, "last_scan_truncated", False))
+        if not tronque:
+            return ""
+        # Nommer la ressource concernée : « des comptes manquent » n'appelle pas
+        # la même réaction que « des vidéos manquent ».
+        noms = {"/videos/": "vidéos", "/users/": "comptes",
+                "/owners/": "propriétaires", "/channels/": "chaînes"}
+        concernees = [noms.get(e, e.strip("/"))
+                      for e, t in getattr(api, "troncatures", {}).items() if t]
+        detail = (" (" + ", ".join(concernees) + ")") if concernees else ""
+        return (f"⚠️  LISTE INCOMPLÈTE{detail} : la limite de pagination a été "
+                "atteinte. Les totaux affichés sont FAUX et des éléments "
+                "manquent. Signalez-le au support (support-pod@utoulouse.fr).")
 
     def videos_stamp(self) -> str:
         """Libellé de fraîcheur du magasin partagé, affiché dans les onglets."""
@@ -3793,17 +4743,13 @@ class App(_AppBase):
                 self._browse_refresh_channel_menu()
         except Exception as e:
             self._log(f"Rafraîchissement du menu chaînes (Vidéos) : {e}")
-        try:
-            if hasattr(self, "clean_chan"):
-                self._clean_populate_filters()
-        except Exception as e:
-            self._log(f"Rafraîchissement du menu chaînes (Explorateur) : {e}")
+
 
     def _refresh_video_views(self):
         """Recalcule les listes AFFICHÉES des onglets qui montrent des vidéos.
 
         Le magasin `self.videos` est partagé, mais chaque onglet en garde une
-        PROJECTION filtrée (`browse_filtered`, `clean_filtered`) construite au
+        PROJECTION filtrée (`browse_filtered`) construite au
         moment du dernier filtrage. Supprimer une vidéo du magasin ne suffit
         donc pas : sans ce recalcul, la vidéo disparaît des données mais reste
         AFFICHÉE dans les listes déjà dessinées (vidéo « fantôme »).
@@ -3825,12 +4771,45 @@ class App(_AppBase):
                 self._browse_do_filter()
         except Exception as e:
             self._log(f"Rafraîchissement onglet Vidéos : {e}")
-        # Onglet Explorateur
+
+        # Les trois onglets ci-dessous gardent une PROJECTION du magasin
+        # (`encode_videos`, `stats_videos`, `reassign_videos`). Comme
+        # `browse_filtered`, ces listes ne se mettent pas à jour toutes seules :
+        # sans ce recalcul, l'Encodage proposait de relancer une vidéo
+        # supprimée, et l'Inventaire affichait un total périmé sous une mention
+        # « chargé à … » qui inspirait confiance.
+        #
+        # On ne recharge PAS depuis le réseau : on relit le magasin, déjà à jour.
+
+        # Encodage — la liste complète, filtrée à l'affichage.
         try:
-            if hasattr(self, "clean_results"):
-                self._do_clean_filter()
+            if hasattr(self, "encode_list") and self.encode_videos:
+                self.encode_videos = list(self.videos)
+                self._render_encode()
         except Exception as e:
-            self._log(f"Rafraîchissement Explorateur : {e}")
+            self._log(f"Rafraîchissement onglet Encodage : {e}")
+
+        # Inventaire — les agrégats sont recalculés à partir du magasin.
+        try:
+            if getattr(self, "stats_data", None):
+                self._recalculer_stats()
+        except Exception as e:
+            self._log(f"Rafraîchissement onglet Inventaire : {e}")
+
+        # Réaffectation — on retire simplement les vidéos disparues de l'aperçu.
+        # Le recalculer entièrement effacerait les cases cochées par
+        # l'utilisateur, ce qui serait plus gênant qu'utile.
+        try:
+            if getattr(self, "reassign_videos", None):
+                presents = {v.get("slug") for v in self.videos}
+                avant = len(self.reassign_videos)
+                self.reassign_videos = [v for v in self.reassign_videos
+                                        if v.get("slug") in presents]
+                if len(self.reassign_videos) != avant:
+                    self._render_reassign_preview()
+        except Exception as e:
+            self._log(f"Rafraîchissement onglet Réaffectation : {e}")
+
 
     def _loaded_stamp(self) -> str:
         """Renvoie « chargé à HH:MM » pour indiquer la fraîcheur des données
@@ -4101,7 +5080,7 @@ class App(_AppBase):
             text="Transférer les vidéos d'un compte vers un autre (ex. départ d'un agent). "
                  "Choisissez l'ancien et le nouveau propriétaire, lancez l'aperçu, "
                  "vérifiez la liste, puis appliquez.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
         # — Deux sélecteurs de comptes côte à côte (source / cible) —
@@ -4141,20 +5120,21 @@ class App(_AppBase):
         actions = ctk.CTkFrame(frame, fg_color="transparent")
         actions.pack(fill="x", pady=(6, 4))
         # Aperçu = lecture seule, n'écrit RIEN
-        ctk.CTkButton(actions, text="🔍  Aperçu (dry-run)", fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._reassign_preview).pack(side="left")
+        ctk.CTkButton(actions, text="🔍  Aperçu (dry-run)", fg_color=C_ACTION,
+                      hover_color=C_ACTION_SURV, command=self._reassign_preview).pack(side="left")
         # Appliquer = action en masse ; désactivé tant qu'aucun aperçu n'est fait
         self.reassign_apply_btn = ctk.CTkButton(
-            actions, text="✅  Appliquer la réaffectation", fg_color="#16a34a",
-            hover_color="#15803d", state="disabled", command=self._reassign_confirm)
+            actions, text="✅  Appliquer la réaffectation", fg_color=C_SUCCES,
+            hover_color=C_SUCCES_SURV, state="disabled", command=self._reassign_confirm)
         self.reassign_apply_btn.pack(side="left", padx=10)
         # Libellé de progression / d'état
-        self.reassign_progress = ctk.CTkLabel(actions, text="", text_color="gray",
+        self.reassign_progress = ctk.CTkLabel(actions, text="", text_color=T_SECONDAIRE,
                                               font=ctk.CTkFont(size=11))
         self.reassign_progress.pack(side="left", padx=8)
 
         # — Zone d'aperçu : la liste des vidéos concernées (cases à cocher) —
-        self.reassign_results = ctk.CTkScrollableFrame(frame, label_text="Aperçu des vidéos")
+        self.reassign_results = ctk.CTkScrollableFrame(frame, label_text="Aperçu des vidéos", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.reassign_results.pack(fill="both", expand=True, pady=(4, 0))
 
         # Structures de données de l'aperçu :
@@ -4168,17 +5148,17 @@ class App(_AppBase):
         """Construit un sélecteur de compte (titre + filtre + liste cliquable +
         libellé du choix). Renvoie un dict d'état réutilisé par _render_mini_picker.
         `on_pick(user)` est appelé quand l'utilisateur clique un compte."""
-        box = ctk.CTkFrame(parent)
+        box = ctk.CTkFrame(parent, fg_color=S_CARTE)
         ctk.CTkLabel(box, text=title, font=ctk.CTkFont(weight="bold")).pack(
             anchor="w", padx=10, pady=(8, 2))
         # Champ de filtre → filtrage CLIENT instantané (aucun appel serveur)
         fe = ctk.CTkEntry(box, placeholder_text="🔍 nom / identifiant…")
         fe.pack(fill="x", padx=10, pady=(0, 6))
         # Liste défilante des comptes correspondant au filtre
-        res = ctk.CTkScrollableFrame(box, height=150)
+        res = ctk.CTkScrollableFrame(box, height=150, fg_color=S_CARTE)
         res.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         # Rappel du compte actuellement sélectionné
-        chosen = ctk.CTkLabel(box, text="Sélection : (aucune)", text_color="gray70",
+        chosen = ctk.CTkLabel(box, text="Sélection : (aucune)", text_color=T_SECONDAIRE,
                               font=ctk.CTkFont(size=11), anchor="w")
         chosen.pack(fill="x", padx=10, pady=(0, 8))
         # État partagé entre le picker et son moteur de rendu
@@ -4200,7 +5180,7 @@ class App(_AppBase):
         # Aucun compte encore chargé
         if not self.all_users:
             ctk.CTkLabel(state["results"], text="Connectez-vous puis rechargez les comptes.",
-                         text_color="gray").pack(pady=8)
+                         text_color=T_SECONDAIRE).pack(pady=8)
             return
         # Filtrage client + plafond d'affichage (Tk gèle au-delà de quelques centaines)
         matches = [u for u in self.all_users
@@ -4213,7 +5193,7 @@ class App(_AppBase):
             label = ("✅  " if is_sel else "      ") + self._user_label(u)
             ctk.CTkButton(
                 state["results"], text=label, anchor="w", height=26,
-                fg_color=("gray75", "gray30") if is_sel else "transparent",
+                fg_color=S_SELECTION if is_sel else "transparent",
                 text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                 font=ctk.CTkFont(size=12),
                 command=lambda uu=u, s=state: self._mini_pick(s, uu)).pack(fill="x", pady=1)
@@ -4221,15 +5201,15 @@ class App(_AppBase):
         if len(matches) > CAP:
             ctk.CTkLabel(state["results"],
                          text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
         elif not matches:
-            ctk.CTkLabel(state["results"], text="Aucun compte.", text_color="gray").pack(pady=6)
+            ctk.CTkLabel(state["results"], text="Aucun compte.", text_color=T_SECONDAIRE).pack(pady=6)
 
     def _mini_pick(self, state, user):
         """Enregistre le compte choisi dans un sélecteur et notifie l'appelant."""
         state["selected"] = user
         state["chosen"].configure(text=f"Sélection : {self._user_label(user)}",
-                                  text_color="#22c55e")
+                                  text_color=T_SUCCES)
         self._render_mini_picker(state)     # met à jour la coche ✅
         state["on_pick"](user)              # callback spécifique (source ou cible)
 
@@ -4277,14 +5257,14 @@ class App(_AppBase):
         arrière-plan. AUCUNE modification n'est effectuée ici."""
         if not self.api:
             self.reassign_progress.configure(text="Connectez-vous d'abord.",
-                                             text_color="#f59e0b")
+                                             text_color=T_ALERTE)
             return
         if not self.reassign_source:
             self.reassign_progress.configure(text="Choisissez l'ancien propriétaire (source).",
-                                             text_color="#f59e0b")
+                                             text_color=T_ALERTE)
             return
         self.reassign_apply_btn.configure(state="disabled")
-        self.reassign_progress.configure(text="⏳  Analyse des vidéos…", text_color="gray")
+        self.reassign_progress.configure(text="⏳  Analyse des vidéos…", text_color=T_SECONDAIRE)
         self._run(self._do_reassign_preview)
 
     def _do_reassign_preview(self):
@@ -4293,8 +5273,9 @@ class App(_AppBase):
             # Callback de progression du scan paginé (mis à jour via le thread UI)
             def prog(n):
                 self._ui(self.reassign_progress.configure,
-                         text=f"⏳  {n} vidéos lues…", text_color="gray")
-            videos = self.api.get_all_videos(progress_cb=prog)
+                         text=f"⏳  {n} vidéos lues…", text_color=T_SECONDAIRE)
+            # Magasin partagé (voir _do_encode_scan).
+            videos = self.ensure_videos_sync(progress_cb=prog)
             # Ne conserver que les vidéos appartenant à la source
             mine = [v for v in videos if self._video_belongs_to(v, self.reassign_source)]
             self.reassign_videos = mine
@@ -4303,7 +5284,7 @@ class App(_AppBase):
                      f"Aperçu réaffectation : {len(mine)} vidéo(s) pour "
                      f"{self.reassign_source.get('username')} (sur {len(videos)} au total).")
         except Exception as e:
-            self._ui(self.reassign_progress.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.reassign_progress.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Erreur aperçu réaffectation : {e}")
 
     def _render_reassign_preview(self):
@@ -4317,23 +5298,23 @@ class App(_AppBase):
         if not self.reassign_videos:
             ctk.CTkLabel(self.reassign_results,
                          text="Aucune vidéo trouvée pour ce compte.",
-                         text_color="gray").pack(pady=10)
-            self.reassign_progress.configure(text="0 vidéo.", text_color="gray")
+                         text_color=T_SECONDAIRE).pack(pady=10)
+            self.reassign_progress.configure(text="0 vidéo.", text_color=T_SECONDAIRE)
             self.reassign_apply_btn.configure(state="disabled")
             return
 
         # En-tête : (dé)sélection globale
         head = ctk.CTkFrame(self.reassign_results, fg_color="transparent")
         head.pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(head, text="Tout cocher", width=100, height=24, fg_color="gray35",
-                      command=lambda: self._reassign_check_all(True)).pack(side="left", padx=2)
-        ctk.CTkButton(head, text="Tout décocher", width=110, height=24, fg_color="gray35",
-                      command=lambda: self._reassign_check_all(False)).pack(side="left", padx=2)
+        ctk.CTkButton(head, text="Tout cocher", width=100, height=24, fg_color=C_NEUTRE,
+                      command=lambda: self._reassign_check_all(True), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+        ctk.CTkButton(head, text="Tout décocher", width=110, height=24, fg_color=C_NEUTRE,
+                      command=lambda: self._reassign_check_all(False), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
 
         # Une ligne par vidéo : [case] titre · slug … [statut ✔/✗]
         for v in self.reassign_videos:
             slug = v.get("slug", "?")
-            row = ctk.CTkFrame(self.reassign_results, fg_color=("gray85", "gray17"),
+            row = ctk.CTkFrame(self.reassign_results, fg_color=S_LIGNE,
                                corner_radius=6)
             row.pack(fill="x", pady=2)
             var = ctk.BooleanVar(value=True)        # cochée par défaut = sera réaffectée
@@ -4349,7 +5330,7 @@ class App(_AppBase):
 
         self.reassign_progress.configure(
             text=f"{len(self.reassign_videos)} vidéo(s) prêtes à réaffecter.",
-            text_color="#22c55e")
+            text_color=T_SUCCES)
         # L'aperçu est prêt → on autorise l'application
         self.reassign_apply_btn.configure(state="normal")
 
@@ -4364,23 +5345,40 @@ class App(_AppBase):
         """Vérifie la cible, récapitule, puis demande confirmation avant d'écrire."""
         if not self.reassign_target:
             self.reassign_progress.configure(text="Choisissez le nouveau propriétaire (cible).",
-                                             text_color="#f59e0b")
+                                             text_color=T_ALERTE)
+            return
+        # Les deux listes sont indépendantes : rien n'empêchait de choisir le
+        # MÊME compte des deux côtés. On émettait alors un PATCH par vidéo pour
+        # la réattribuer à son propriétaire actuel — et, case cochée, pour
+        # l'ajouter comme son propre co-propriétaire. Sans effet utile, mais
+        # coûteux et déroutant sur un lot important.
+        src_url = str((self.reassign_source or {}).get("url", "")).rstrip("/")
+        tgt_url = str((self.reassign_target or {}).get("url", "")).rstrip("/")
+        if src_url and src_url == tgt_url:
+            self.reassign_progress.configure(
+                text="Le propriétaire actuel et le nouveau sont le même compte : "
+                     "il n'y a rien à réaffecter.",
+                text_color=T_ALERTE)
             return
         # Vidéos réellement cochées dans l'aperçu
         todo = [v for v in self.reassign_videos
                 if self.reassign_rowvars.get(v.get("slug"))
                 and self.reassign_rowvars[v.get("slug")].get()]
         if not todo:
-            self.reassign_progress.configure(text="Aucune vidéo cochée.", text_color="#f59e0b")
+            self.reassign_progress.configure(text="Aucune vidéo cochée.", text_color=T_ALERTE)
             return
-        keep = (" (l'ancien propriétaire reste co-propriétaire)"
-                if self.reassign_keep_var.get() else "")
+        # Deux valeurs distinctes, qui étaient auparavant confondues sous le même
+        # nom : `mention` est le TEXTE du récapitulatif, `keep` le BOOLÉEN passé
+        # au traitement. Les mélanger fonctionnait par accident (une chaîne vide
+        # est fausse) et masquait la relecture Tk hors thread principal.
+        keep = bool(self.reassign_keep_var.get())
+        mention = " (l'ancien propriétaire reste co-propriétaire)" if keep else ""
         # Dialogue de confirmation récapitulatif (dernier garde-fou avant écriture)
         ok = messagebox.askyesno(
             "Confirmer la réaffectation",
             f"Réaffecter {len(todo)} vidéo(s)\n\n"
             f"de :   {self._user_label(self.reassign_source)}\n"
-            f"vers : {self._user_label(self.reassign_target)}{keep}\n\n"
+            f"vers : {self._user_label(self.reassign_target)}{mention}\n\n"
             "Cette opération modifie le propriétaire de chaque vidéo. Continuer ?")
         if not ok:
             return
@@ -4394,7 +5392,9 @@ class App(_AppBase):
     def _do_reassign_apply(self, todo, keep: bool = False):
         """(Thread) Applique la réaffectation vidéo par vidéo via PATCH owner."""
         tgt = self.reassign_target
-        keep = self.reassign_keep_var.get()
+        # `keep` est reçu en ARGUMENT, lu par l'appelant dans le thread
+        # principal. Ne PAS le relire ici : Tcl n'est pas thread-safe, et
+        # c'est précisément la raison d'être de ce paramètre.
         ok = fail = 0
         for i, v in enumerate(todo, 1):
             slug = v.get("slug", "")
@@ -4421,11 +5421,11 @@ class App(_AppBase):
                 self._ui(self._log, f"  ✗ {slug} : {e}")
             # Progression
             self._ui(self.reassign_progress.configure,
-                     text=f"⏳  {i}/{len(todo)}…", text_color="gray")
+                     text=f"⏳  {i}/{len(todo)}…", text_color=T_SECONDAIRE)
         # Bilan final
         self._ui(self.reassign_progress.configure,
                  text=f"Terminé : {ok} réaffectée(s), {fail} échec(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
+                 text_color=T_SUCCES if not fail else "#f59e0b")
         self._ui(self._log,
                  f"Réaffectation {self.reassign_source.get('username')} → "
                  f"{tgt.get('username')} : {ok} OK, {fail} échec(s).")
@@ -4437,280 +5437,15 @@ class App(_AppBase):
         lbl = self.reassign_rowlbls.get(slug)
         if lbl:
             lbl.configure(text="✔" if success else "✗",
-                          text_color="#22c55e" if success else "#ef4444")
+                          text_color=T_SUCCES if success else "#ef4444")
 
     # ═════════════════════════════════════════════════════════════════════
-    #  ONGLET NETTOYAGE / MODÉRATION
+    #  FENÊTRES ET UTILITAIRES PARTAGÉS
+    #  (L'onglet Explorateur a été fusionné dans l'onglet Vidéos ; ces fonctions
+    #   lui survivent car les actions groupées s'en servent.)
     # ═════════════════════════════════════════════════════════════════════
-    #
-    #  Flux : (1) SCANNER l'instance (lecture seule) → (2) choisir une
-    #  CATÉGORIE de détection (jamais encodées, brouillons, vieux brouillons,
-    #  doublons de titre) + un filtre texte → (3) cocher les vidéos voulues →
-    #  (4) appliquer une ACTION (brouillon / publier / restreindre / lever /
-    #  SUPPRIMER). La suppression demande une DOUBLE confirmation.
-    #  Par sécurité, les cases sont DÉCOCHÉES par défaut (opt-in explicite).
-
-    # Libellé d'action (menu) → (genre, payload) utilisé par _do_clean_apply.
-    # Les statuts envoient les DEUX booléens cohérents (même logique que le
-    # détail vidéo) pour éviter qu'un ancien statut reste actif.
-    _CLEAN_ACTIONS = {
-        "Mettre en brouillon":          ("patch", {"is_draft": True, "is_restricted": False}),
-        "Rendre public":                ("patch", {"is_draft": False, "is_restricted": False}),
-        "Rendre restreint":             ("patch", {"is_draft": False, "is_restricted": True}),
-        "🔒  Restreindre au groupe…":   ("restrict_group", None),
-        "📺  Affecter à une chaîne…":   ("assign_channel", None),
-        "🗑  Supprimer définitivement": ("delete", None),
-    }
-
-    def _build_tab_clean(self):
-        # Cadre racine de l'onglet
-        frame = ctk.CTkFrame(self.content, fg_color="transparent")
-        self.tabs["clean"] = frame
-
-        ctk.CTkLabel(frame, text="🗂  Explorateur",
-                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
-        ctk.CTkLabel(
-            frame,
-            text="Scannez l'instance, filtrez finement les vidéos (statut, encodage, "
-                 "type, propriétaire, chaîne, dates…), cochez celles à traiter, puis "
-                 "appliquez une action en masse. La suppression est définitive.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
-            justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
-
-        # — Ligne 1 : scan (lecture seule) —
-        scan_row = ctk.CTkFrame(frame, fg_color="transparent")
-        scan_row.pack(fill="x")
-        ctk.CTkButton(scan_row, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8",
-                      command=lambda: self._clean_scan(force=True)).pack(side="left")
-        self.clean_scan_lbl = ctk.CTkLabel(scan_row, text="(aucun scan)", text_color="gray",
-                                           font=ctk.CTkFont(size=11))
-        self.clean_scan_lbl.pack(side="left", padx=10)
-
-        # — Ligne 2 : recherche texte —
-        f_txt = ctk.CTkFrame(frame, fg_color="transparent")
-        f_txt.pack(fill="x", pady=(8, 2))
-        self.clean_text = ctk.CTkEntry(
-            f_txt, placeholder_text="🔍 titre / slug / propriétaire…")
-        self.clean_text.pack(side="left", fill="x", expand=True)
-        self.clean_text.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
-
-        # — Ligne 3 : filtres déroulants (statut, encodage, type) —
-        f1 = ctk.CTkFrame(frame, fg_color="transparent")
-        f1.pack(fill="x", pady=2)
-        self.clean_statut = ctk.CTkOptionMenu(
-            f1, width=150, values=["Tous statuts", "Brouillon", "Public", "Restreint"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_statut.set("Tous statuts"); self.clean_statut.pack(side="left", padx=(0, 6))
-        self.clean_encode = ctk.CTkOptionMenu(
-            f1, width=160, values=["Tout encodage", "Encodées", "En cours", "Non encodées"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_encode.set("Tout encodage"); self.clean_encode.pack(side="left", padx=6)
-        self.clean_type = ctk.CTkOptionMenu(
-            f1, width=160, values=["Tous types"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_type.set("Tous types"); self.clean_type.pack(side="left", padx=6)
-
-        # — Ligne 4 : filtres déroulants (propriétaire, chaîne, détection spéciale) —
-        f2 = ctk.CTkFrame(frame, fg_color="transparent")
-        f2.pack(fill="x", pady=2)
-        self.clean_owner = ctk.CTkOptionMenu(
-            f2, width=200, values=["Tous propriétaires"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_owner.set("Tous propriétaires"); self.clean_owner.pack(side="left", padx=(0, 6))
-        self.clean_chan = ctk.CTkOptionMenu(
-            f2, width=180, values=["Toutes chaînes"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_chan.set("Toutes chaînes"); self.clean_chan.pack(side="left", padx=6)
-        self.clean_category = ctk.CTkOptionMenu(
-            f2, width=180,
-            values=["Aucune détection", "Doublons de titre", "Vieux brouillons"],
-            command=lambda _c: self._apply_clean_filter())
-        self.clean_category.set("Aucune détection"); self.clean_category.pack(side="left", padx=6)
-        ctk.CTkLabel(f2, text=">").pack(side="left")
-        self.clean_months = ctk.CTkEntry(f2, width=40)
-        self.clean_months.insert(0, "6")
-        self.clean_months.pack(side="left", padx=(2, 2))
-        self.clean_months.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
-        ctk.CTkLabel(f2, text="mois").pack(side="left")
-
-        # — Ligne 5 : plage de dates (sur la date d'ajout AAAA-MM-JJ) —
-        f3 = ctk.CTkFrame(frame, fg_color="transparent")
-        f3.pack(fill="x", pady=2)
-        ctk.CTkLabel(f3, text="Ajoutées entre", font=ctk.CTkFont(size=11),
-                     text_color="gray70").pack(side="left", padx=(0, 4))
-        self.clean_date_from = ctk.CTkEntry(f3, width=110, placeholder_text="AAAA-MM-JJ")
-        self.clean_date_from.pack(side="left")
-        self.clean_date_from.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
-        ctk.CTkLabel(f3, text="et", font=ctk.CTkFont(size=11),
-                     text_color="gray70").pack(side="left", padx=4)
-        self.clean_date_to = ctk.CTkEntry(f3, width=110, placeholder_text="AAAA-MM-JJ")
-        self.clean_date_to.pack(side="left")
-        self.clean_date_to.bind("<KeyRelease>", lambda e: self._apply_clean_filter())
-        ctk.CTkButton(f3, text="Réinitialiser les filtres", width=170, height=26,
-                      fg_color="gray35", command=self._clean_reset_filters).pack(side="left", padx=12)
-
-        # Compteur de la sélection courante
-        self.clean_count_lbl = ctk.CTkLabel(frame, text="", text_color="gray",
-                                            font=ctk.CTkFont(size=11))
-        self.clean_count_lbl.pack(anchor="w", pady=(6, 2))
-
-        # — Liste des vidéos (cases à cocher) —
-        self.clean_results = ctk.CTkScrollableFrame(frame, label_text="Vidéos")
-        self.clean_results.pack(fill="both", expand=True, pady=(0, 4))
-
-        # — Ligne d'action en masse —
-        act = ctk.CTkFrame(frame, fg_color="transparent")
-        act.pack(fill="x", pady=(4, 0))
-        ctk.CTkLabel(act, text="Action sur les vidéos cochées :").pack(side="left", padx=(0, 4))
-        self.clean_action = ctk.CTkOptionMenu(act, width=230,
-                                              values=list(self._CLEAN_ACTIONS.keys()))
-        self.clean_action.set("Mettre en brouillon")
-        self.clean_action.pack(side="left")
-        self.clean_apply_btn = ctk.CTkButton(
-            act, text="▶  Appliquer", fg_color="#16a34a", hover_color="#15803d",
-            command=self._clean_apply)
-        self.clean_apply_btn.pack(side="left", padx=10)
-        self.clean_progress = ctk.CTkLabel(act, text="", text_color="gray",
-                                           font=ctk.CTkFont(size=11))
-        self.clean_progress.pack(side="left", padx=8)
-
-        # Structures de données
-        # ALIAS du magasin partagé `self.videos` (même objet liste), conservé le
-        # temps de la migration pour ne rien casser si un code résiduel y accède.
-        self.clean_videos = self.videos
-        self.clean_filtered = []   # sous-ensemble affiché après filtrage
-        self.clean_rowvars = {}    # slug → BooleanVar (cases AFFICHÉES seulement)
-        # SÉLECTION LOGIQUE : ensemble des slugs cochés, SANS limite d'affichage.
-        # L'affichage est plafonné (300 lignes) pour ne pas figer l'interface,
-        # mais la sélection, elle, peut porter sur toutes les vidéos filtrées :
-        # sinon on ne pourrait jamais traiter plus de 300 vidéos d'un coup, ce
-        # qui est justement l'usage d'un outil de nettoyage en masse.
-        self.clean_selected: set = set()
-        self.clean_rowlbls = {}    # slug → label de statut ✔/✗
-        self.clean_owner_map = {}  # libellé → identifiant propriétaire
-        self.clean_chan_map = {}   # titre chaîne → URL
-
-    def _clean_reset_filters(self):
-        """Remet tous les filtres de l'Explorateur à leur valeur par défaut."""
-        self.clean_text.delete(0, "end")
-        self.clean_statut.set("Tous statuts")
-        self.clean_encode.set("Tout encodage")
-        self.clean_type.set("Tous types")
-        self.clean_owner.set("Tous propriétaires")
-        self.clean_chan.set("Toutes chaînes")
-        self.clean_category.set("Aucune détection")
-        self.clean_date_from.delete(0, "end")
-        self.clean_date_to.delete(0, "end")
-        self._apply_clean_filter()
-
-    def _clean_populate_filters(self):
-        """Remplit les menus type / propriétaire / chaîne à partir du scan."""
-        # Types (depuis la table déjà chargée à la connexion)
-        types = sorted((self.type_map or {}).keys(), key=str.lower)
-        self.clean_type.configure(values=["Tous types"] + types)
-        # Propriétaires présents dans le scan (libellé lisible → identifiant)
-        owner_map = {}
-        for v in self.videos:
-            oid = str(self._video_owner_id(v))
-            if not oid:
-                continue
-            # libellé : on tente un compte connu, sinon l'identifiant brut
-            label = oid
-            for u in (self.all_users or []):
-                if str(u.get("url", "")).rstrip("/") == oid.rstrip("/"):
-                    label = self._user_label(u); break
-            owner_map[label] = oid
-        self.clean_owner_map = owner_map
-        self.clean_owner.configure(
-            values=["Tous propriétaires"] + sorted(owner_map.keys(), key=str.lower))
-        # Chaînes présentes dans le scan (titre → URL)
-        chan_map = {}
-        for v in self.videos:
-            chans = v.get("channel") or []
-            if isinstance(chans, str):
-                chans = [chans]
-            for c in chans:
-                curl = str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
-                title = self.browse_chan_by_url.get(curl) or curl
-                chan_map[title] = curl
-        self.clean_chan_map = chan_map
-        self.clean_chan.configure(
-            values=["Toutes chaînes"] + sorted(chan_map.keys(), key=str.lower))
-
-    # ── Scan de l'instance (lecture seule) ─────────────────────────────────
-
-    def _clean_scan(self, force: bool = False):
-        """Déclenche le scan des vidéos (en arrière-plan).
-
-        `force=True` = bouton « Scanner » : relit réellement le serveur. À la
-        simple ouverture de l'onglet, le magasin partagé répond depuis le cache
-        s'il est déjà chargé (aucun rechargement inutile)."""
-        if not self.api:
-            self.clean_scan_lbl.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
-            return
-        self.clean_scan_lbl.configure(text="⏳  Scan en cours…", text_color="gray")
-        self._clean_force_reload = bool(force)
-        self._run(self._do_clean_scan)
-
-    def _do_clean_scan(self):
-        """(Thread) Demande les vidéos au MAGASIN PARTAGÉ puis applique le filtre.
-
-        Les vidéos ne sont plus rechargées ici : si l'onglet Vidéos (ou Chaînes)
-        les a déjà chargées, l'affichage est immédiat, sans appel réseau."""
-        try:
-            def prog(n):   # progression du scan paginé
-                """Callback de progression (avancement du scan)."""
-                self._ui(self.clean_scan_lbl.configure,
-                         text=f"⏳  {n} vidéos lues…", text_color="gray")
-            self._ui(self.ensure_videos,
-                     on_ready=self._clean_after_videos,
-                     force=getattr(self, "_clean_force_reload", False),
-                     progress_cb=prog)
-        except Exception as e:
-            self._ui(self.clean_scan_lbl.configure, text=f"❌  {e}", text_color="#ef4444")
-            self._ui(self._log, f"❌ Scan nettoyage : {e}")
-
-    def _clean_after_videos(self):
-        """Appelé quand le magasin partagé est prêt : rafraîchit l'Explorateur."""
-        self._clean_force_reload = False        # rechargement forcé consommé
-        # Les cases cochées désignaient des objets de l'ANCIENNE liste : après un
-        # rechargement, on repart d'une sélection vide plutôt que de conserver
-        # des références obsolètes (une action par lot porterait sur des vidéos
-        # qui ne sont plus dans le magasin).
-        if hasattr(self, "clean_rowvars"):
-            self.clean_rowvars = {}
-        alerte = self.scan_truncated_warning()
-        self.clean_scan_lbl.configure(
-            text=(alerte if alerte else
-                  f"✅  {len(self.videos)} vidéos chargées  ·  {self._loaded_stamp()}"),
-            text_color="#ef4444" if alerte else "#22c55e")
-        if alerte:
-            self._log(alerte)
-        self._clean_populate_filters()
-        self._apply_clean_filter()
-        self._log(f"Explorateur : {len(self.videos)} vidéos (magasin partagé).")
-
-    # ── Filtrage par catégorie + texte ─────────────────────────────────────
-
-    def _clean_months_value(self) -> int:
-        """Lit le champ « mois » (entier ≥ 0, défaut 6 si saisie invalide)."""
-        try:
-            return max(0, int(self.clean_months.get().strip()))
-        except Exception:
-            return 6
-
-    def _months_ago_iso(self, months: int) -> str:
-        """Renvoie la date d'il y a `months` mois au format AAAA-MM-JJ."""
-        import calendar
-        today = datetime.now().date()
-        m, y = today.month - months, today.year
-        while m <= 0:          # report sur les années précédentes
-            m += 12
-            y -= 1
-        # On borne le jour au dernier jour valide du mois cible
-        d = min(today.day, calendar.monthrange(y, m)[1])
-        return datetime(y, m, d).date().isoformat()
+    #  FENÊTRES PARTAGÉES PAR LES ACTIONS GROUPÉES
+    # ═════════════════════════════════════════════════════════════════════
 
     def _duplicate_title_videos(self, vids: list) -> list:
         """Renvoie les vidéos dont le titre (normalisé) apparaît plus d'une fois,
@@ -4724,384 +5459,22 @@ class App(_AppBase):
         dups.sort(key=norm)
         return dups
 
-    def _apply_clean_filter(self, *_):
-        """Demande un filtrage de l'Explorateur — avec TEMPORISATION.
+    def _months_ago_iso(self, months: int) -> str:
+        """Renvoie la date d'il y a `months` mois au format AAAA-MM-JJ."""
+        import calendar
+        today = datetime.now().date()
+        m, y = today.month - months, today.year
+        while m <= 0:          # report sur les années précédentes
+            m += 12
+            y -= 1
+        # On borne le jour au dernier jour valide du mois cible
+        d = min(today.day, calendar.monthrange(y, m)[1])
+        return datetime(y, m, d).date().isoformat()
 
-        Le filtre étant branché sur chaque frappe clavier et l'affichage d'une
-        ligne étant coûteux ici (cadre + case à cocher + libellés), recalculer à
-        chaque caractère bloquait l'interface plusieurs secondes. On attend donc
-        une courte pause dans la frappe avant de reconstruire."""
-        job = getattr(self, "_clean_filter_job", None)
-        if job:
-            try:
-                self.after_cancel(job)
-            except Exception:
-                pass
-        self._clean_filter_job = self.after(FILTER_DELAY_MS, self._do_clean_filter)
+    def _pick_groups(self):
+        """Fenêtre de choix des groupes d'accès (partagée par les actions groupées).
 
-    def _do_clean_filter(self):
-        """Construit self.clean_filtered en appliquant TOUS les filtres en cascade
-        (texte, statut, encodage, type, propriétaire, chaîne, détection, dates).
-        Appelé après la temporisation de `_apply_clean_filter`."""
-        self._clean_filter_job = None
-        # Changer de filtre annule la sélection : agir sur des vidéos qui ne
-        # correspondent plus à ce qui est affiché serait dangereux, d'autant que
-        # la sélection peut dépasser les lignes visibles.
-        self.clean_selected = set()
-        # Pas encore scanné
-        if not self.videos:
-            self.clean_count_lbl.configure(
-                text="Cliquez sur « Scanner les vidéos » pour commencer.")
-            for w in self.clean_results.winfo_children():
-                w.destroy()
-            self.clean_filtered = []
-            return
-
-        vids = self.videos              # source unique partagée
-
-        # 1) Texte (titre / slug / propriétaire)
-        txt = self.clean_text.get().strip().lower()
-        if txt:
-            def hay(v):
-                """Concatène les champs d'une vidéo pour la recherche plein-texte."""
-                return (f"{v.get('title','')} {v.get('slug','')} "
-                        f"{self._video_owner_id(v)}").lower()
-            vids = [v for v in vids if txt in hay(v)]
-
-        # 2) Statut (exclusif : brouillon / public / restreint)
-        st = self.clean_statut.get()
-        if st == "Brouillon":
-            vids = [v for v in vids if v.get("is_draft")]
-        elif st == "Public":
-            vids = [v for v in vids if not v.get("is_draft") and not v.get("is_restricted")]
-        elif st == "Restreint":
-            vids = [v for v in vids if not v.get("is_draft") and v.get("is_restricted")]
-
-        # 3) Encodage
-        en = self.clean_encode.get()
-        en_map = {"Encodées": "ok", "En cours": "running", "Non encodées": "failed"}
-        if en in en_map:
-            if en == "Non encodées":
-                # « non encodées » = pas encore encodées (échec ou jamais lancé),
-                # on s'appuie sur l'helper dédié pour couvrir les deux cas.
-                vids = [v for v in vids if PodAPI.is_unencoded(v)]
-            else:
-                vids = [v for v in vids if self._encode_state(v) == en_map[en]]
-
-        # 4) Type (valeur unique : URL)
-        ty = self.clean_type.get()
-        if ty and ty != "Tous types":
-            turl = str((self.type_map or {}).get(ty, "")).rstrip("/")
-            def has_type(v):
-                """Teste si une vidéo est du type filtré."""
-                vt = v.get("type")
-                vt = vt.get("url") if isinstance(vt, dict) else vt
-                return str(vt).rstrip("/") == turl
-            vids = [v for v in vids if has_type(v)]
-
-        # 5) Propriétaire
-        ow = self.clean_owner.get()
-        if ow and ow != "Tous propriétaires":
-            oid = str(self.clean_owner_map.get(ow, "")).rstrip("/")
-            vids = [v for v in vids
-                    if str(self._video_owner_id(v)).rstrip("/") == oid]
-
-        # 6) Chaîne
-        ch = self.clean_chan.get()
-        if ch and ch != "Toutes chaînes":
-            curl = str(self.clean_chan_map.get(ch, "")).rstrip("/")
-            def in_chan(v):
-                """Teste si une vidéo appartient à la chaîne filtrée."""
-                chans = v.get("channel") or []
-                if isinstance(chans, str):
-                    chans = [chans]
-                urls = [str(c.get("url") if isinstance(c, dict) else c).rstrip("/")
-                        for c in chans]
-                return curl in urls
-            vids = [v for v in vids if in_chan(v)]
-
-        # 7) Détection spéciale (doublons / vieux brouillons)
-        cat = self.clean_category.get()
-        if cat == "Doublons de titre":
-            vids = self._duplicate_title_videos(vids)
-        elif cat == "Vieux brouillons":
-            cutoff = self._months_ago_iso(self._clean_months_value())
-            vids = [v for v in vids if PodAPI.is_stale_draft(v, cutoff)]
-
-        # 8) Plage de dates (sur date_added, format AAAA-MM-JJ)
-        d_from = self.clean_date_from.get().strip()
-        d_to = self.clean_date_to.get().strip()
-        if d_from:
-            vids = [v for v in vids if str(v.get("date_added", ""))[:10] >= d_from]
-        if d_to:
-            vids = [v for v in vids if str(v.get("date_added", ""))[:10] <= d_to]
-
-        self.clean_filtered = vids
-        self._render_clean_list()
-
-    # ── Rendu de la liste ──────────────────────────────────────────────────
-
-    def _render_clean_list(self):
-        """Affiche les vidéos filtrées, chacune avec une case (décochée par défaut)."""
-        for w in self.clean_results.winfo_children():
-            w.destroy()
-        self.clean_rowvars = {}
-        self.clean_rowlbls = {}
-
-        # PLAFOND d'affichage : chaque ligne coûte cher (cadre + case + libellés).
-        # Sans plafond, 800 vidéos figeaient l'interface une dizaine de secondes.
-        CAP = 300
-        total = len(self.clean_filtered)
-        tronque = total > CAP
-        a_afficher = self.clean_filtered[:CAP]
-
-        # Le plafond ne concerne QUE l'affichage : « Tout cocher » sélectionne
-        # l'ensemble des vidéos filtrées, et l'action s'y applique entièrement.
-        self._clean_update_selection_label()
-
-        if not self.clean_filtered:
-            ctk.CTkLabel(self.clean_results, text="Aucune vidéo dans cette catégorie.",
-                         text_color="gray").pack(pady=10)
-            return
-
-        if tronque:
-            banniere = ctk.CTkFrame(self.clean_results, fg_color=("#fde68a", "#78350f"),
-                                    corner_radius=6)
-            banniere.pack(fill="x", pady=(0, 6))
-            ctk.CTkLabel(banniere,
-                         text=f"ℹ  Affichage limité aux {CAP} premières vidéos sur {total} "
-                              f"(pour garder l'interface fluide). « Tout cocher » sélectionne "
-                              f"bien les {total}, et l'action s'applique à toute la sélection.",
-                         text_color=("#78350f", "#fde68a"),
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         wraplength=900, justify="left").pack(padx=10, pady=6, anchor="w")
-
-        # En-tête : (dé)sélection globale
-        head = ctk.CTkFrame(self.clean_results, fg_color="transparent")
-        head.pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(head, text="Tout cocher", width=100, height=24, fg_color="gray35",
-                      command=lambda: self._clean_check_all(True)).pack(side="left", padx=2)
-        ctk.CTkButton(head, text="Tout décocher", width=110, height=24, fg_color="gray35",
-                      command=lambda: self._clean_check_all(False)).pack(side="left", padx=2)
-
-        # Une ligne par vidéo : [case] titre · slug  [drapeaux]   …  [statut]
-        for v in a_afficher:
-            slug = v.get("slug", "?")
-            row = ctk.CTkFrame(self.clean_results, fg_color=("gray85", "gray17"),
-                               corner_radius=6)
-            row.pack(fill="x", pady=2)
-            # La case reflète la SÉLECTION LOGIQUE (et non l'inverse) : une vidéo
-            # cochée puis sortie de l'affichage reste sélectionnée.
-            var = ctk.BooleanVar(value=(slug in self.clean_selected))
-            self.clean_rowvars[slug] = var
-            ctk.CTkCheckBox(row, text="", variable=var, width=24,
-                            command=lambda sl=slug, vv=var: self._clean_toggle(sl, vv)
-                            ).pack(side="left", padx=(8, 0))
-
-            # Drapeaux d'état lisibles d'un coup d'œil
-            flags = []
-            if v.get("is_draft"):
-                flags.append("brouillon")
-            if PodAPI.is_unencoded(v):
-                flags.append("non-encodé")
-            if v.get("is_restricted"):
-                flags.append("restreint")
-            suffix = f"   [{', '.join(flags)}]" if flags else ""
-
-            title = (v.get("title") or "(sans titre)")[:64]
-            ctk.CTkLabel(row, text=f"{title}   ·   {slug}{suffix}", anchor="w",
-                         font=ctk.CTkFont(size=12)).pack(
-                side="left", padx=8, pady=6, fill="x", expand=True)
-            stat = ctk.CTkLabel(row, text="", width=24, font=ctk.CTkFont(size=12))
-            stat.pack(side="right", padx=8)
-            self.clean_rowlbls[slug] = stat
-
-    def _clean_toggle(self, slug: str, var):
-        """Répercute le clic sur une case dans la sélection logique."""
-        if var.get():
-            self.clean_selected.add(slug)
-        else:
-            self.clean_selected.discard(slug)
-        self._clean_update_selection_label()
-
-    def _clean_check_all(self, value: bool):
-        """Coche ou décoche TOUTES les vidéos filtrées — y compris celles qui ne
-        sont pas affichées (l'affichage est plafonné, pas la sélection)."""
-        if value:
-            self.clean_selected = {v.get("slug") for v in self.clean_filtered}
-        else:
-            self.clean_selected = set()
-        # Refléter l'état sur les cases actuellement visibles
-        for slug, var in self.clean_rowvars.items():
-            var.set(slug in self.clean_selected)
-        self._clean_update_selection_label()
-
-    def _clean_clear_selection(self):
-        """Vide la sélection (après un lot traité) et décoche les cases visibles."""
-        self.clean_selected = set()
-        for var in self.clean_rowvars.values():
-            try:
-                var.set(False)
-            except Exception:
-                pass
-        self._clean_update_selection_label()
-
-    def _clean_update_selection_label(self):
-        """Affiche le nombre de vidéos sélectionnées, visibles ou non."""
-        n = len(self.clean_selected)
-        total = len(self.clean_filtered)
-        if not hasattr(self, "clean_count_lbl"):
-            return
-        if n:
-            caches = max(0, n - len(self.clean_rowvars))
-            détail = f" (dont {caches} hors affichage)" if caches else ""
-            self.clean_count_lbl.configure(
-                text=f"{total} vidéo(s) après filtrage — {n} sélectionnée(s){détail}.",
-                text_color="#22c55e")
-        else:
-            self.clean_count_lbl.configure(
-                text=f"{total} vidéo(s) après filtrage. Cochez celles à traiter.",
-                text_color="gray")
-
-    # ── Application de l'action (avec confirmations) ───────────────────────
-
-    def _clean_apply(self):
-        """Valide la sélection, confirme (double pour la suppression), puis applique."""
-        if not self.api:
-            self.clean_progress.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
-            return
-        label = self.clean_action.get()
-        kind, payload = self._CLEAN_ACTIONS.get(label, ("patch", {}))
-        # Vidéos cochées
-        # On part de la SÉLECTION LOGIQUE : les vidéos cochées mais non affichées
-        # (au-delà du plafond de 300) sont bien incluses.
-        todo = [v for v in self.clean_filtered
-                if v.get("slug") in self.clean_selected]
-        if not todo:
-            self.clean_progress.configure(text="Aucune vidéo cochée.", text_color="#f59e0b")
-            return
-
-        # Action spéciale « Restreindre au groupe… » : on demande le(s) groupe(s),
-        # puis on construit un payload cohérent (restreint + publié + groupes).
-        if kind == "assign_channel":
-            # Même sélecteur que l'onglet Vidéos : un seul comportement à
-            # connaître pour l'utilisateur, un seul à maintenir.
-            if not self.browse_channels:
-                self.clean_progress.configure(
-                    text="Aucune chaîne chargée. Ouvrez l'onglet Vidéos et "
-                         "cliquez sur « Rafraîchir ».",
-                    text_color="#f59e0b")
-                return
-            ChannelPicker(self, self.browse_channels,
-                          on_done=lambda urls, labels: self._clean_assign_channels(
-                              todo, list(urls)),
-                          title=f"Chaînes pour {len(todo)} vidéo(s)")
-            return
-
-        if kind == "restrict_group":
-            if not self.access_groups:
-                self.clean_progress.configure(
-                    text="Aucun groupe d'accès chargé (voir l'onglet Groupes d'accès).",
-                    text_color="#f59e0b")
-                return
-            urls = self._clean_pick_groups()
-            if urls is None:
-                return                                   # annulé par l'utilisateur
-            if not urls:
-                self.clean_progress.configure(
-                    text="Aucun groupe sélectionné.", text_color="#f59e0b")
-                return
-            # Restreindre à un groupe = accès restreint + sortie de brouillon
-            # (un brouillon reste invisible) + liste des groupes autorisés.
-            payload = {"is_restricted": True, "is_draft": False,
-                       "restrict_access_to_groups": urls}
-            kind = "patch"
-            label = f"Restreindre à {len(urls)} groupe(s)"     # pour la confirmation
-
-        # Confirmation — renforcée pour la suppression définitive
-        if kind == "delete":
-            if not messagebox.askyesno(
-                    "⚠️  Suppression définitive",
-                    f"Supprimer DÉFINITIVEMENT {len(todo)} vidéo(s) ?\n\n"
-                    "Cette action est IRRÉVERSIBLE (il n'y a pas de corbeille sur Pod)."):
-                return
-            # Deuxième garde-fou
-            if not messagebox.askyesno(
-                    "Dernière confirmation",
-                    f"Confirmez-vous la suppression de {len(todo)} vidéo(s) ?"):
-                return
-        else:
-            if not messagebox.askyesno(
-                    "Confirmer l'action",
-                    f"Appliquer « {label} » à {len(todo)} vidéo(s) ?"):
-                return
-
-        # Désactiver le bouton pendant le traitement
-        self.clean_apply_btn.configure(state="disabled")
-        # Mémoriser le libellé de l'action MAINTENANT (thread principal) : lire
-        # un widget Tk depuis un thread de travail n'est pas fiable.
-        self._clean_action_label = label
-        self._run(self._do_clean_apply, kind, payload, todo)
-
-    def _do_clean_apply(self, kind, payload, todo):
-        """(Thread) Applique l'action choisie à chaque vidéo cochée.
-        kind = 'patch' (statut, payload = booléens cohérents) ou 'delete'."""
-        # Libellé de l'action, mémorisé par l'appelant AVANT le lancement du
-        # thread : lire un widget Tk depuis un thread de travail n'est pas fiable
-        # (plantages aléatoires « main thread is not in main loop »).
-        libelle_action = getattr(self, "_clean_action_label", kind)
-        ok = fail = 0
-        for i, v in enumerate(todo, 1):
-            slug = v.get("slug", "")
-            try:
-                if kind == "delete":
-                    self.api.delete_video(v)
-                    with self._videos_lock:  # mutation du magasin : protégée
-                        if v in self.videos:
-                            self.videos.remove(v)
-                    self._sync_video_caches(slug, removed=True)
-                elif kind == "channels":
-                    # `payload` porte ici la liste des URLs de chaînes.
-                    self.api.assign_video_to_channels(v, payload)
-                    self._sync_video_caches(slug, {"channel": list(payload)})
-                else:
-                    # Statut : PATCH des deux booléens d'un coup (cohérent)
-                    self.api.patch_video(v, payload)
-                    v.update(payload)            # MAJ cache local
-                    self._sync_video_caches(slug, payload)
-                ok += 1
-                self._ui(self._mark_clean_row, slug, True)
-            except Exception as e:
-                fail += 1
-                self._ui(self._mark_clean_row, slug, False)
-                self._ui(self._log, f"  ✗ {slug} : {e}")
-            self._ui(self.clean_progress.configure,
-                     text=f"⏳  {i}/{len(todo)}…", text_color="gray")
-
-        # Bilan
-        self._ui(self.clean_progress.configure,
-                 text=f"Terminé : {ok} OK, {fail} échec(s).",
-                 text_color="#22c55e" if not fail else "#f59e0b")
-        self._ui(self._log,
-                 f"Explorateur « {libelle_action} » : {ok} OK, {fail} échec(s).")
-        self._ui(self.clean_apply_btn.configure, state="normal")
-        # Le lot est traité : on vide la sélection pour éviter de rejouer par
-        # inadvertance la même action (sur des vidéos déjà supprimées, notamment).
-        self._ui(self._clean_clear_selection)
-
-    def _clean_assign_channels(self, todo, chaines):
-        """Affecte les vidéos cochées aux chaînes choisies (appelé en callback)."""
-        if not messagebox.askyesno(
-                "Confirmer l'action",
-                f"Affecter {len(todo)} vidéo(s) à {len(chaines)} chaîne(s) ?\n\n"
-                "Les chaînes actuelles de ces vidéos seront REMPLACÉES."):
-            return
-        self.clean_apply_btn.configure(state="disabled")
-        self._clean_action_label = "Affecter à une chaîne"
-        self._run(self._do_clean_apply, "channels", chaines, todo)
-
-    def _clean_pick_groups(self):
-        """Modale : cocher un ou plusieurs groupes d'accès. Renvoie la liste des
+        Renvoie la liste des
         URLs sélectionnées, ou None si l'utilisateur annule (fermeture/Annuler)."""
         win = ctk.CTkToplevel(self)
         win.title("Restreindre à des groupes")
@@ -5114,10 +5487,10 @@ class App(_AppBase):
         ctk.CTkLabel(win,
                      text="Les vidéos cochées passeront en « Restreint » et ne seront "
                           "visibles que par les membres de ces groupes (connexion requise).",
-                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET,
                      wraplength=340, justify="left").pack(anchor="w", padx=16, pady=(0, 8))
 
-        scroll = ctk.CTkScrollableFrame(win, height=250)
+        scroll = ctk.CTkScrollableFrame(win, height=250, fg_color=S_CARTE)
         scroll.pack(fill="both", expand=True, padx=16)
         vars_by_url = {}
         for g in self.access_groups:
@@ -5143,19 +5516,12 @@ class App(_AppBase):
         btns = ctk.CTkFrame(win, fg_color="transparent")
         btns.pack(fill="x", padx=16, pady=14)
         ctk.CTkButton(btns, text="Valider", command=valider,
-                      fg_color="#16a34a", hover_color="#15803d").pack(side="left")
+                      fg_color=C_SUCCES, hover_color=C_SUCCES_SURV).pack(side="left")
         ctk.CTkButton(btns, text="Annuler", command=annuler,
-                      fg_color="gray35", hover_color="gray25").pack(side="left", padx=10)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE).pack(side="left", padx=10)
 
         win.wait_window()                    # bloque jusqu'à fermeture de la modale
         return result["urls"]
-
-    def _mark_clean_row(self, slug, success: bool):
-        """Pose un ✔ (vert) ou ✗ (rouge) sur la ligne d'une vidéo traitée."""
-        lbl = self.clean_rowlbls.get(slug)
-        if lbl:
-            lbl.configure(text="✔" if success else "✗",
-                          text_color="#22c55e" if success else "#ef4444")
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET INVENTAIRE / STATISTIQUES (+ export Excel)
@@ -5176,19 +5542,19 @@ class App(_AppBase):
             frame,
             text="Vue d'ensemble de l'instance : volumétrie, durées, répartition par "
                  "utilisateur, type et chaîne. Export possible vers un classeur Excel.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
         # — Ligne d'actions : scan + export —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb",
-                      hover_color="#1d4ed8", command=self._stats_scan).pack(side="left")
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=self._stats_scan, text_color=T_SUR_NEUTRE).pack(side="left")
         self.stats_export_btn = ctk.CTkButton(
-            top, text="📊  Exporter en Excel (.xlsx)", fg_color="#16a34a",
-            hover_color="#15803d", state="disabled", command=self._stats_export)
+            top, text="📊  Exporter en Excel (.xlsx)", fg_color=C_SUCCES,
+            hover_color=C_SUCCES_SURV, state="disabled", command=self._stats_export)
         self.stats_export_btn.pack(side="left", padx=10)
-        self.stats_status = ctk.CTkLabel(top, text="(aucun scan)", text_color="gray",
+        self.stats_status = ctk.CTkLabel(top, text="(aucun scan)", text_color=T_SECONDAIRE,
                                          font=ctk.CTkFont(size=11))
         self.stats_status.pack(side="left", padx=8)
 
@@ -5206,12 +5572,13 @@ class App(_AppBase):
             values=["Utilisateur", "Type", "Chaîne",
                     "👁 Vues — vidéos", "👁 Vues — chaînes",
                     "👁 Vues — utilisateurs", "👁 Vues — par mois"],
-            command=lambda _c: self._render_stats())
+            command=lambda _c: self._render_stats(), **STYLE_CHAMP)
         self.stats_dim.set("Utilisateur")
         self.stats_dim.pack(side="left")
 
         # — Tableau de répartition —
-        self.stats_table = ctk.CTkScrollableFrame(frame, label_text="Répartition")
+        self.stats_table = ctk.CTkScrollableFrame(frame, label_text="Répartition", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.stats_table.pack(fill="both", expand=True, pady=(4, 0))
 
         # Données calculées (remplies après un scan)
@@ -5223,9 +5590,9 @@ class App(_AppBase):
     def _stats_scan(self):
         """(Thread) Parcourt les vidéos et calcule les statistiques."""
         if not self.api:
-            self.stats_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.stats_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.stats_status.configure(text="⏳  Scan en cours…", text_color="gray")
+        self.stats_status.configure(text="⏳  Scan en cours…", text_color=T_SECONDAIRE)
         self.stats_export_btn.configure(state="disabled")
         self._run(self._do_stats_scan)
 
@@ -5235,8 +5602,10 @@ class App(_AppBase):
             def prog(n):
                 """Callback de progression (avancement du scan)."""
                 self._ui(self.stats_status.configure,
-                         text=f"⏳  {n} vidéos lues…", text_color="gray")
-            videos = self.api.get_all_videos(progress_cb=prog)
+                         text=f"⏳  {n} vidéos lues…", text_color=T_SECONDAIRE)
+            # Magasin partagé : sans cela l'Inventaire affichait des totaux
+            # périmés sous une mention « chargé à … » qui inspirait confiance.
+            videos = self.ensure_videos_sync(progress_cb=prog)
 
             # Cartes URL → libellé pour afficher des noms plutôt que des URLs
             try:
@@ -5259,12 +5628,16 @@ class App(_AppBase):
             # sans les vues plutôt que d'échouer.
             try:
                 self._ui(self.stats_status.configure,
-                         text="⏳  Lecture des consultations…", text_color="gray")
+                         text="⏳  Lecture des consultations…", text_color=T_SECONDAIRE)
                 vues = self.api.get_view_counts()
             except Exception as e:
                 vues = []
                 self._ui(self._log, f"Consultations indisponibles : {e}")
 
+            # On CONSERVE les tables de correspondance et les consultations :
+            # elles permettent de recalculer les agrégats après une suppression
+            # ou une modification, sans relire l'instance.
+            self._stats_contexte = (user_by_url, type_by_url, chan_by_url, vues)
             self.stats_data = self._compute_stats(videos, user_by_url,
                                                   type_by_url, chan_by_url, vues)
             self._ui(self._render_stats)
@@ -5273,12 +5646,12 @@ class App(_AppBase):
             alerte = self.scan_truncated_warning()
             self._ui(self.stats_status.configure,
                      text=(alerte if alerte else f"✅  {len(videos)} vidéos analysées."),
-                     text_color="#ef4444" if alerte else "#22c55e")
+                     text_color=T_ERREUR if alerte else "#22c55e")
             self._ui(self.stats_export_btn.configure, state="normal")
             self._ui(self._log,
                      alerte if alerte else f"Inventaire : {len(videos)} vidéos analysées.")
         except Exception as e:
-            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Inventaire : {e}")
 
     @staticmethod
@@ -5319,6 +5692,7 @@ class App(_AppBase):
 
         # Index des vidéos par identifiant, pour rattacher chaque vue.
         def cle(valeur):
+            """Extrait l'identifiant d'une vidéo depuis une URL ou un objet."""
             if isinstance(valeur, dict):
                 valeur = valeur.get("url", "")
             return str(valeur or "").rstrip("/").rsplit("/", 1)[-1]
@@ -5456,6 +5830,25 @@ class App(_AppBase):
 
     # ── Rendu ──────────────────────────────────────────────────────────────
 
+    def _recalculer_stats(self):
+        """Recalcule les agrégats de l'Inventaire à partir du magasin partagé.
+
+        Appelée après une suppression ou une modification : sans elle,
+        l'Inventaire affichait des totaux périmés sous une mention
+        « chargé à … » qui inspirait confiance — le pire cas pour un outil dont
+        c'est précisément la fonction.
+
+        Aucun appel réseau : on relit le magasin, déjà à jour, et les tables de
+        correspondance mémorisées au dernier scan."""
+        contexte = getattr(self, "_stats_contexte", None)
+        if not contexte:
+            return                        # aucun scan encore effectué
+        user_by_url, type_by_url, chan_by_url, vues = contexte
+        self.stats_videos = list(self.videos)
+        self.stats_data = self._compute_stats(self.stats_videos, user_by_url,
+                                              type_by_url, chan_by_url, vues)
+        self._render_stats()
+
     def _render_stats(self):
         d = self.stats_data
         if not d:
@@ -5489,7 +5882,7 @@ class App(_AppBase):
                              text="Aucune consultation enregistrée pour l'instant.\n"
                                   "Les vues apparaîtront ici une fois la plateforme "
                                   "ouverte aux utilisateurs.",
-                             text_color="gray", justify="left").pack(pady=20, padx=10)
+                             text_color=T_SECONDAIRE, justify="left").pack(pady=20, padx=10)
                 return
             if "vidéos" in dimension:
                 self._stats_header(("Vidéo", "Vues", "Propriétaire"))
@@ -5538,7 +5931,7 @@ class App(_AppBase):
 
     def _stats_row(self, cols):
         """Ligne de données du tableau."""
-        row = ctk.CTkFrame(self.stats_table, fg_color=("gray85", "gray17"), corner_radius=4)
+        row = ctk.CTkFrame(self.stats_table, fg_color=S_LIGNE, corner_radius=4)
         row.pack(fill="x", pady=1)
         widths = (360, 80, 120)
         for text, w in zip(cols, widths):
@@ -5558,7 +5951,7 @@ class App(_AppBase):
             initialfile=f"inventaire_pod_{datetime.now():%Y%m%d}.xlsx")
         if not path:        # annulé
             return
-        self.stats_status.configure(text="⏳  Export…", text_color="gray")
+        self.stats_status.configure(text="⏳  Export…", text_color=T_SECONDAIRE)
         self._run(self._do_stats_export, path)
 
     def _do_stats_export(self, path):
@@ -5571,7 +5964,7 @@ class App(_AppBase):
             except ImportError:
                 self._ui(self.stats_status.configure,
                          text="❌  Module « openpyxl » manquant (pip install openpyxl).",
-                         text_color="#ef4444")
+                         text_color=T_ERREUR)
                 self._ui(self._log, "❌ Export Excel impossible : openpyxl non installé.")
                 return
 
@@ -5695,10 +6088,10 @@ class App(_AppBase):
 
             wb.save(path)
             self._ui(self.stats_status.configure,
-                     text=f"✅  Exporté : {os.path.basename(path)}", text_color="#22c55e")
+                     text=f"✅  Exporté : {os.path.basename(path)}", text_color=T_SUCCES)
             self._ui(self._log, f"Inventaire exporté → {path}")
         except Exception as e:
-            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Export inventaire : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -5715,30 +6108,31 @@ class App(_AppBase):
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.tabs["ct"] = frame
 
-        ctk.CTkLabel(frame, text="🗂  Chaînes & thèmes",
+        ctk.CTkLabel(frame, text="📺  Chaînes & thèmes",
                      font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
         ctk.CTkLabel(
             frame,
             text="Gérer les chaînes et leurs thèmes : créer, renommer, basculer la visibilité, "
                  "supprimer. Les thèmes apparaissent sous leur chaîne.",
-            text_color="gray70", font=ctk.CTkFont(size=12),
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
         # — Ligne d'action : charger —
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x")
-        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color="#2563eb", hover_color="#1d4ed8",
-                      command=self._ct_load).pack(side="left")
-        self.ct_status = ctk.CTkLabel(top, text="(non chargé)", text_color="gray",
+        ctk.CTkButton(top, text="🔄  Rafraîchir", fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._ct_load, text_color=T_SUR_NEUTRE).pack(side="left")
+        self.ct_status = ctk.CTkLabel(top, text="(en attente de connexion…)", text_color=T_SECONDAIRE,
                                       font=ctk.CTkFont(size=11))
         self.ct_status.pack(side="left", padx=10)
 
         # — Liste des chaînes + thèmes —
-        self.ct_list = ctk.CTkScrollableFrame(frame, label_text="Chaînes et thèmes")
+        self.ct_list = ctk.CTkScrollableFrame(frame, label_text="Chaînes et thèmes", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         self.ct_list.pack(fill="both", expand=True, pady=(8, 6))
 
         # — Formulaire : nouvelle chaîne —
-        cform = ctk.CTkFrame(frame)
+        cform = ctk.CTkFrame(frame, fg_color=S_CARTE)
         cform.pack(fill="x", pady=(2, 4))
         ctk.CTkLabel(cform, text="Nouvelle chaîne :",
                      font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 6))
@@ -5748,11 +6142,11 @@ class App(_AppBase):
         self.ct_new_chan_desc.pack(side="left", padx=4)
         self.ct_new_chan_visible = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(cform, text="visible", variable=self.ct_new_chan_visible).pack(side="left", padx=6)
-        ctk.CTkButton(cform, text="＋ Créer", width=90, fg_color="#16a34a",
-                      hover_color="#15803d", command=self._ct_create_channel).pack(side="left", padx=6, pady=6)
+        ctk.CTkButton(cform, text="＋ Créer", width=90, fg_color=C_SUCCES,
+                      hover_color=C_SUCCES_SURV, command=self._ct_create_channel).pack(side="left", padx=6, pady=6)
 
         # — Formulaire : nouveau thème —
-        tform = ctk.CTkFrame(frame)
+        tform = ctk.CTkFrame(frame, fg_color=S_CARTE)
         tform.pack(fill="x", pady=(2, 0))
         ctk.CTkLabel(tform, text="Nouveau thème :",
                      font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(10, 6))
@@ -5760,10 +6154,10 @@ class App(_AppBase):
         self.ct_new_theme_title.pack(side="left", padx=4)
         ctk.CTkLabel(tform, text="dans la chaîne :").pack(side="left", padx=(6, 4))
         # Menu des chaînes cibles (rempli après chargement)
-        self.ct_theme_channel = ctk.CTkOptionMenu(tform, width=200, values=["(charger d'abord)"])
+        self.ct_theme_channel = ctk.CTkOptionMenu(tform, width=200, values=["(charger d'abord)"], **STYLE_CHAMP)
         self.ct_theme_channel.pack(side="left", padx=4)
-        ctk.CTkButton(tform, text="＋ Créer", width=90, fg_color="#16a34a",
-                      hover_color="#15803d", command=self._ct_create_theme).pack(side="left", padx=6, pady=6)
+        ctk.CTkButton(tform, text="＋ Créer", width=90, fg_color=C_SUCCES,
+                      hover_color=C_SUCCES_SURV, command=self._ct_create_theme).pack(side="left", padx=6, pady=6)
 
         # Données
         self.ct_channels = []           # liste de chaînes (dicts)
@@ -5778,9 +6172,9 @@ class App(_AppBase):
     def _ct_load(self):
         """(Thread) Charge chaînes et thèmes pour l'onglet Chaînes."""
         if not self.api:
-            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.ct_status.configure(text="⏳  Chargement…", text_color="gray")
+        self.ct_status.configure(text="⏳  Chargement…", text_color=T_SECONDAIRE)
         self._run(self._do_ct_load)
 
     def _do_ct_load(self):
@@ -5805,9 +6199,9 @@ class App(_AppBase):
             self._ui(self.ct_status.configure,
                      text=f"✅  {len(chans)} chaîne(s), {len(themes)} thème(s)  ·  "
                           f"{self._loaded_stamp()}",
-                     text_color="#22c55e")
+                     text_color=T_SUCCES)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Chargement chaînes/thèmes : {e}")
 
     def _refresh_ct_channel_menu(self):
@@ -5830,7 +6224,7 @@ class App(_AppBase):
         if not self.ct_channels:
             ctk.CTkLabel(self.ct_list,
                          text="Aucune chaîne. Cliquez « Charger » ou créez-en une ci-dessous.",
-                         text_color="gray").pack(pady=10)
+                         text_color=T_SECONDAIRE).pack(pady=10)
             return
 
         # Regrouper les thèmes par URL de chaîne (champ `channel` du thème)
@@ -5843,29 +6237,53 @@ class App(_AppBase):
             curl = str(ch.get("url", "")).rstrip("/")
 
             # — Ligne de la chaîne —
-            crow = ctk.CTkFrame(self.ct_list, fg_color=("gray80", "gray20"), corner_radius=6)
+            crow = ctk.CTkFrame(self.ct_list, fg_color=S_LIGNE, corner_radius=6)
             crow.pack(fill="x", pady=(6, 0))
             vis = "👁" if ch.get("visible") else "🚫"
             ctk.CTkLabel(crow, text=f"{vis}  {ch.get('title', '(sans titre)')}",
                          anchor="w", font=ctk.CTkFont(size=13, weight="bold")).pack(
                 side="left", padx=10, pady=6, fill="x", expand=True)
             # Actions de la chaîne
-            ctk.CTkButton(crow, text="✏", width=34, fg_color="gray35",
-                          command=lambda c=ch: self._ct_rename_channel(c)).pack(side="left", padx=2)
-            ctk.CTkButton(crow, text="🎬 Vidéos", width=80, fg_color="gray35",
-                          command=lambda c=ch: self._ct_manage_videos(c)).pack(side="left", padx=2)
-            ctk.CTkButton(crow, text="👤 Admins", width=80, fg_color="gray35",
-                          command=lambda c=ch: self._ct_manage_owners(c)).pack(side="left", padx=2)
-            ctk.CTkButton(crow, text="🔒 Restreindre", width=100, fg_color="gray35",
-                          command=lambda c=ch: self._ct_manage_groups(c)).pack(side="left", padx=2)
-            ctk.CTkButton(crow, text="🎨 Habillage", width=94, fg_color="#7c3aed",
-                          hover_color="#6d28d9",
+            ctk.CTkButton(crow, text="✏", width=34, fg_color=C_NEUTRE,
+                          command=lambda c=ch: self._ct_rename_channel(c), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🎬 Vidéos", width=80, fg_color=C_NEUTRE,
+                          command=lambda c=ch: self._ct_manage_videos(c), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="👤 Admins", width=80, fg_color=C_NEUTRE,
+                          command=lambda c=ch: self._ct_manage_owners(c), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🔒 Restreindre", width=100, fg_color=C_NEUTRE,
+                          command=lambda c=ch: self._ct_manage_groups(c), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+            ctk.CTkButton(crow, text="🎨 Habillage", width=94, fg_color=C_ACCENT,
+                          hover_color=C_ACCENT_SURV,
                           command=lambda c=ch: self._ct_habillage(c, "channel")).pack(
                 side="left", padx=2)
-            ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color="gray35",
-                          command=lambda c=ch: self._ct_toggle_visible(c)).pack(side="left", padx=2)
-            ctk.CTkButton(crow, text="🗑", width=34, fg_color="#b91c1c", hover_color="#991b1b",
-                          command=lambda c=ch: self._ct_delete_channel(c)).pack(side="left", padx=(2, 8))
+            ctk.CTkButton(crow, text="👁/🚫", width=54, fg_color=C_NEUTRE,
+                          command=lambda c=ch: self._ct_toggle_visible(c), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
+            # La suppression est IRRÉVERSIBLE et se trouvait collée au
+            # basculement de visibilité — une action anodine, manipulée
+            # souvent. On l'isole derrière un séparateur, en fin de rangée.
+            #
+            # Elle portait aussi un libellé, au motif qu'une icône seule
+            # n'annonce pas la gravité. L'argument reste juste isolément, mais
+            # répété sur chaque ligne le libellé rouge saturait l'écran. Le
+            # séparateur, l'infobulle au survol, le rouge qui n'apparaît qu'au
+            # survol et la confirmation obligatoire portent désormais cette
+            # gravité à eux quatre.
+            ctk.CTkFrame(crow, width=1, height=22,
+                         fg_color=S_PUCE).pack(side="left", padx=8)
+            # Icône seule, neutre, ROUGE AU SURVOL.
+            #
+            # Le libellé était là pour annoncer la gravité, mais répété sur
+            # chaque ligne il produisait un mur rouge : sur vingt chaînes,
+            # l'action la plus dangereuse devenait la plus visible, et l'œil
+            # s'y habituait — l'inverse de l'effet recherché. Le mot revient
+            # au survol, et la confirmation reste inchangée.
+            btn = ctk.CTkButton(crow, text="🗑", width=34,
+                                fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                                text_color=T_SUR_NEUTRE,
+                                font=ctk.CTkFont(size=T_CORPS),
+                                command=lambda c=ch: self._ct_delete_channel(c))
+            btn.pack(side="left", padx=(0, 8))
+            ajouter_infobulle(btn, "Supprimer cette chaîne")
 
             # — Thèmes de cette chaîne (indentés) —
             for t in themes_by_chan.get(curl, []):
@@ -5874,15 +6292,23 @@ class App(_AppBase):
                 ctk.CTkLabel(trow, text=f"└  {t.get('title', '(sans titre)')}",
                              anchor="w", font=ctk.CTkFont(size=12)).pack(
                     side="left", padx=6, pady=2, fill="x", expand=True)
-                ctk.CTkButton(trow, text="✏", width=34, height=24, fg_color="gray30",
+                ctk.CTkButton(trow, text="✏", width=34, height=24,
+                              fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                              text_color=T_SUR_NEUTRE,
                               command=lambda th=t: self._ct_rename_theme(th)).pack(side="left", padx=2)
-                ctk.CTkButton(trow, text="🎨", width=34, height=24, fg_color="#7c3aed",
-                              hover_color="#6d28d9",
+                ctk.CTkButton(trow, text="🎨", width=34, height=24, fg_color=C_ACCENT,
+                              hover_color=C_ACCENT_SURV,
                               command=lambda th=t: self._ct_habillage(th, "theme")).pack(
                     side="left", padx=2)
-                ctk.CTkButton(trow, text="🗑", width=34, height=24, fg_color="#7f1d1d",
-                              hover_color="#991b1b",
-                              command=lambda th=t: self._ct_delete_theme(th)).pack(side="left", padx=(2, 8))
+                ctk.CTkFrame(trow, width=1, height=18,
+                             fg_color=S_PUCE).pack(side="left", padx=6)
+                btn_t = ctk.CTkButton(trow, text="🗑", width=32, height=24,
+                                      font=ctk.CTkFont(size=T_PETIT),
+                                      fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                                      text_color=T_SUR_NEUTRE,
+                                      command=lambda th=t: self._ct_delete_theme(th))
+                btn_t.pack(side="left", padx=(2, 8))
+                ajouter_infobulle(btn_t, "Supprimer ce thème")
 
     # ── Création ───────────────────────────────────────────────────────────
 
@@ -5890,7 +6316,7 @@ class App(_AppBase):
         """Crée une nouvelle chaîne à partir du formulaire."""
         title = self.ct_new_chan_title.get().strip()
         if not title:
-            self.ct_status.configure(text="Titre de chaîne requis.", text_color="#f59e0b")
+            self.ct_status.configure(text="Titre de chaîne requis.", text_color=T_ALERTE)
             return
         desc = self.ct_new_chan_desc.get().strip()
         visible = self.ct_new_chan_visible.get()
@@ -5904,7 +6330,7 @@ class App(_AppBase):
             self._ui(self._ct_clear_new_channel)
             self._do_ct_load()      # recharge (on est déjà dans un thread)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Création chaîne : {e}")
 
     def _ct_clear_new_channel(self):
@@ -5916,12 +6342,12 @@ class App(_AppBase):
         """Crée un thème dans la chaîne sélectionnée."""
         title = self.ct_new_theme_title.get().strip()
         if not title:
-            self.ct_status.configure(text="Titre de thème requis.", text_color="#f59e0b")
+            self.ct_status.configure(text="Titre de thème requis.", text_color=T_ALERTE)
             return
         channel_url = self.ct_channel_choices.get(self.ct_theme_channel.get())
         if not channel_url:
             self.ct_status.configure(text="Choisissez une chaîne pour le thème.",
-                                     text_color="#f59e0b")
+                                     text_color=T_ALERTE)
             return
         self._run(self._do_ct_create_theme, title, channel_url)
 
@@ -5933,7 +6359,7 @@ class App(_AppBase):
             self._ui(lambda: self.ct_new_theme_title.delete(0, "end"))
             self._do_ct_load()
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Création thème : {e}")
 
     # ── Modification ───────────────────────────────────────────────────────
@@ -5961,10 +6387,10 @@ class App(_AppBase):
         ctk.CTkLabel(win, text=f"🎨  Habillage de la {libelle}",
                      font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=18, pady=(16, 2))
-        ctk.CTkLabel(win, text=element.get("title", ""), text_color="gray70",
+        ctk.CTkLabel(win, text=element.get("title", ""), text_color=T_SECONDAIRE,
                      font=ctk.CTkFont(size=12)).pack(anchor="w", padx=18, pady=(0, 10))
 
-        corps = ctk.CTkFrame(win)
+        corps = ctk.CTkFrame(win, fg_color=S_CARTE)
         corps.pack(fill="both", expand=True, padx=16, pady=(0, 8))
         corps.columnconfigure(1, weight=1)
         ligne = 0
@@ -6007,15 +6433,14 @@ class App(_AppBase):
                     if len(val) in (3, 6) and all(c in "0123456789abcdefABCDEF" for c in val):
                         apercu_couleur.configure(fg_color=f"#{val}")
                     else:
-                        apercu_couleur.configure(fg_color=("gray85", "gray25"))
+                        apercu_couleur.configure(fg_color=S_PUCE)
                 except Exception:
                     pass
             couleur_entry.bind("<KeyRelease>", rafraichir_couleur)
             rafraichir_couleur()
-            ctk.CTkButton(zone, text="Choisir…", width=90, fg_color="gray35",
+            ctk.CTkButton(zone, text="Choisir…", width=90, fg_color=C_NEUTRE,
                           command=lambda: self._ct_choisir_couleur(couleur_entry,
-                                                                   rafraichir_couleur)
-                          ).pack(side="left")
+                                                                   rafraichir_couleur), text_color=T_SUR_NEUTRE).pack(side="left")
             ligne += 1
 
         # — Bannière —
@@ -6023,7 +6448,7 @@ class App(_AppBase):
             row=ligne, column=0, padx=8, pady=8)
         banniere = {"url": element.get("headband") or ""}
         banniere_lbl = ctk.CTkLabel(
-            corps, anchor="w", font=ctk.CTkFont(size=11), text_color="gray70",
+            corps, anchor="w", font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE,
             text=("Image définie" if banniere["url"] else "aucune"))
         banniere_lbl.grid(row=ligne, column=1, sticky="w", padx=(0, 6), pady=8)
 
@@ -6043,7 +6468,8 @@ class App(_AppBase):
                 pass
 
         ctk.CTkButton(corps, text="Choisir…", width=110,
-                      command=choisir_banniere).grid(row=ligne, column=2, padx=8, pady=8)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=choisir_banniere, text_color=T_SUR_NEUTRE).grid(row=ligne, column=2, padx=8, pady=8)
         ligne += 1
 
         # — Visibilité (chaînes uniquement) —
@@ -6070,7 +6496,7 @@ class App(_AppBase):
                 "headband": banniere["url"] or None,
             }
             if not payload["title"]:
-                msg.configure(text="Le titre ne peut pas être vide.", text_color="#f59e0b")
+                msg.configure(text="Le titre ne peut pas être vide.", text_color=T_ALERTE)
                 return
             if est_chaine:
                 coul = (couleur_entry.get() or "").strip().lstrip("#")
@@ -6078,17 +6504,17 @@ class App(_AppBase):
                                  and all(c in "0123456789abcdefABCDEF" for c in coul)):
                     msg.configure(
                         text="Couleur invalide : attendu 3 ou 6 caractères hexadécimaux "
-                             "(ex. 223333).", text_color="#f59e0b")
+                             "(ex. 223333).", text_color=T_ALERTE)
                     return
                 payload["color"] = coul
                 payload["visible"] = bool(visible_var.get())
-            msg.configure(text="⏳ Enregistrement…", text_color="gray")
+            msg.configure(text="⏳ Enregistrement…", text_color=T_SECONDAIRE)
             self._run(self._do_ct_habillage, element, genre, payload, win, msg)
 
-        ctk.CTkButton(bas, text="Enregistrer", width=140, fg_color="#16a34a",
-                      hover_color="#15803d", command=enregistrer).pack(side="right")
-        ctk.CTkButton(bas, text="Annuler", width=110, fg_color="gray35",
-                      hover_color="gray28", command=win.destroy).pack(side="right", padx=8)
+        ctk.CTkButton(bas, text="Enregistrer", width=140, fg_color=C_SUCCES,
+                      hover_color=C_SUCCES_SURV, command=enregistrer).pack(side="right")
+        ctk.CTkButton(bas, text="Annuler", width=110, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=win.destroy, text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
     def _ct_choisir_couleur(self, champ, apres):
         """Ouvre le sélecteur de couleur du système et remplit le champ."""
@@ -6117,7 +6543,7 @@ class App(_AppBase):
             self._ui(win.destroy)
             self._do_ct_load()          # recharge chaînes et thèmes
         except Exception as e:
-            self._ui(msg.configure, text=f"❌ {e}", text_color="#ef4444")
+            self._ui(msg.configure, text=f"❌ {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Habillage : {e}")
 
     def _ct_rename_channel(self, ch):
@@ -6143,9 +6569,9 @@ class App(_AppBase):
         propose de gérer la chaîne entière OU l'un de ses thèmes (Option 1).
         Scanne les vidéos au besoin (en arrière-plan)."""
         if not self.api:
-            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
-        self.ct_status.configure(text="⏳  Chargement des vidéos…", text_color="gray")
+        self.ct_status.configure(text="⏳  Chargement des vidéos…", text_color=T_SECONDAIRE)
         self._run(self._do_ct_prepare_organizer, ch)
 
     def _do_ct_prepare_organizer(self, ch):
@@ -6158,14 +6584,14 @@ class App(_AppBase):
             themes = [t for t in self.ct_themes
                       if str(t.get("channel")).rstrip("/") == curl]
             self._ui(self.ct_status.configure,
-                     text=f"{len(self.videos)} vidéos chargées.", text_color="gray")
+                     text=f"{len(self.videos)} vidéos chargées.", text_color=T_SECONDAIRE)
             if themes:
                 self._ui(lambda: self._ct_organizer_dialog(ch, themes))
             else:
                 # Pas de thème : on va directement au sélecteur de la chaîne entière
                 self._ui(lambda: self._ct_open_channel_picker(ch))
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Chargement vidéos (chaîne) : {e}")
 
     def _ct_organizer_dialog(self, ch, themes):
@@ -6178,32 +6604,32 @@ class App(_AppBase):
         ctk.CTkLabel(win, text=f"Chaîne : {ch.get('title')}",
                      font=ctk.CTkFont(size=14, weight="bold")).pack(padx=16, pady=(16, 4), anchor="w")
         ctk.CTkLabel(win, text="Choisissez ce que vous voulez organiser :",
-                     text_color="gray70", font=ctk.CTkFont(size=12)).pack(padx=16, anchor="w")
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(padx=16, anchor="w")
 
         # La chaîne entière (appartenance vidéo ↔ chaîne)
-        row = ctk.CTkFrame(win, fg_color=("gray85", "gray17"), corner_radius=6)
+        row = ctk.CTkFrame(win, fg_color=S_LIGNE, corner_radius=6)
         row.pack(fill="x", padx=16, pady=(12, 4))
         ctk.CTkLabel(row, text="📁  La chaîne entière", anchor="w",
                      font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=8, fill="x", expand=True)
         ctk.CTkButton(row, text="Gérer", width=80,
-                      command=lambda: (win.destroy(), self._ct_open_channel_picker(ch))
-                      ).pack(side="right", padx=8)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=lambda: (win.destroy(), self._ct_open_channel_picker(ch)), text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
         # Un bloc par thème de la chaîne
         ctk.CTkLabel(win, text="Thèmes (rubriques de la chaîne) :",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(padx=16, pady=(10, 2), anchor="w")
-        holder = ctk.CTkScrollableFrame(win, height=200)
+        holder = ctk.CTkScrollableFrame(win, height=200, fg_color=S_CARTE)
         holder.pack(fill="both", expand=True, padx=16, pady=(0, 12))
         for t in themes:
-            r = ctk.CTkFrame(holder, fg_color=("gray85", "gray17"), corner_radius=6)
+            r = ctk.CTkFrame(holder, fg_color=S_LIGNE, corner_radius=6)
             r.pack(fill="x", pady=2)
             ctk.CTkLabel(r, text=f"🏷  {t.get('title')}", anchor="w",
                          font=ctk.CTkFont(size=12)).pack(side="left", padx=10, pady=6,
                                                          fill="x", expand=True)
             ctk.CTkButton(r, text="Gérer", width=80,
+                          fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                           command=lambda th=t: (win.destroy(),
-                                                self._ct_open_theme_picker(ch, th))
-                          ).pack(side="right", padx=8)
+                                                self._ct_open_theme_picker(ch, th)), text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
     def _videos_in_relation(self, field, url):
         """Dict {slug: titre} des vidéos dont le champ relation (`channel`/`theme`)
@@ -6305,7 +6731,7 @@ class App(_AppBase):
         if theme_cleaned:
             msg += f"  ({theme_cleaned} retirée(s) aussi des thèmes pour cohérence.)"
         self._ui(self.ct_status.configure,
-                 text=msg, text_color="#22c55e" if not fail else "#f59e0b")
+                 text=msg, text_color=T_SUCCES if not fail else "#f59e0b")
         self._ui(self._log,
                  f"Chaîne « {ch.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {theme_cleaned} purgé(s) des thèmes, "
@@ -6382,7 +6808,7 @@ class App(_AppBase):
         if forced:
             msg += f"  ({forced} ajoutée(s) aussi à la chaîne pour cohérence.)"
         self._ui(self.ct_status.configure,
-                 text=msg, text_color="#22c55e" if not fail else "#f59e0b")
+                 text=msg, text_color=T_SUCCES if not fail else "#f59e0b")
         self._ui(self._log,
                  f"Thème « {theme.get('title')} » : {len(to_add)} ajout(s), "
                  f"{len(to_remove)} retrait(s), {forced} forcé(s) en chaîne, {fail} échec(s).")
@@ -6393,10 +6819,10 @@ class App(_AppBase):
         de la chaîne. Les owners sont des comptes individuels (pas des groupes)
         qui peuvent administrer la chaîne. Pré-coche les administrateurs actuels."""
         if not self.api:
-            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
         if not self.all_users:
-            self.ct_status.configure(text="⏳  Chargement des comptes…", text_color="gray")
+            self.ct_status.configure(text="⏳  Chargement des comptes…", text_color=T_SECONDAIRE)
             self._run(lambda: (self._reload_users_for_admin(),
                                self._ui(lambda: self._ct_open_owner_picker(ch))))
             return
@@ -6430,12 +6856,12 @@ class App(_AppBase):
             ch["owners"] = urls                       # MAJ cache local
             self._ui(self.ct_status.configure,
                      text=f"✅  Chaîne « {ch.get('title')} » : "
-                          f"{len(urls)} administrateur(s).", text_color="#22c55e")
+                          f"{len(urls)} administrateur(s).", text_color=T_SUCCES)
             self._ui(self._log,
                      f"Chaîne « {ch.get('title')} » : {len(urls)} administrateur(s) défini(s).")
             self._ui(self._render_ct)      # refléter le changement dans la liste
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
 
     def _ct_manage_groups(self, ch):
@@ -6443,12 +6869,12 @@ class App(_AppBase):
         Charge d'abord les vidéos (en arrière-plan) pour pré-cocher les groupes
         déjà appliqués, puis ouvre la fenêtre de sélection."""
         if not self.api:
-            self.ct_status.configure(text="Connectez-vous d'abord.", text_color="#f59e0b")
+            self.ct_status.configure(text="Connectez-vous d'abord.", text_color=T_ALERTE)
             return
         if not self.access_groups:
-            self.ct_status.configure(text="Aucun groupe d'accès chargé.", text_color="#f59e0b")
+            self.ct_status.configure(text="Aucun groupe d'accès chargé.", text_color=T_ALERTE)
             return
-        self.ct_status.configure(text="⏳  Lecture des restrictions…", text_color="gray")
+        self.ct_status.configure(text="⏳  Lecture des restrictions…", text_color=T_SECONDAIRE)
         self._run(self._do_ct_prepare_groups, ch)
 
     def _do_ct_prepare_groups(self, ch):
@@ -6486,10 +6912,10 @@ class App(_AppBase):
                 common = gs if common is None else (common & gs)
             common = common or set()
             self._ui(self.ct_status.configure,
-                     text=f"{len(vids)} vidéo(s) dans la chaîne.", text_color="gray")
+                     text=f"{len(vids)} vidéo(s) dans la chaîne.", text_color=T_SECONDAIRE)
             self._ui(lambda: self._ct_groups_dialog(ch, common, counts, len(vids)))
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Lecture restrictions chaîne : {e}")
 
     def _ct_groups_dialog(self, ch, current_norm, counts=None, nb_videos=0):
@@ -6513,10 +6939,11 @@ class App(_AppBase):
                                "autorisés.\nLa restriction sera appliquée à TOUTES les vidéos "
                                "(statut « Restreint »).\nSans groupe coché, les vidéos repassent "
                                "en public.",
-                     text_color="gray70", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
                      justify="left").pack(padx=16, anchor="w")
 
-        holder = ctk.CTkScrollableFrame(win, height=280, label_text="Groupes d'accès")
+        holder = ctk.CTkScrollableFrame(win, height=280, label_text="Groupes d'accès", fg_color=S_CARTE, label_anchor="w",
+                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
         holder.pack(fill="both", expand=True, padx=16, pady=10)
         gvars = {}
         partiels = 0
@@ -6537,11 +6964,11 @@ class App(_AppBase):
             if n and not uniforme:
                 partiels += 1
                 ctk.CTkLabel(ligne, text=f"⚠ partiel : {n}/{nb_videos}",
-                             text_color="#f59e0b",
+                             text_color=T_ALERTE,
                              font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
             elif uniforme:
                 ctk.CTkLabel(ligne, text=f"toutes ({n}/{nb_videos})",
-                             text_color="#22c55e",
+                             text_color=T_SUCCES,
                              font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
 
         if partiels:
@@ -6549,19 +6976,19 @@ class App(_AppBase):
                          text=f"⚠ {partiels} groupe(s) ne concernent qu'une PARTIE des vidéos. "
                               "Appliquer uniformisera la chaîne : les cases décochées seront "
                               "retirées de toutes les vidéos.",
-                         text_color="#f59e0b", font=ctk.CTkFont(size=11),
+                         text_color=T_ALERTE, font=ctk.CTkFont(size=11),
                          wraplength=430, justify="left").pack(padx=16, anchor="w")
 
         bar = ctk.CTkFrame(win, fg_color="transparent")
         bar.pack(fill="x", padx=16, pady=(0, 12))
-        ctk.CTkButton(bar, text="Appliquer à la chaîne", fg_color="#16a34a",
-                      hover_color="#15803d",
+        ctk.CTkButton(bar, text="Appliquer à la chaîne", fg_color=C_SUCCES,
+                      hover_color=C_SUCCES_SURV,
                       command=lambda: (
                           win.destroy(),
                           self._ct_apply_groups(ch, [u for u, v in gvars.items() if v.get()]))
                       ).pack(side="left")
-        ctk.CTkButton(bar, text="Annuler", fg_color="gray35",
-                      command=win.destroy).pack(side="left", padx=8)
+        ctk.CTkButton(bar, text="Annuler", fg_color=C_NEUTRE,
+                      command=win.destroy, text_color=T_SUR_NEUTRE).pack(side="left", padx=8)
 
     def _ct_apply_groups(self, ch, group_urls):
         """Confirme puis propage la restriction (en arrière-plan)."""
@@ -6572,7 +6999,7 @@ class App(_AppBase):
                 "Restreindre la chaîne",
                 f"Appliquer « {verb} » à TOUTES les vidéos de « {ch.get('title')} » ?"):
             return
-        self.ct_status.configure(text="⏳  Application en cours…", text_color="gray")
+        self.ct_status.configure(text="⏳  Application en cours…", text_color=T_SECONDAIRE)
         self._run(self._do_ct_apply_groups, ch, list(group_urls))
 
     def _do_ct_apply_groups(self, ch, group_urls):
@@ -6607,17 +7034,17 @@ class App(_AppBase):
                     fail += 1
                     self._ui(self._log, f"❌ {v.get('slug')} : {e}")
                 self._ui(self.ct_status.configure,
-                         text=f"⏳  {i}/{len(vids)}…", text_color="gray")
+                         text=f"⏳  {i}/{len(vids)}…", text_color=T_SECONDAIRE)
             msg = (f"✅  « {ch.get('title')} » : {ok} vidéo(s) "
                    f"{'restreinte(s)' if group_urls else 'rendue(s) publiques'}.")
             self._ui(self.ct_status.configure,
-                     text=msg, text_color="#22c55e" if not fail else "#f59e0b")
+                     text=msg, text_color=T_SUCCES if not fail else "#f59e0b")
             self._ui(self._log,
                      f"Restriction chaîne « {ch.get('title')} » : {ok} OK, {fail} échec(s), "
                      f"{len(group_urls)} groupe(s).")
             self._ui(self._render_ct)  # refléter le changement dans la liste
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Restriction chaîne : {e}")
 
     def _ct_toggle_visible(self, ch):
@@ -6639,7 +7066,7 @@ class App(_AppBase):
             # Les autres onglets affichent des noms de chaîne : les rafraîchir.
             self._ui(self.schedule_refresh, channels=True)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Modification {kind} : {e}")
 
     # ── Suppression (double confirmation) ──────────────────────────────────
@@ -6675,7 +7102,7 @@ class App(_AppBase):
             self._ui(self._log, f"{kind.capitalize()} supprimé(e) : {label}")
             self._do_ct_load()
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color="#ef4444")
+            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Suppression {kind} : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -6695,14 +7122,14 @@ class App(_AppBase):
         ctk.CTkLabel(frame,
                      text="Mode d'emploi de la console d'administration. "
                           "Contact : support-pod@utoulouse.fr.",
-                     font=ctk.CTkFont(size=12), text_color="gray60").pack(anchor="w", padx=6, pady=(0, 8))
+                     font=ctk.CTkFont(size=12), text_color=T_DISCRET).pack(anchor="w", padx=6, pady=(0, 8))
 
         scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=2, pady=2)
 
         def section(titre, corps, couleur_titre=("#1d4ed8", "#60a5fa")):
             """Ajoute une carte (titre + texte) à la page d'aide."""
-            card = ctk.CTkFrame(scroll, fg_color=("gray92", "gray16"), corner_radius=10)
+            card = ctk.CTkFrame(scroll, fg_color=S_CARTE, corner_radius=10)
             card.pack(fill="x", padx=4, pady=6)
             ctk.CTkLabel(card, text=titre, font=ctk.CTkFont(size=14, weight="bold"),
                          text_color=couleur_titre, justify="left").pack(
@@ -6757,7 +7184,7 @@ class App(_AppBase):
             "mettre une vidéo dans une chaîne cachée ne restreint PAS la vidéo.\n\n"
             "Pour restreindre des vidéos à un groupe :\n"
             "• Une par une : onglet Vidéos → « Restreindre à des groupes ».\n"
-            "• En lot : onglet Explorateur → cocher les vidéos → action « 🔒 Restreindre "
+            "• En lot : onglet Vidéos → Ctrl+clic sur les vidéos → « 🔐 Restreindre "
             "au groupe… » → choisir le(s) groupe(s). Les vidéos passent en « Restreint » "
             "et sortent de brouillon.")
 
@@ -6809,6 +7236,25 @@ class App(_AppBase):
             "c'est attendu.")
 
         section(
+            "⌨  Raccourcis clavier",
+            "Dans toutes les fenêtres secondaires (choix d'un propriétaire, d'une "
+            "chaîne, d'une bannière, suivi d'un envoi) :\n"
+            "• Échap — fermer sans valider ;\n"
+            "• Entrée — déclencher l'action principale, quand la fenêtre en "
+            "désigne une (« Valider »).\n\n"
+            "Entrée ne valide JAMAIS au hasard : une fenêtre sans action "
+            "principale évidente ne réagit pas à cette touche, pour éviter de "
+            "déclencher par mégarde une opération de masse.")
+
+        section(
+            "🎨  Apparence : mode clair ou sombre",
+            "Le bouton en bas de la barre latérale, juste au-dessus du numéro de "
+            "version, bascule entre le mode sombre (par défaut) et le mode clair.\n\n"
+            "Le choix est MÉMORISÉ : l'application rouvrira dans le mode retenu.\n\n"
+            "Le mode clair convient mieux aux salles très éclairées et à la "
+            "vidéoprojection ; le mode sombre fatigue moins en usage prolongé.")
+
+        section(
             "🛠  Réglages non accessibles depuis l'application",
             "Certains paramètres de Pod ne sont pas exposés par l'API : l'application "
             "ne peut donc pas les modifier. C'est le cas de la PAGE D'ACCUEIL de la "
@@ -6852,28 +7298,39 @@ class App(_AppBase):
             "les actions groupées : mettre en brouillon, rendre public, rendre "
             "restreint, restreindre à des groupes, affecter à une ou plusieurs "
             "chaînes.\n\n"
+            "Le bouton « ☑ Tout sélectionner », à droite du compteur, retient TOUTES "
+            "les vidéos filtrées — y compris celles qui ne sont pas affichées, la "
+            "liste étant limitée à 300 lignes. Le panneau indique alors combien sont "
+            "hors affichage.\n\n"
+            "Deux filtres de DÉTECTION complètent la recherche :\n"
+            "• « Doublons de titre » — vidéos portant le même titre ;\n"
+            "• « Vieux brouillons » — brouillons plus anciens que le nombre de mois "
+            "indiqué à côté.\n\n"
+            "La liste peut être triée par « Plus récentes » (ordre d'origine), "
+            "« A → Z » ou « Z → A » — utile pour retrouver une vidéo dont on "
+            "connaît le titre.\n\n"
+            "Pour l'affectation à une chaîne, deux modes sont proposés :\n"
+            "• AJOUTER — les vidéos restent dans leurs chaînes actuelles ;\n"
+            "• REMPLACER — les affectations existantes sont perdues.\n"
+            "L'ajout est proposé en premier : c'est l'option la moins destructrice, "
+            "et une vidéo peut légitimement appartenir à plusieurs chaînes.\n\n"
             "La sélection est CONSERVÉE après une action : on peut enchaîner "
             "(restreindre à un groupe, puis affecter à une chaîne) sans tout "
             "recocher. « Annuler la sélection » revient au détail d'une vidéo.\n\n"
-            "⚠️ Affecter à une chaîne REMPLACE les chaînes actuelles des vidéos "
-            "concernées ; l'action ne s'ajoute pas aux affectations existantes.\n\n"
-            "La suppression en masse reste réservée à l'Explorateur : elle est "
-            "irréversible, et l'onglet Vidéos sert au travail quotidien.")
 
-        section(
-            "🧹  Explorateur : agir sur plus de 300 vidéos",
-            "L'affichage est limité à 300 lignes pour que l'interface reste fluide, "
-            "mais ce plafond ne limite PAS les actions :\n"
-            "• « Tout cocher » sélectionne TOUTES les vidéos filtrées, y compris celles "
-            "qui ne sont pas affichées.\n"
-            "• Le compteur indique combien sont sélectionnées et combien sont hors "
-            "affichage.\n"
-            "• L'action s'applique à toute la sélection.\n\n"
-            "Deux sécurités : changer un filtre remet la sélection à zéro, et la "
-            "sélection est vidée après chaque lot traité.\n\n"
-            "Après une action, les listes se rafraîchissent automatiquement au bout "
-            "d'une seconde et demie — le temps de voir les ✔ posés sur les lignes "
-            "traitées.")
+            "Pendant un traitement, le bouton « 🛑 Interrompre le traitement » "
+            "s'active. L'arrêt est PROPRE : la vidéo en cours est menée à son "
+            "terme, puis le traitement s'arrête — on ne coupe jamais au milieu "
+            "d'une opération. Le bilan indique combien de vidéos n'ont pas été "
+            "traitées.\n\n"
+            "La suppression en masse figure dans la « ZONE SENSIBLE », séparée des "
+            "autres actions en bas du panneau. Elle demande une DOUBLE "
+            "confirmation : un avertissement, puis la saisie du nombre exact de "
+            "vidéos concernées — recopier ce chiffre oblige à regarder combien on "
+            "s'apprête à détruire.\n\n"
+            "Rappel : Pod n'a pas de corbeille, la suppression est IRRÉVERSIBLE. "
+            "Pour masquer des vidéos sans les perdre, préférez « Mettre en "
+            "brouillon ».")
 
         section(
             "⚠️  Message « LISTE INCOMPLÈTE »",
@@ -6887,8 +7344,9 @@ class App(_AppBase):
             "• Comptes : recherche, statut « Équipe », création de jeton et message "
             "d'accueil (voir la rubrique « Donner un accès »).\n"
             "• Réaffectation : changer le propriétaire de vidéos (par lot).\n"
-            "• Explorateur : recherche, actions par lot (brouillon/public/restreint, "
-            "restreindre au groupe, suppression).\n"
+            "  (L'ancien onglet Explorateur a été fusionné ici : ses filtres de "
+            "détection, la sélection globale et la suppression en masse sont "
+            "désormais dans l'onglet Vidéos.)\n"
             "• Chaînes : chaînes et thèmes, ajout de vidéos, restriction/visibilité.\n"
             "• Groupes d'accès : gestion des groupes.\n"
 
@@ -6942,7 +7400,7 @@ class App(_AppBase):
         self.tabs["about"] = frame
 
         # Carte centrale
-        card = ctk.CTkFrame(frame, fg_color=("gray92", "gray16"), corner_radius=12)
+        card = ctk.CTkFrame(frame, fg_color=S_CARTE, corner_radius=12)
         card.pack(padx=20, pady=20, fill="x")
 
         # Logo (repli texte si absent), sur bandeau blanc
@@ -6963,7 +7421,7 @@ class App(_AppBase):
         ctk.CTkLabel(card, text="PodAdmin",
                      font=ctk.CTkFont(size=26, weight="bold")).pack(pady=(6, 0))
         ctk.CTkLabel(card, text=f"Version {__version__}",
-                     font=ctk.CTkFont(size=13), text_color="gray60").pack(pady=(0, 10))
+                     font=ctk.CTkFont(size=13), text_color=T_DISCRET).pack(pady=(0, 10))
         ctk.CTkLabel(
             card,
             text="Console d'administration pour l'instance Esup-Pod de\n"
@@ -6973,7 +7431,7 @@ class App(_AppBase):
             justify="center").pack(pady=(0, 14))
 
         # Séparateur
-        ctk.CTkFrame(card, height=1, fg_color="gray40").pack(fill="x", padx=40, pady=4)
+        ctk.CTkFrame(card, height=1, fg_color=S_FILET).pack(fill="x", padx=40, pady=4)
 
         # Auteurs
         ctk.CTkLabel(card, text="Développé par",
@@ -6984,7 +7442,7 @@ class App(_AppBase):
 
         # Contact + institution
         ctk.CTkLabel(card, text="Université de Toulouse",
-                     font=ctk.CTkFont(size=12), text_color="gray60").pack(pady=(12, 0))
+                     font=ctk.CTkFont(size=12), text_color=T_DISCRET).pack(pady=(12, 0))
         ctk.CTkLabel(card, text="support-pod@utoulouse.fr",
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=("#1d4ed8", "#60a5fa")).pack(pady=(0, 14))
@@ -6994,10 +7452,10 @@ class App(_AppBase):
         # d'en faire — c'est elle qui encadre réellement la réutilisation.
         ctk.CTkLabel(card, text=__copyright__,
                      font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color="gray60").pack(pady=(0, 2))
+                     text_color=T_DISCRET).pack(pady=(0, 2))
         ctk.CTkLabel(card, text=__license__,
                      font=ctk.CTkFont(size=10, slant="italic"),
-                     text_color="gray50", wraplength=420,
+                     text_color=T_DISCRET, wraplength=420,
                      justify="center").pack(padx=20, pady=(0, 18))
 
     def _build_tab_log(self):
@@ -7007,18 +7465,18 @@ class App(_AppBase):
         top = ctk.CTkFrame(frame, fg_color="transparent")
         top.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(top, text="📋  Journal", font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
-        ctk.CTkButton(top, text="🗑 Effacer", width=100, fg_color="gray35",
-                      hover_color="gray28", command=self._clear_log).pack(side="right")
+        ctk.CTkButton(top, text="🗑 Effacer", width=100, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=self._clear_log, text_color=T_SUR_NEUTRE).pack(side="right")
         # Le journal est AUSSI écrit sur disque : « Effacer » ne vide que
         # l'affichage, l'historique complet reste consultable dans le fichier.
-        ctk.CTkButton(top, text="📂 Ouvrir les journaux", width=170, fg_color="gray35",
-                      hover_color="gray28",
-                      command=self._open_journal_folder).pack(side="right", padx=6)
+        ctk.CTkButton(top, text="📂 Ouvrir les journaux", width=170, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
+                      command=self._open_journal_folder, text_color=T_SUR_NEUTRE).pack(side="right", padx=6)
         ctk.CTkLabel(frame,
                      text="Le journal est enregistré chaque mois dans "
                           "« Mes documents\\.podadmin » (dossier personnel). "
                           "« Effacer » ne vide que l'affichage.",
-                     font=ctk.CTkFont(size=11), text_color="gray60",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET,
                      anchor="w").pack(fill="x", pady=(0, 6))
         self.log_box = ctk.CTkTextbox(frame, font=ctk.CTkFont(family="Consolas", size=11))
         self.log_box.pack(fill="both", expand=True)
@@ -7098,6 +7556,43 @@ def _focus_toplevel(win, master=None):
             win.transient(master)          # la fenêtre reste au-dessus de son parent
     except Exception:
         pass
+
+    # RACCOURCIS CLAVIER, posés ici parce que TOUTES les fenêtres secondaires
+    # passent par cette fonction : un seul endroit à maintenir, aucune risque
+    # d'en oublier une.
+    #
+    # Échap ferme la fenêtre. Entrée déclenche l'action principale si la fenêtre
+    # en désigne une via `bouton_defaut` — on ne devine pas : valider au hasard
+    # dans une fenêtre de suppression serait pire que pas de raccourci du tout.
+    def _sur_echap(_e=None):
+        """Ferme la fenêtre (Échap)."""
+        try:
+            annuler = getattr(win, "action_annuler", None)
+            if callable(annuler):
+                annuler()
+            else:
+                win.destroy()
+        except Exception:
+            pass
+        return "break"
+
+    def _sur_entree(_e=None):
+        """Déclenche l'action principale, si la fenêtre en a désigné une."""
+        bouton = getattr(win, "bouton_defaut", None)
+        try:
+            if bouton is not None and bouton.winfo_exists() \
+                    and str(bouton.cget("state")) != "disabled":
+                bouton.invoke()
+        except Exception:
+            pass
+        return "break"
+
+    try:
+        win.bind("<Escape>", _sur_echap)
+        win.bind("<Return>", _sur_entree)
+        win.bind("<KP_Enter>", _sur_entree)     # pavé numérique
+    except Exception:
+        pass
     win.lift()
     win.attributes("-topmost", True)        # passe au-dessus, le temps de s'afficher
     # On retire 'topmost' juste après (sinon elle resterait au-dessus de TOUTES
@@ -7147,7 +7642,7 @@ class ProgressModal(ctk.CTkToplevel):
             anchor="w", padx=20, pady=(18, 2))
 
         self.subtitle_lbl = ctk.CTkLabel(
-            self, text=subtitle, text_color="gray70", font=ctk.CTkFont(size=12),
+            self, text=subtitle, text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             wraplength=420, justify="left")
         self.subtitle_lbl.pack(anchor="w", padx=20, pady=(0, 8))
 
@@ -7162,7 +7657,7 @@ class ProgressModal(ctk.CTkToplevel):
         self.bar.set(0)
 
         # Détail chiffré sous la barre (Mo envoyés / Mo total)
-        self.detail_lbl = ctk.CTkLabel(self, text="", text_color="gray",
+        self.detail_lbl = ctk.CTkLabel(self, text="", text_color=T_SECONDAIRE,
                                        font=ctk.CTkFont(size=11))
         self.detail_lbl.pack(anchor="w", padx=20, pady=(4, 0))
 
@@ -7170,13 +7665,19 @@ class ProgressModal(ctk.CTkToplevel):
         self.warn_lbl = ctk.CTkLabel(
             self, text="Ne fermez pas cette fenêtre et ne lancez pas d'autre action : "
                        "cela interromprait l'envoi.",
-            text_color="#f59e0b", font=ctk.CTkFont(size=11),
+            text_color=T_ALERTE, font=ctk.CTkFont(size=11),
             wraplength=420, justify="left")
         self.warn_lbl.pack(anchor="w", padx=20, pady=(10, 0))
 
         # Bouton de fermeture : désactivé jusqu'à la fin de l'opération.
+        # Échap referme la fenêtre — mais seulement si le bouton est actif,
+        # c'est-à-dire une fois le traitement terminé.
+        self.action_annuler = lambda: (
+            self.close_btn.invoke()
+            if str(self.close_btn.cget("state")) != "disabled" else None)
         self.close_btn = ctk.CTkButton(self, text="Fermer", width=110,
-                                       state="disabled", command=self._close_now)
+                                       fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                                       state="disabled", command=self._close_now, text_color=T_SUR_NEUTRE)
         self.close_btn.pack(anchor="e", padx=20, pady=(10, 14))
 
         _focus_toplevel(self, master)      # au premier plan + modale (grab_set)
@@ -7238,9 +7739,9 @@ class ProgressModal(ctk.CTkToplevel):
         self.set_indeterminate(False)
         self.bar.set(1.0 if ok else self.bar.get())
         self.phase_lbl.configure(text=("✅  " if ok else "❌  ") + message,
-                                 text_color="#22c55e" if ok else "#ef4444")
+                                 text_color=T_SUCCES if ok else "#ef4444")
         self.warn_lbl.configure(text="Opération terminée. Vous pouvez fermer cette fenêtre.",
-                                text_color="gray")
+                                text_color=T_SECONDAIRE)
         self.close_btn.configure(state="normal")
         self._ajuster_hauteur()            # le message de fin peut être long
         try:
@@ -7300,24 +7801,28 @@ class OwnerPicker(ctk.CTkToplevel):
         self.filter.pack(side="left", fill="x", expand=True, padx=(0, 6))
         # Temporisation : évite de reconstruire toute la liste à chaque caractère.
         self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
-        ctk.CTkButton(bar, text="🔄", width=40, command=self._reload).pack(side="left")
+        ctk.CTkButton(bar, text="🔄", width=40, fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._reload, text_color=T_SUR_NEUTRE).pack(side="left")
 
-        self.count_lbl = ctk.CTkLabel(self, text="", text_color="gray", font=ctk.CTkFont(size=11))
+        self.count_lbl = ctk.CTkLabel(self, text="", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11))
         self.count_lbl.pack(anchor="w", padx=14, pady=(4, 0))
 
-        self.listbox = ctk.CTkScrollableFrame(self, height=320)
+        self.listbox = ctk.CTkScrollableFrame(self, height=320, fg_color=S_CARTE)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
 
-        self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucun", text_color="gray",
+        self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucun", text_color=T_SECONDAIRE,
                                        wraplength=460, justify="left")
         self.chosen_lbl.pack(padx=14, anchor="w")
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(fill="x", padx=14, pady=10)
-        ctk.CTkButton(btns, text="Valider", fg_color="#16a34a", hover_color="#15803d",
-                      command=self._validate).pack(side="right")
-        ctk.CTkButton(btns, text="Annuler", fg_color="gray35", hover_color="gray28",
-                      command=self.destroy).pack(side="right", padx=8)
+        # Désigné comme action par défaut : Entrée déclenche « Valider ».
+        self.bouton_defaut = ctk.CTkButton(
+            btns, text="Valider", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+            command=self._validate)
+        self.bouton_defaut.pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self.destroy, text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
         self.after(80, self._init_list)
 
@@ -7342,7 +7847,14 @@ class OwnerPicker(ctk.CTkToplevel):
                 self.after(0, self._render)
                 self.after(0, self._update_chosen)
             except Exception as e:
-                self.after(0, lambda: self.count_lbl.configure(text=f"Erreur : {e}", text_color="#ef4444"))
+                # PIÈGE PYTHON 3 : le nom `e` est SUPPRIMÉ à la sortie du bloc
+                # `except`. Or ce lambda n'est exécuté que plus tard, par
+                # `after(0, …)` : il lèverait alors NameError, et l'utilisateur
+                # resterait devant « ⏳ Chargement… » sans jamais voir l'erreur.
+                # On capture donc le message dans une variable ordinaire.
+                msg = str(e)
+                self.after(0, lambda m=msg: self.count_lbl.configure(
+                    text=f"Erreur : {m}", text_color=T_ERREUR))
         threading.Thread(target=work, daemon=True).start()
 
     def _label(self, u: dict) -> str:
@@ -7367,7 +7879,7 @@ class OwnerPicker(ctk.CTkToplevel):
             w.destroy()
         users = self.master_app.all_users
         if not users:
-            ctk.CTkLabel(self.listbox, text="Liste non disponible.", text_color="gray").pack(pady=10)
+            ctk.CTkLabel(self.listbox, text="Liste non disponible.", text_color=T_SECONDAIRE).pack(pady=10)
             return
         matches = [u for u in users if not flt or flt in self._label(u).lower()]
         CAP = 300
@@ -7379,17 +7891,17 @@ class OwnerPicker(ctk.CTkToplevel):
             else:
                 prefix = "☑  " if sel else "☐  "
             ctk.CTkButton(self.listbox, text=prefix + self._label(u), anchor="w",
-                          fg_color=("gray75", "gray30") if (sel and not self.single) else "transparent",
+                          fg_color=S_SELECTION if (sel and not self.single) else "transparent",
                           text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                           height=28, font=ctk.CTkFont(size=12),
                           command=lambda uu=u: self._toggle(uu)).pack(fill="x", pady=1)
         self.count_lbl.configure(text=f"{len(matches)} affiché(s) sur {len(users)} — "
-                                      f"{len(self.selected)} sélectionné(s)", text_color="gray")
+                                      f"{len(self.selected)} sélectionné(s)", text_color=T_SECONDAIRE)
         if len(matches) > CAP:
             ctk.CTkLabel(self.listbox, text=f"… affinez le filtre ({len(matches) - CAP} de plus)",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
         elif not matches:
-            ctk.CTkLabel(self.listbox, text="Aucun résultat.", text_color="gray").pack(pady=8)
+            ctk.CTkLabel(self.listbox, text="Aucun résultat.", text_color=T_SECONDAIRE).pack(pady=8)
 
     def _toggle(self, u: dict):
         """Coche/décoche un compte (ou valide directement en mode sélection unique)."""
@@ -7412,9 +7924,9 @@ class OwnerPicker(ctk.CTkToplevel):
         """Met à jour le libellé récapitulant la sélection courante."""
         if self.selected:
             self.chosen_lbl.configure(text="Sélection : " + ", ".join(self.selected.values()),
-                                      text_color="#22c55e")
+                                      text_color=T_SUCCES)
         else:
-            self.chosen_lbl.configure(text="Sélection : aucun", text_color="gray")
+            self.chosen_lbl.configure(text="Sélection : aucun", text_color=T_SECONDAIRE)
 
     def _validate(self):
         """Renvoie la sélection à l'appelant (on_done) puis ferme la fenêtre."""
@@ -7450,18 +7962,21 @@ class VideoPicker(ctk.CTkToplevel):
         # Temporisation : évite de reconstruire toute la liste à chaque caractère.
         self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
 
-        self.listbox = ctk.CTkScrollableFrame(self, height=360)
+        self.listbox = ctk.CTkScrollableFrame(self, height=360, fg_color=S_CARTE)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
 
-        self.chosen_lbl = ctk.CTkLabel(self, text="0 vidéo sélectionnée", text_color="gray")
+        self.chosen_lbl = ctk.CTkLabel(self, text="0 vidéo sélectionnée", text_color=T_SECONDAIRE)
         self.chosen_lbl.pack(padx=14, anchor="w")
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(fill="x", padx=14, pady=10)
-        ctk.CTkButton(btns, text="Valider", fg_color="#16a34a", hover_color="#15803d",
-                      command=self._validate).pack(side="right")
-        ctk.CTkButton(btns, text="Annuler", fg_color="gray35", hover_color="gray28",
-                      command=self.destroy).pack(side="right", padx=8)
+        # Désigné comme action par défaut : Entrée déclenche « Valider ».
+        self.bouton_defaut = ctk.CTkButton(
+            btns, text="Valider", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+            command=self._validate)
+        self.bouton_defaut.pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self.destroy, text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
         self._render()
         self._update_chosen()
@@ -7491,15 +8006,15 @@ class VideoPicker(ctk.CTkToplevel):
             title = (v.get("title") or "(sans titre)")[:54]
             ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + f"{title}  ·  {slug}",
                           anchor="w", height=26,
-                          fg_color=("gray75", "gray30") if sel else "transparent",
+                          fg_color=S_SELECTION if sel else "transparent",
                           text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                           font=ctk.CTkFont(size=12),
                           command=lambda vv=v: self._toggle(vv)).pack(fill="x", pady=1)
         if len(matches) > CAP:
             ctk.CTkLabel(self.listbox, text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color="gray").pack(pady=4)
+                         text_color=T_SECONDAIRE).pack(pady=4)
         elif not matches:
-            ctk.CTkLabel(self.listbox, text="Aucune vidéo.", text_color="gray").pack(pady=8)
+            ctk.CTkLabel(self.listbox, text="Aucune vidéo.", text_color=T_SECONDAIRE).pack(pady=8)
 
     def _toggle(self, v: dict):
         """Coche/décoche une vidéo dans la sélection."""
@@ -7518,7 +8033,7 @@ class VideoPicker(ctk.CTkToplevel):
         n = len(self.selected)
         self.chosen_lbl.configure(
             text=f"{n} vidéo(s) sélectionnée(s)",
-            text_color="#22c55e" if n else "gray")
+            text_color=T_SUCCES if n else "gray")
 
     def _validate(self):
         """Renvoie la liste des slugs sélectionnés à l'appelant puis ferme."""
@@ -7549,6 +8064,10 @@ class BannerPicker(ctk.CTkToplevel):
     PLAFOND = 40
 
     def __init__(self, master, titre: str, image_actuelle: str = ""):
+        """Prépare la fenêtre de choix de bannière.
+
+        `image_actuelle` : URL de la bannière déjà posée, mise en évidence dans
+        la galerie pour qu'on voie ce qu'on remplace."""
         super().__init__(master)
         self.master_app = master
         self.resultat = None          # URL choisie, "" pour retirer, None si annulé
@@ -7576,10 +8095,10 @@ class BannerPicker(ctk.CTkToplevel):
         bas = ctk.CTkFrame(self, fg_color="transparent")
         bas.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkButton(bas, text="Retirer la bannière", width=160,
-                      fg_color="#b45309", hover_color="#92400e",
+                      fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
                       command=self._retirer).pack(side="left")
-        ctk.CTkButton(bas, text="Annuler", width=110, fg_color="gray35",
-                      hover_color="gray28", command=self._annuler).pack(side="right")
+        ctk.CTkButton(bas, text="Annuler", width=110, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, command=self._annuler, text_color=T_SUR_NEUTRE).pack(side="right")
 
         self._charger_catalogue()
 
@@ -7600,11 +8119,11 @@ class BannerPicker(ctk.CTkToplevel):
                         variable=self.masquer_vignettes,
                         command=self._filtrer).pack(side="left", padx=12)
 
-        self.compteur = ctk.CTkLabel(parent, text="Chargement…", text_color="gray",
+        self.compteur = ctk.CTkLabel(parent, text="Chargement…", text_color=T_SECONDAIRE,
                                      font=ctk.CTkFont(size=11), anchor="w")
         self.compteur.pack(fill="x", padx=8, pady=(2, 4))
 
-        self.galerie = ctk.CTkScrollableFrame(parent, height=350)
+        self.galerie = ctk.CTkScrollableFrame(parent, height=350, fg_color=S_CARTE)
         self.galerie.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
     def _charger_catalogue(self):
@@ -7615,7 +8134,7 @@ class BannerPicker(ctk.CTkToplevel):
                 images = self.master_app.api.get_images()
             except Exception as e:
                 self.master_app._ui(self.compteur.configure,
-                                    text=f"❌ {e}", text_color="#ef4444")
+                                    text=f"❌ {e}", text_color=T_ERREUR)
                 return
             self.images = images
             self.master_app._ui(self._filtrer)
@@ -7667,31 +8186,31 @@ class BannerPicker(ctk.CTkToplevel):
             detail += f" — {masquees} vignette(s) de vidéos masquée(s)"
         if total > self.PLAFOND:
             detail += f" — {self.PLAFOND} affichées, affinez le filtre"
-        self.compteur.configure(text=detail, text_color="gray")
+        self.compteur.configure(text=detail, text_color=T_SECONDAIRE)
 
         if not montrees:
             ctk.CTkLabel(self.galerie, text="Aucune image ne correspond.",
-                         text_color="gray").pack(pady=20)
+                         text_color=T_SECONDAIRE).pack(pady=20)
             return
 
         # Grille de 4 colonnes
         for i, img in enumerate(montrees):
             ligne, col = divmod(i, 4)
-            case = ctk.CTkFrame(self.galerie, width=165, height=140)
+            case = ctk.CTkFrame(self.galerie, width=165, height=140, fg_color=S_LIGNE)
             case.grid(row=ligne, column=col, padx=6, pady=6)
             case.grid_propagate(False)
 
             actuelle = str(img.get("url", "")).rstrip("/") == self.image_actuelle.rstrip("/")
             apercu = ctk.CTkLabel(case, text="…", width=150, height=80,
-                                  fg_color=("gray85", "gray25"), corner_radius=4)
+                                  fg_color=S_PUCE, corner_radius=4)
             apercu.pack(padx=6, pady=(6, 2))
 
             nom = str(img.get("name", "?"))
             ctk.CTkLabel(case, text=(("✅ " if actuelle else "") + nom[:22]),
                          font=ctk.CTkFont(size=10),
-                         text_color=("#22c55e" if actuelle else "gray70")).pack()
+                         text_color=(T_SUCCES if actuelle else T_SECONDAIRE)).pack()
             ctk.CTkButton(case, text="Choisir", height=22, width=140,
-                          font=ctk.CTkFont(size=11),
+                          font=ctk.CTkFont(size=11), fg_color=C_ACTION, hover_color=C_ACTION_SURV,
                           command=lambda u=img.get("url", ""): self._choisir(u)).pack(pady=(2, 6))
 
             # Chargement de la vignette en arrière-plan, une par une.
@@ -7743,7 +8262,7 @@ class BannerPicker(ctk.CTkToplevel):
                      font=ctk.CTkFont(size=12), wraplength=650,
                      justify="left").pack(anchor="w", padx=10, pady=(12, 6))
 
-        cadre = ctk.CTkFrame(parent)
+        cadre = ctk.CTkFrame(parent, fg_color=S_CARTE)
         cadre.pack(fill="x", padx=10, pady=6)
         cadre.columnconfigure(1, weight=1)
 
@@ -7752,7 +8271,8 @@ class BannerPicker(ctk.CTkToplevel):
         self.chemin_lbl = ctk.CTkEntry(cadre, placeholder_text="aucun fichier choisi")
         self.chemin_lbl.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=8)
         ctk.CTkButton(cadre, text="Parcourir…", width=110,
-                      command=self._parcourir).grid(row=0, column=2, padx=8, pady=8)
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self._parcourir, text_color=T_SUR_NEUTRE).grid(row=0, column=2, padx=8, pady=8)
 
         ctk.CTkLabel(cadre, text="Nom :", width=90, anchor="e").grid(
             row=1, column=0, padx=8, pady=8)
@@ -7761,7 +8281,7 @@ class BannerPicker(ctk.CTkToplevel):
 
         ctk.CTkLabel(cadre, text="Dossier :", width=90, anchor="e").grid(
             row=2, column=0, padx=8, pady=8)
-        self.dossier_menu = ctk.CTkOptionMenu(cadre, values=["(chargement…)"])
+        self.dossier_menu = ctk.CTkOptionMenu(cadre, values=["(chargement…)"], **STYLE_CHAMP)
         self.dossier_menu.grid(row=2, column=1, columnspan=2, sticky="ew",
                                padx=(0, 8), pady=8)
 
@@ -7770,13 +8290,13 @@ class BannerPicker(ctk.CTkToplevel):
         self.msg_local.pack(fill="x", padx=10, pady=(4, 0))
 
         ctk.CTkButton(parent, text="⬆  Déposer et utiliser comme bannière",
-                      height=34, fg_color="#16a34a", hover_color="#15803d",
+                      height=34, fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
                       command=self._deposer).pack(padx=10, pady=12)
 
         ctk.CTkLabel(parent,
                      text="Formats acceptés : JPG, PNG. Pod refuse les images trop "
                           "petites ou mal formées.",
-                     font=ctk.CTkFont(size=10), text_color="gray55",
+                     font=ctk.CTkFont(size=10), text_color=T_DISCRET,
                      wraplength=650, justify="left").pack(anchor="w", padx=10)
 
         self._charger_dossiers()
@@ -7814,13 +8334,13 @@ class BannerPicker(ctk.CTkToplevel):
         chemin = (self.chemin_lbl.get() or "").strip()
         if not chemin:
             self.msg_local.configure(text="Choisissez d'abord un fichier.",
-                                     text_color="#f59e0b")
+                                     text_color=T_ALERTE)
             return
         dossier_url = getattr(self, "_dossiers", {}).get(self.dossier_menu.get(), "")
         if not dossier_url:
             self.msg_local.configure(
                 text="Aucun dossier de rangement disponible : impossible de déposer.",
-                text_color="#ef4444")
+                text_color=T_ERREUR)
             return
         # `created_by` : le compte connecté à PodAdmin, c'est-à-dire celui qui
         # dépose réellement l'image.
@@ -7831,10 +8351,10 @@ class BannerPicker(ctk.CTkToplevel):
                 break
         if not createur:
             self.msg_local.configure(
-                text="Impossible de déterminer le compte déposant.", text_color="#ef4444")
+                text="Impossible de déterminer le compte déposant.", text_color=T_ERREUR)
             return
 
-        self.msg_local.configure(text="⏳ Dépôt en cours…", text_color="gray")
+        self.msg_local.configure(text="⏳ Dépôt en cours…", text_color=T_SECONDAIRE)
 
         def travail():
             """(Thread) Dépôt de l'image sur l'instance."""
@@ -7845,7 +8365,7 @@ class BannerPicker(ctk.CTkToplevel):
                 self.master_app._ui(self._choisir, url)
             except Exception as e:
                 self.master_app._ui(self.msg_local.configure,
-                                    text=f"❌ {e}", text_color="#ef4444")
+                                    text=f"❌ {e}", text_color=T_ERREUR)
         self.master_app._run(travail)
 
     # ── Sortie ────────────────────────────────────────────────────────────
@@ -7897,19 +8417,22 @@ class ChannelPicker(ctk.CTkToplevel):
         # Temporisation : évite de reconstruire toute la liste à chaque caractère.
         self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
 
-        self.listbox = ctk.CTkScrollableFrame(self, height=320)
+        self.listbox = ctk.CTkScrollableFrame(self, height=320, fg_color=S_CARTE)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
 
-        self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucune", text_color="gray",
+        self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucune", text_color=T_SECONDAIRE,
                                        wraplength=420, justify="left")
         self.chosen_lbl.pack(padx=14, anchor="w")
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(fill="x", padx=14, pady=10)
-        ctk.CTkButton(btns, text="Valider", fg_color="#16a34a", hover_color="#15803d",
-                      command=self._validate).pack(side="right")
-        ctk.CTkButton(btns, text="Annuler", fg_color="gray35", hover_color="gray28",
-                      command=self.destroy).pack(side="right", padx=8)
+        # Désigné comme action par défaut : Entrée déclenche « Valider ».
+        self.bouton_defaut = ctk.CTkButton(
+            btns, text="Valider", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+            command=self._validate)
+        self.bouton_defaut.pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self.destroy, text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
 
         self._render()
         self._update_chosen()
@@ -7937,12 +8460,12 @@ class ChannelPicker(ctk.CTkToplevel):
             sel = url in self.selected
             ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + c.get("title", "?"),
                           anchor="w", height=28,
-                          fg_color=("gray75", "gray30") if sel else "transparent",
+                          fg_color=S_SELECTION if sel else "transparent",
                           text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
                           font=ctk.CTkFont(size=12),
                           command=lambda cc=c: self._toggle(cc)).pack(fill="x", pady=1)
         if not matches:
-            ctk.CTkLabel(self.listbox, text="Aucune chaîne.", text_color="gray").pack(pady=8)
+            ctk.CTkLabel(self.listbox, text="Aucune chaîne.", text_color=T_SECONDAIRE).pack(pady=8)
 
     def _toggle(self, c: dict):
         """Coche/décoche une chaîne dans la sélection."""
@@ -7960,9 +8483,9 @@ class ChannelPicker(ctk.CTkToplevel):
         """Met à jour le libellé récapitulant la sélection courante."""
         if self.selected:
             self.chosen_lbl.configure(text="Sélection : " + ", ".join(self.selected.values()),
-                                      text_color="#22c55e")
+                                      text_color=T_SUCCES)
         else:
-            self.chosen_lbl.configure(text="Sélection : aucune", text_color="gray")
+            self.chosen_lbl.configure(text="Sélection : aucune", text_color=T_SECONDAIRE)
 
     def _validate(self):
         """Renvoie la sélection à l'appelant (on_done) puis ferme la fenêtre."""
@@ -7973,7 +8496,14 @@ class ChannelPicker(ctk.CTkToplevel):
 # ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    ctk.set_appearance_mode("dark")
+    # Thème retenu lors de la dernière utilisation. Sombre par défaut : c'est
+    # le mode d'origine de l'application, et celui auquel les utilisateurs
+    # actuels sont habitués.
+    try:
+        _theme = (cfg.load_config() or {}).get("theme", "dark")
+    except Exception:
+        _theme = "dark"
+    ctk.set_appearance_mode(_theme if _theme in ("dark", "light") else "dark")
     ctk.set_default_color_theme("blue")
     app = App()
     app.mainloop()

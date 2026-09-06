@@ -1,6 +1,6 @@
 {
-  "version": "1.2.0",
+  "version": "1.5.3",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Sélection multiple dans l'onglet Vidéos (Ctrl/Maj+clic).",
+  "notes": "Compte dans le bouton de masse, navigation qui ne deborde plus, filet de separation, en-tetes de panneaux.",
   "version_minimale": ""
 }

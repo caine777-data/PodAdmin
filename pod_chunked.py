@@ -93,6 +93,7 @@ GATEWAY_ERRORS = (502, 503, 504)
 class PodChunkedError(Exception):
     """Erreur du client chunké (login, envoi d'un morceau, finalisation…)."""
     def __init__(self, message: str, status: int = 0, body: str = ""):
+        """Erreur d\'envoi par morceaux : message, code HTTP, corps de réponse."""
         super().__init__(message)
         self.status = status
         self.body = body
@@ -110,6 +111,10 @@ class PodChunkedSession:
 
     def __init__(self, base_url: str, username: str, password: str,
                  verify_ssl: bool = True):
+        """Prépare la session web du compte véhicule.
+
+        Aucune connexion n'est ouverte ici : `login()` s'en charge, au moment
+        où un envoi par morceaux devient nécessaire."""
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password

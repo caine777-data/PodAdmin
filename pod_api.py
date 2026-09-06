@@ -66,6 +66,16 @@ class PodAPI:
         # l'utilisateur, sans quoi l'application affiche des chiffres crédibles
         # mais erronés.
         self.last_scan_truncated = False
+        # Troncature PAR RESSOURCE. Le drapeau unique `last_scan_truncated`
+        # était déposé sur cet objet, partagé par tous les onglets, et remis à
+        # zéro à chaque scan : deux scans qui se chevauchent — cas courant,
+        # plusieurs onglets scannant de leur côté — et le dernier terminé
+        # imposait son verdict aux autres. L'alerte pouvait donc DISPARAÎTRE
+        # alors qu'une liste était bien incomplète.
+        #
+        # Chaque ressource conserve désormais son propre état : {"/videos/": True}
+        self.troncatures: dict[str, bool] = {}
+
         # Cache des groupes d'accès : leur reconstruction coûte plusieurs
         # dizaines de requêtes, inutile de la refaire à chaque affichage.
         self._access_groups_cache = None
@@ -145,7 +155,6 @@ class PodAPI:
         plus utilisé : on est revenu à la pagination simple et fiable par 'next'.)
         """
         self.last_scan_skipped = 0
-        self.last_scan_truncated = False
         items: list[dict] = []
         url = self._abs(endpoint)
         p = dict(params or {})
@@ -167,7 +176,11 @@ class PodAPI:
                 progress_cb(len(items))
         # Sortie de boucle : s'il reste une URL 'next' à suivre, c'est qu'on
         # s'est arrêté sur `max_pages` → la liste est TRONQUÉE.
-        self.last_scan_truncated = bool(url)
+        tronque = bool(url)
+        self.troncatures[endpoint] = tronque
+        # Conservé pour compatibilité, mais ne plus s'y fier : un autre scan
+        # peut l'écraser. Utiliser `est_tronque()`.
+        self.last_scan_truncated = tronque
         return items
 
     # ╔══════════════════════════════════════════════════════════════════╗
@@ -644,7 +657,6 @@ class PodAPI:
         Cette table permet de convertir un compte choisi par l'utilisateur en
         l'URL /owners/ attendue par le champ `users` d'un groupe."""
         mapping, url, params, pages = {}, f"{self.rest}/owners/", {"limit": 100}, 0
-        self.last_scan_truncated = False
         while url and pages < max_pages:
             r = self.session.get(url, params=(params if pages == 0 else None),
                                  headers={"Accept": "application/json"},
@@ -658,6 +670,7 @@ class PodAPI:
             url = d.get("next") if isinstance(d, dict) else None
             pages += 1
         # Même garde-fou que _paginate : signaler une liste incomplète.
+        self.troncatures["/owners/"] = bool(url)
         self.last_scan_truncated = bool(url)
         return mapping
 
@@ -770,6 +783,17 @@ class PodAPI:
     # ══════════════════════════════════════════════════════════════════
     #  IMAGES — bannières de chaînes et de thèmes
     # ══════════════════════════════════════════════════════════════════
+
+    def est_tronque(self, *endpoints) -> bool:
+        """Une de ces ressources a-t-elle été lue INCOMPLÈTEMENT ?
+
+        Sans argument, répond pour l'ensemble des ressources lues depuis le
+        démarrage. Contrairement à `last_scan_truncated`, ce résultat ne peut
+        pas être effacé par un scan concurrent portant sur autre chose.
+        """
+        if not endpoints:
+            return any(self.troncatures.values())
+        return any(self.troncatures.get(e, False) for e in endpoints)
 
     def get_view_counts(self, max_pages: int = 60) -> list[dict]:
         """Récupère les compteurs de consultation.

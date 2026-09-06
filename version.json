@@ -1,6 +1,6 @@
 {
-  "version": "1.5.6",
+  "version": "1.5.7",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Changement d'onglet sans clignotement. Correction : l'onglet Configuration ne s'affichait pas.",
+  "notes": "Changement d'onglet sans clignotement, correction de l'onglet Configuration, compilation corrigee.",
   "version_minimale": ""
 }

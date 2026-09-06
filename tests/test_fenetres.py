@@ -1617,3 +1617,64 @@ class TestBasculeDOnglet:
         assert "pack_forget" not in source, (
             "la bascule dépacke à nouveau les onglets")
         assert "tkraise" in source
+
+
+class TestCoherenceDuWorkflow:
+    """Les artefacts produits et les artefacts publiés doivent porter les mêmes
+    noms.
+
+    Le passage en `--onedir` a renommé le portable Windows, mais l'étape de
+    publication référençait toujours `PodAdmin-Windows-portable/PodAdmin.exe`.
+    La compilation aurait réussi, l'archive aurait été produite, et la Release
+    aurait échoué à la toute dernière étape — après six minutes de build."""
+
+    @staticmethod
+    def _workflow() -> str:
+        return TestCompilation._workflow()
+
+    def test_les_artefacts_publies_sont_bien_produits(self):
+        """Compare le chemin COMPLET, pas seulement le nom de l'artefact.
+
+        Une première version ne comparait que le premier segment
+        (« PodAdmin-Windows-portable »). Elle laissait donc passer
+        « PodAdmin-Windows-portable/PodAdmin.exe » alors que l'artefact
+        contient désormais une archive : le nom était bon, le fichier non.
+        Vérifié par mutation — le test restait vert avec le défaut."""
+        import os
+        import re
+        texte = self._workflow()
+
+        # Chaque `upload-artifact` déclare un `name:` puis un `path:` ;
+        # l'artefact contient le fichier situé au bout de ce chemin.
+        attendus = set()
+        blocs = texte.split("uses: actions/upload-artifact")
+        for bloc in blocs[1:]:
+            nom = re.search(r"name:\s*([\w.-]+)", bloc)
+            chemin = re.search(r"path:\s*([^\s]+)", bloc)
+            if nom and chemin:
+                attendus.add(f"{nom.group(1)}/"
+                             f"{os.path.basename(chemin.group(1).rstrip('/'))}")
+
+        bloc = texte[texte.index("files: |"):]
+        bloc = bloc[:bloc.index("\n\n")]
+        publies = {l.strip() for l in bloc.split("\n")[1:] if l.strip()}
+
+        manquants = publies - attendus
+        assert not manquants, (
+            f"fichiers publiés mais jamais produits : {sorted(manquants)}. "
+            f"Disponibles : {sorted(attendus)}")
+
+    def test_le_portable_est_archive_avant_publication(self):
+        """Publier un dossier entier échouait ; l'archive préalable évite aussi
+        à l'utilisateur une double décompression."""
+        texte = self._workflow()
+        assert "Compress-Archive" in texte, (
+            "le portable Windows n'est plus archivé avant publication")
+        assert "PodAdmin-Windows-portable.zip" in texte
+
+    def test_controle_avant_archivage(self):
+        """Sans contrôle, une compilation muette laisse l'échec surgir plus
+        loin, dans une étape sans rapport apparent."""
+        texte = self._workflow()
+        assert 'Test-Path "dist/PodAdmin/PodAdmin.exe"' in texte, (
+            "l'existence de l'exécutable n'est pas vérifiée avant archivage")

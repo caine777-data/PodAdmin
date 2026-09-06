@@ -95,9 +95,17 @@ s'affiche. En `--onedir`, le démarrage est 3 à 5 fois plus rapide. Sur macOS,
 cela règle en outre la dépréciation de `--onefile --windowed`, bloquante à
 partir de PyInstaller 7.
 
-Conséquence : le portable Windows est un **dossier à dézipper en entier**.
-`PodAdmin.exe` seul ne démarre pas — il lui faut ses fichiers voisins.
-L'installeur, lui, ne change pas d'usage.
+Conséquence : le portable Windows est livré sous forme d'**archive à
+décompresser en entier** (`PodAdmin-Windows-portable.zip`). `PodAdmin.exe` seul
+ne démarre pas — il lui faut ses fichiers voisins. L'installeur, lui, ne change
+pas d'usage.
+
+⚠️ Le workflow **archive** le dossier avant de le publier plutôt que de laisser
+`upload-artifact` téléverser des centaines de fichiers : publier le dossier
+entier échouait, et `upload-artifact` rezippe de toute façon ce qu'on lui donne
+— sans archive préalable, l'utilisateur devait décompresser deux fois. Renommer
+un artefact oblige à mettre à jour la liste `files:` de la publication
+(`TestCoherenceDuWorkflow`).
 
 Compilation locale (Windows) :
 
@@ -284,7 +292,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.5.6**
+Version : **1.5.7**
 
 ---
 

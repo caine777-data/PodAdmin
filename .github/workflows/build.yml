@@ -2,7 +2,8 @@ name: Build installers
 
 # Compile PodAdmin et fabrique TOUS les livrables en un seul run :
 #   Windows :
-#     • PodAdmin.exe          — exécutable portable (sans installation)
+#     • PodAdmin-Windows-portable.zip — portable, à décompresser EN ENTIER
+#       (en --onedir, PodAdmin.exe seul ne démarre pas)
 #     • PodAdmin-Setup.exe    — installeur Inno Setup (menu Démarrer, désinstalleur)
 #   macOS :
 #     • PodAdmin.dmg          — image disque (glisser dans Applications)
@@ -76,14 +77,41 @@ jobs:
             --add-data "assets;assets" `
             app.py
 
-      # Le portable devient un DOSSIER : on publie son contenu entier.
-      # ⚠️ PodAdmin.exe seul ne fonctionne pas en --onedir — il lui faut les
-      # fichiers voisins. Le nom de l'artefact le rappelle.
-      - name: Publier le portable Windows (dossier complet)
+      # Le portable devient un DOSSIER en --onedir : on l'ARCHIVE avant de le
+      # publier, plutôt que de laisser l'action téléverser des centaines de
+      # fichiers un par un.
+      #
+      # Trois raisons :
+      #   • publier un dossier entier échouait à cette étape ;
+      #   • `upload-artifact` rezippe de toute façon ce qu'on lui donne : sans
+      #     archive préalable, l'utilisateur devait décompresser DEUX fois ;
+      #   • un fichier unique se téléverse en quelques secondes au lieu de
+      #     plusieurs minutes.
+      #
+      # On vérifie d'abord que la compilation a bien produit le dossier et
+      # l'exécutable : sans ce contrôle, une compilation muette laisserait
+      # l'échec se produire plus loin, dans une étape sans rapport.
+      - name: Archiver le portable Windows
+        run: |
+          if (-not (Test-Path "dist/PodAdmin/PodAdmin.exe")) {
+            Write-Error "dist/PodAdmin/PodAdmin.exe est absent : la compilation n'a pas produit ce qui est attendu."
+            Get-ChildItem dist -Recurse -Depth 2 | Select-Object FullName
+            exit 1
+          }
+          Write-Host "Contenu du dossier portable :"
+          Get-ChildItem dist/PodAdmin | Select-Object Name, Length
+          Compress-Archive -Path "dist/PodAdmin/*" `
+                           -DestinationPath "dist/PodAdmin-Windows-portable.zip" -Force
+          Write-Host "Archive creee :"
+          Get-Item dist/PodAdmin-Windows-portable.zip | Select-Object Name, Length
+
+      # ⚠️ PodAdmin.exe seul ne fonctionne pas en --onedir : il lui faut les
+      # fichiers voisins. L'archive doit être décompressée EN ENTIER.
+      - name: Publier le portable Windows (archive)
         uses: actions/upload-artifact@v4
         with:
-          name: PodAdmin-Windows-portable-dossier
-          path: dist/PodAdmin/
+          name: PodAdmin-Windows-portable
+          path: dist/PodAdmin-Windows-portable.zip
 
       # Installe Inno Setup (compilateur d'installeurs Windows) via Chocolatey.
       - name: Installer Inno Setup
@@ -97,7 +125,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.5.6
+          AppVersion=1.5.7
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
@@ -302,7 +330,7 @@ jobs:
           body: ${{ inputs.notes || 'Nouvelle version.' }}
           files: |
             PodAdmin-Windows-Setup/PodAdmin-Setup.exe
-            PodAdmin-Windows-portable/PodAdmin.exe
+            PodAdmin-Windows-portable/PodAdmin-Windows-portable.zip
             PodAdmin-macOS-DMG/PodAdmin.dmg
             PodAdmin-macOS-zip/PodAdmin-macOS.zip
 

@@ -1,6 +1,6 @@
 {
-  "version": "1.5.8",
+  "version": "1.5.9",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Affichage plus fluide : plus de clignotement au changement d'onglet ni de saccades dans le panneau de detail.",
+  "notes": "Correction de la selection multiple (Ctrl+clic et Maj+clic) dans l'onglet Videos.",
   "version_minimale": ""
 }

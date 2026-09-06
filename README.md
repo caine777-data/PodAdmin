@@ -272,6 +272,17 @@ chargé de l'application (co-propriétaires, chaînes, groupes, sous-titres,
 suppression). Le vrai gain serait un panneau de détail **escamotable**, affiché
 seulement à la sélection — non retenu pour l'instant.
 
+**Sélection multiple (Ctrl+clic / Maj+clic)** — ⚠️ un `CTkButton` déclenche sa
+`command` sur `<ButtonRelease-1>`, **pas** sur `<Button-1>`. Intercepter le seul
+`<Control-Button-1>` ne suffit donc pas : le relâchement passe et lance la
+sélection simple, qui écrase les teintes. Il faut aussi lier
+`<Control-ButtonRelease-1>` et `<Shift-ButtonRelease-1>`.
+
+La recoloration d'une ligne doit par ailleurs vérifier `browse_multi` : remettre
+une ligne en transparent effaçait la marque d'une ligne toujours sélectionnée.
+`C_MULTI` doit rester nettement distincte de `S_SELECTION` — les confondre
+revient à ne plus savoir sur quoi une action de masse va porter.
+
 **Actions** — un seul bouton coloré par écran. Les filtres et les listes
 déroulantes prennent `STYLE_CHAMP` (gris), les boutons secondaires `C_NEUTRE`
 accompagné de `T_SUR_NEUTRE` (sans quoi ils paraissent désactivés en mode
@@ -299,7 +310,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.5.8**
+Version : **1.5.9**
 
 ---
 

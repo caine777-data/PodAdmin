@@ -153,6 +153,11 @@ S_PUCE       = ("gray84", "gray26")   # pastille ou aperçu dans une ligne
 # Un filet de séparation : « gray30 » était écrit seul, donc appliqué tel quel
 # dans les DEUX modes — un trait presque noir en travers d'un panneau clair.
 S_FILET      = ("gray80", "gray32")
+# Teinte des lignes retenues en sélection MULTIPLE (Ctrl+clic / Maj+clic).
+# Elle doit se distinguer nettement de S_SELECTION, qui marque la ligne
+# simplement sélectionnée : confondre les deux revient à ne plus savoir ce sur
+# quoi une action de masse va porter.
+C_MULTI      = ("#93c5fd", "#1e3a8a")
 
 # — Contrôles de saisie ————————————————————————————————————————————————
 # Les listes déroulantes prenaient le bleu par défaut de CustomTkinter, c'est-
@@ -4016,13 +4021,25 @@ class App(_AppBase):
             btn.pack(fill="x", pady=1)
             # Sélection multiple à la manière d'un explorateur de fichiers :
             # Ctrl+clic ajoute ou retire une ligne, Maj+clic prend une plage.
-            # `add="+"` conserve l'action normale du bouton (clic simple).
+            #
+            # ⚠️ IL FAUT AUSSI INTERCEPTER LE RELÂCHEMENT.
+            #
+            # Un CTkButton déclenche sa `command` sur <ButtonRelease-1>, pas sur
+            # <Button-1>. Bloquer le seul <Control-Button-1> ne servait donc à
+            # rien : le relâchement passait quand même et lançait la sélection
+            # SIMPLE. La ligne Ctrl+cliquée prenait alors la teinte de sélection
+            # simple au lieu de la teinte multiple, et la ligne précédemment
+            # sélectionnée était remise en transparent — alors qu'elle restait
+            # dans la sélection. D'où l'impression que le Ctrl+clic « ne prenait
+            # pas », ou marquait « celle d'à côté ».
             btn.bind("<Control-Button-1>", lambda e, vv=v: self._browse_toggle_multi(vv))
             btn.bind("<Shift-Button-1>", lambda e, vv=v: self._browse_plage_multi(vv))
+            btn.bind("<Control-ButtonRelease-1>", lambda e: "break")
+            btn.bind("<Shift-ButtonRelease-1>", lambda e: "break")
             self.browse_rowbtns[slug] = btn
             # Teinte particulière pour les lignes retenues en sélection multiple.
             if slug in self.browse_multi:
-                btn.configure(fg_color=("#93c5fd", "#1e3a8a"))
+                btn.configure(fg_color=C_MULTI)
         if len(self.browse_filtered) > CAP:
             ctk.CTkLabel(self.browse_list,
                          text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
@@ -4195,7 +4212,7 @@ class App(_AppBase):
                 if not btn.winfo_exists():
                     continue
                 if slug in self.browse_multi:
-                    btn.configure(fg_color=("#93c5fd", "#1e3a8a"))
+                    btn.configure(fg_color=C_MULTI)
                 elif self.browse_selected and slug == self.browse_selected.get("slug"):
                     btn.configure(fg_color=S_SELECTION)
                 else:
@@ -4317,10 +4334,15 @@ class App(_AppBase):
         if boutons:
             b = boutons.get(ancien)
             if b is not None and b.winfo_exists():
-                b.configure(fg_color="transparent")            # désélection
+                # Une ligne retenue en sélection MULTIPLE garde sa teinte : la
+                # remettre en transparent effaçait la marque d'une ligne qui
+                # restait pourtant sélectionnée.
+                b.configure(fg_color=C_MULTI if ancien in self.browse_multi
+                            else "transparent")
             b = boutons.get(nouveau)
             if b is not None and b.winfo_exists():
-                b.configure(fg_color=S_SELECTION)     # sélection
+                b.configure(fg_color=C_MULTI if nouveau in self.browse_multi
+                            else S_SELECTION)
         else:
             self._render_browse_list()   # repli : liste pas encore construite
         self._browse_render_detail()

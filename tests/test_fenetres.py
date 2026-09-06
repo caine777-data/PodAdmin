@@ -1750,3 +1750,171 @@ class TestPanneauDetailSansSaccade:
         appelle pendant que le panneau est masqué."""
         import app as module_app
         assert hasattr(module_app.App, "_browse_construire_detail")
+
+
+class TestSelectionMultiple:
+    """Ctrl+clic et Maj+clic ne doivent pas déclencher la sélection SIMPLE.
+
+    ⚠️ Un CTkButton déclenche sa `command` sur <ButtonRelease-1>, pas sur
+    <Button-1>. Intercepter le seul <Control-Button-1> ne servait donc à rien :
+    le relâchement passait et lançait la sélection simple. La ligne
+    Ctrl+cliquée prenait la teinte de sélection simple au lieu de la teinte
+    multiple, et la ligne précédemment sélectionnée était remise en transparent
+    alors qu'elle restait dans la sélection — d'où l'impression que le
+    Ctrl+clic « ne prenait pas » ou marquait « celle d'à côté ».
+
+    Ces tests emploient de VRAIS clics (`xdotool`) : la souris synthétique de
+    Tk ne reproduit pas l'enchaînement clic/relâchement qui est précisément la
+    cause du défaut."""
+
+    @staticmethod
+    def _souris() -> bool:
+        import shutil
+        return shutil.which("xdotool") is not None
+
+    @pytest.fixture
+    def app(self):
+        """Application NEUVE, propre à cette classe.
+
+        Ces tests pilotent une vraie souris et exigent que rien ne reconstruise
+        la liste pendant qu'ils cliquent. Avec le fixture partagé du module,
+        des rendez-vous différés laissés par d'autres tests détruisaient les
+        lignes entre la capture de la référence et le clic
+        (« bad window path name »). Trois tentatives d'isolement ont échoué
+        avant d'en arriver là : quand l'état partagé ne peut pas être garanti,
+        mieux vaut une instance dédiée qu'un test intermittent."""
+        import app as module_app
+        a = module_app.App()
+        a.geometry("1180x760+0+0")
+        a.update()
+        yield a
+        try:
+            a.destroy()
+        except Exception:
+            pass
+
+    def _preparer(self, app):
+        # Ces tests pilotent une VRAIE souris : ils exigent donc que la fenêtre
+        # soit à une position connue et qu'aucune fenêtre secondaire ne
+        # traîne devant. Le fixture étant partagé par tout le module, un test
+        # antérieur peut avoir laissé l'un ou l'autre — c'est ce qui les
+        # faisait échouer en suite complète alors qu'ils passaient isolément.
+        for enfant in list(app.winfo_children()):
+            try:
+                if enfant.winfo_class() == "Toplevel":
+                    enfant.destroy()
+            except Exception:
+                pass
+        app.geometry("1180x760+0+0")
+        # Un filtrage TEMPORISÉ laissé en attente par un test précédent se
+        # déclenchait pendant nos clics et reconstruisait la liste : les
+        # boutons capturés devenaient des fenêtres détruites
+        # (« bad window path name »). On annule le rendez-vous avant de
+        # commencer.
+        job = getattr(app, "_browse_filter_job", None)
+        if job:
+            try:
+                app.after_cancel(job)
+            except Exception:
+                pass
+            app._browse_filter_job = None
+        app.update()
+        app.update_idletasks()
+
+        base = "https://exemple.invalid/rest"
+        app.videos = [{"slug": f"v{i}", "title": f"Vidéo {i}", "is_draft": False,
+                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
+                       "owner": "u", "date_added": "2026-01-01",
+                       "url": f"{base}/videos/v{i}/"} for i in range(8)]
+        app.browse_chan_by_url = {}
+        app.type_map = {}
+        app.browse_multi.clear()
+        app.browse_selected = None
+        app._show_tab("browse")
+        # On laisse d'ABORD retomber tout ce qui était en attente (rendez-vous
+        # différés, chargements automatiques), et on construit la liste
+        # ENSUITE : construite avant, elle était détruite par ces mêmes
+        # événements et les boutons capturés devenaient invalides.
+        for _ in range(6):
+            app.update()
+            app.update_idletasks()
+        app._browse_do_filter()
+        app.update()
+        app.update_idletasks()
+
+    @staticmethod
+    def _clic(app, slug, modificateur=None):
+        import os
+        import time
+        # La liste peut avoir été reconstruite entre-temps par un rendez-vous
+        # différé laissé par un autre test du module : on la reconstruit et on
+        # relit la référence plutôt que de cliquer sur une fenêtre détruite.
+        b = app.browse_rowbtns.get(slug)
+        if b is None or not b.winfo_exists():
+            app._browse_do_filter()
+            app.update()
+            app.update_idletasks()
+            b = app.browse_rowbtns[slug]
+        assert b.winfo_exists(), f"la ligne « {slug} » est introuvable"
+        x = b.winfo_rootx() + b.winfo_width() // 2
+        y = b.winfo_rooty() + b.winfo_height() // 2
+        if modificateur:
+            os.system(f"xdotool keydown {modificateur} mousemove {x} {y} "
+                      f"click 1 keyup {modificateur}")
+        else:
+            os.system(f"xdotool mousemove {x} {y} click 1")
+        debut = time.time()
+        while time.time() - debut < 0.4:
+            app.update()
+            time.sleep(0.05)
+
+    def test_ctrl_clic_ne_change_pas_la_selection_simple(self, app):
+        import pytest
+        if not self._souris():
+            pytest.skip("xdotool absent")
+        self._preparer(app)
+        self._clic(app, "v1")
+        assert app.browse_selected is not None and \
+            app.browse_selected.get("slug") == "v1", (
+            f"le clic simple n'a pas atteint la ligne : "
+            f"selection = {app.browse_selected}")
+        self._clic(app, "v3", "ctrl")
+        assert app.browse_selected.get("slug") == "v1", (
+            "le Ctrl+clic a déclenché la sélection simple (relâchement non "
+            "intercepté)")
+        assert app.browse_multi == {"v3"}
+
+    def test_les_lignes_du_multi_gardent_leur_teinte(self, app):
+        """Le symptôme visible : une ligne sélectionnée qui perd sa marque."""
+        import pytest
+        if not self._souris():
+            pytest.skip("xdotool absent")
+        import app as module_app
+        self._preparer(app)
+        self._clic(app, "v1")
+        self._clic(app, "v3", "ctrl")
+        self._clic(app, "v5", "ctrl")
+        for slug in app.browse_multi:
+            couleur = app.browse_rowbtns[slug].cget("fg_color")
+            assert list(couleur) == list(module_app.C_MULTI), (
+                f"« {slug} » est dans la sélection mais n'en porte pas la "
+                f"teinte (couleur = {couleur})")
+
+    def test_maj_clic_prend_la_plage(self, app):
+        import pytest
+        if not self._souris():
+            pytest.skip("xdotool absent")
+        self._preparer(app)
+        self._clic(app, "v1")
+        self._clic(app, "v2", "ctrl")
+        self._clic(app, "v5", "shift")
+        assert app.browse_multi == {"v2", "v3", "v4", "v5"}, (
+            f"plage incorrecte : {sorted(app.browse_multi)}")
+
+    def test_relachement_intercepte_dans_la_source(self):
+        """Garde-fou : sans ces deux liaisons, le défaut revient tel quel."""
+        corps = TestEchelleDeSurfaces._corps()
+        assert '"<Control-ButtonRelease-1>"' in corps, (
+            "le relâchement Ctrl n'est pas intercepté")
+        assert '"<Shift-ButtonRelease-1>"' in corps, (
+            "le relâchement Maj n'est pas intercepté")

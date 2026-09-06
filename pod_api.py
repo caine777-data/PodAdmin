@@ -221,6 +221,75 @@ class PodAPI:
         data = self._get("/sites/", {"limit": 100})
         return data.get("results", []) if isinstance(data, dict) else (data or [])
 
+    # ── 2 bis. Nomenclatures : types et disciplines ───────────────────────
+    #
+    # ⚠️ CES DEUX RESSOURCES SE RESSEMBLENT ET NE S'ÉCRIVENT PAS PAREIL.
+    # Quatre différences, toutes établies par sonde sur videos.utoulouse.fr :
+    #
+    #                      TYPE                      DISCIPLINE
+    #   champ site         « sites », une LISTE      « site », une CHAÎNE
+    #   obligatoire        OUI                       non
+    #   sur la vidéo       une seule URL             une LISTE d'URLs
+    #   table de départ    4 entrées, 73 vidéos      vide
+    #
+    # Envoyer une liste là où une chaîne est attendue donne un HTTP 400 :
+    #   {"site": ["Type incorrect. Attendait une URL, a reçu list."]}
+    # C'est le refus qu'a essuyé la sonde d'écriture avant de trouver la bonne
+    # forme. Ne pas « harmoniser » ces deux méthodes.
+
+    def create_type(self, title: str, site_urls: list[str], *,
+                    description: str = "") -> dict:
+        """Crée un type de vidéo.
+
+        `sites` est au PLURIEL, sous forme de LISTE, et il est OBLIGATOIRE sur
+        cette instance multi-établissements — l'omettre donne un HTTP 400."""
+        payload: dict = {"title": title, "sites": list(site_urls)}
+        if description:
+            payload["description"] = description
+        return self._post("/types/", json=payload)
+
+    def update_type(self, url: str, **champs) -> dict:
+        """Renomme ou modifie un type (PATCH sur son URL absolue)."""
+        return self._patch(url, json=champs)
+
+    def delete_type(self, url: str) -> bool:
+        """Supprime un type.
+
+        Peut échouer si des vidéos y sont rattachées : le serveur décide, et
+        son refus doit être présenté tel quel plutôt que masqué."""
+        return self._delete(url)
+
+    def get_disciplines(self) -> list[dict]:
+        """Liste les disciplines de l'instance."""
+        data = self._get("/discipline/", {"limit": 200})
+        return data.get("results", []) if isinstance(data, dict) else (data or [])
+
+    def create_discipline(self, title: str, site_url: str = "", *,
+                          description: str = "") -> dict:
+        """Crée une discipline.
+
+        `site` est au SINGULIER et attend une CHAÎNE, pas une liste — contrairement
+        à `sites` des types. Il n'est pas obligatoire, mais le renseigner évite
+        qu'une discipline n'apparaisse sur aucun site."""
+        payload: dict = {"title": title}
+        if site_url:
+            payload["site"] = site_url
+        if description:
+            payload["description"] = description
+        return self._post("/discipline/", json=payload)
+
+    def update_discipline(self, url: str, **champs) -> dict:
+        """Renomme ou modifie une discipline.
+
+        ⚠️ Le PATCH sur cette ressource n'a PAS été confirmé par sonde,
+        contrairement à la création et à la suppression. L'appelant doit donc
+        traiter un éventuel refus, et non le supposer impossible."""
+        return self._patch(url, json=champs)
+
+    def delete_discipline(self, url: str) -> bool:
+        """Supprime une discipline."""
+        return self._delete(url)
+
     # ── 3. Upload d'une vidéo (streaming + progression) ───────────────────
 
     def upload_video(

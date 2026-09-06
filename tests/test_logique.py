@@ -720,3 +720,70 @@ class TestTroncatureParRessource:
     def test_ressource_jamais_lue(self):
         api = self._api()
         assert api.est_tronque("/inconnue/") is False
+
+
+class TestNomenclatures:
+    """Onglet « Types & disciplines » — deux ressources voisines, quatre
+    conventions différentes.
+
+    Toutes établies par sonde sur videos.utoulouse.fr :
+
+                         TYPE                      DISCIPLINE
+      champ site         « sites », LISTE          « site », CHAÎNE
+      obligatoire        OUI                       non
+      sur la vidéo       une seule URL             une LISTE d'URLs
+      au départ          4 entrées, 73 vidéos      table vide
+
+    Envoyer une liste là où une chaîne est attendue donne un HTTP 400 :
+    « Type incorrect. Attendait une URL, a reçu list. » C'est le refus qu'a
+    essuyé la sonde d'écriture avant de trouver la bonne forme. Ces tests
+    empêchent qu'on « harmonise » les deux appels."""
+
+    class FauxAPI:
+        """Refuse la mauvaise forme, exactement comme le serveur réel."""
+
+        def __init__(self):
+            self.appels = []
+
+        def create_type(self, title, site_urls, description=""):
+            assert isinstance(site_urls, list), (
+                "« sites » doit être une LISTE pour un type")
+            self.appels.append(("type", title, site_urls))
+
+        def create_discipline(self, title, site_url="", description=""):
+            assert isinstance(site_url, str), (
+                "« site » doit être une CHAÎNE pour une discipline")
+            self.appels.append(("discipline", title, site_url))
+
+    def test_le_type_recoit_une_liste(self):
+        api = self.FauxAPI()
+        api.create_type("Colloque", ["https://exemple.invalid/rest/sites/1/"])
+        assert api.appels[0][2] == ["https://exemple.invalid/rest/sites/1/"]
+
+    def test_la_discipline_recoit_une_chaine(self):
+        api = self.FauxAPI()
+        api.create_discipline("Odontologie", "https://exemple.invalid/rest/sites/1/")
+        assert isinstance(api.appels[0][2], str)
+
+    def test_les_deux_formes_ne_sont_pas_interchangeables(self):
+        """Le cœur du sujet : intervertir les deux formes doit échouer."""
+        import pytest
+        api = self.FauxAPI()
+        with pytest.raises(AssertionError):
+            api.create_type("X", "une chaîne au lieu d'une liste")
+        with pytest.raises(AssertionError):
+            api.create_discipline("Y", ["une liste au lieu d'une chaîne"])
+
+    def test_les_deux_methodes_api_restent_distinctes(self):
+        """Garde-fou sur la source : `create_type` doit envoyer « sites » et
+        `create_discipline` « site ». Les confondre est invisible à la
+        relecture, les deux mots ne différant que d'une lettre."""
+        import inspect
+
+        import pod_api
+        source_type = inspect.getsource(pod_api.PodAPI.create_type)
+        source_disc = inspect.getsource(pod_api.PodAPI.create_discipline)
+        assert '"sites": list(site_urls)' in source_type, (
+            "create_type doit envoyer « sites » sous forme de liste")
+        assert '"site"' in source_disc and '"sites"' not in source_disc, (
+            "create_discipline doit envoyer « site » au singulier")

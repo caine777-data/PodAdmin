@@ -513,7 +513,7 @@ class App(_AppBase):
                     H = round(W * pil.height / pil.width)
                     self.logo_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(W, H))
                     card = ctk.CTkFrame(self.sidebar, fg_color="white", corner_radius=8)
-                    card.pack(padx=12, pady=(10, 4), fill="x")
+                    card.pack(padx=12, pady=(8, 3), fill="x")
                     ctk.CTkLabel(card, image=self.logo_img, text="").pack(padx=8, pady=7)
                     logo_loaded = True
             except Exception:
@@ -615,6 +615,7 @@ class App(_AppBase):
             ]),
             ("ORGANISATION", [
                 ("📺", "Chaînes", "ct"),
+                ("🏷️", "Types & disciplines", "nomen"),
                 ("📊", "Inventaire", "stats"),
             ]),
             ("ACCÈS", [
@@ -649,7 +650,7 @@ class App(_AppBase):
             ctk.CTkLabel(nav_scroll, text=section, anchor="w",
                          font=ctk.CTkFont(size=10, weight="bold"),
                          text_color=T_DISCRET).pack(
-                             fill="x", padx=10, pady=((6 if i else 2), 0))
+                             fill="x", padx=10, pady=((5 if i else 2), 0))
             for icone, libelle, key in entrees:
                 police = ctk.CTkFont(size=13)
                 b = ctk.CTkButton(
@@ -666,7 +667,7 @@ class App(_AppBase):
         # Rangée épinglée, posée AVANT le bouton de thème dans l'ordre `bottom`
         # pour se retrouver juste au-dessus de lui.
         rangee_bas = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=30)
-        rangee_bas.pack(side="bottom", fill="x", padx=4, pady=(2, 0))
+        rangee_bas.pack(side="bottom", fill="x", padx=4)
         # GRID et non pack : avec `expand=True, fill="x"`, chaque bouton
         # conservait sa largeur naturelle (140 px pour CTkButton par défaut),
         # si bien que « Aide » occupait 140 px et « À propos » 68 — deux
@@ -715,6 +716,7 @@ class App(_AppBase):
         self._build_tab_reassign()
         self._build_tab_stats()
         self._build_tab_ct()
+        self._build_tab_nomen()
         self._build_tab_groups()
         self._build_tab_config()
         self._build_tab_help()
@@ -736,7 +738,26 @@ class App(_AppBase):
         except Exception:
             pass
         self._maj_libelle_theme()
+        self._maj_couleur_titres_aide()
         self._log(f"Thème : mode {'clair' if nouveau == 'light' else 'sombre'}.")
+
+    def _maj_couleur_titres_aide(self):
+        """Adapte la couleur des titres de l'Aide au thème courant.
+
+        Les balises d'une zone de texte Tk n'acceptent qu'une couleur SIMPLE,
+        là où le reste de l'application emploie des couples (clair, sombre)
+        que CustomTkinter résout tout seul. Le bleu foncé des titres devenait
+        donc illisible sur fond sombre. C'est le prix de la zone de texte —
+        modique au regard des 120 widgets qu'elle économise, mais il faut le
+        payer explicitement."""
+        boite = getattr(self, "help_box", None)
+        if boite is None:
+            return
+        sombre = ctk.get_appearance_mode().lower() == "dark"
+        try:
+            boite.tag_config("titre", foreground="#60a5fa" if sombre else "#1d4ed8")
+        except Exception:
+            pass
 
     def _maj_libelle_theme(self):
         """Le bouton annonce le mode vers lequel il fait basculer."""
@@ -778,6 +799,7 @@ class App(_AppBase):
             "browse": self._browse_load,
             "stats":  self._stats_scan,
             "ct":     self._ct_load,
+            "nomen":  self._nomen_load,
         }
 
     def _auto_charger(self, key: str):
@@ -1643,6 +1665,419 @@ class App(_AppBase):
         Les autres (student, staff, employee…) sont synchronisés par l'annuaire
         SSO et ne doivent pas être modifiés via l'API (risque d'écrasement)."""
         return str(g.get("code_name", "")).lower().startswith("grp_")
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  ONGLET « TYPES & DISCIPLINES » — les deux nomenclatures d'établissement
+    # ══════════════════════════════════════════════════════════════════════
+    #
+    # Un seul onglet pour deux ressources sans lien hiérarchique entre elles,
+    # mais de même nature : deux nomenclatures d'établissement, mêmes gestes
+    # (lister, créer, renommer, supprimer). Le modèle est « Chaînes & thèmes ».
+    #
+    # ⚠️ ELLES NE S'ÉCRIVENT PAS PAREIL — d'où deux sections nettement séparées
+    # plutôt qu'un tableau unique qui laisserait croire le contraire :
+    #
+    #                      TYPE                      DISCIPLINE
+    #   champ site         « sites », LISTE          « site », CHAÎNE
+    #   obligatoire        OUI                       non
+    #   sur la vidéo       une seule URL             une LISTE d'URLs
+    #   au départ          4 entrées, 73 vidéos      table vide
+    #
+    # Conséquence pour l'interface : supprimer un TYPE touche des contenus en
+    # production, supprimer une DISCIPLINE ne touchera longtemps rien. Le
+    # garde-fou n'a donc pas le même poids des deux côtés.
+
+    def _build_tab_nomen(self):
+        """Onglet de gestion des types de vidéo et des disciplines."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["nomen"] = frame
+
+        ctk.CTkLabel(frame, text="🏷️  Types & disciplines",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            frame,
+            text="Les deux classements de l'établissement. Le TYPE est unique par "
+                 "vidéo ; les DISCIPLINES sont multiples.\n"
+                 "⚠️  Supprimer un type supprime aussi ses vidéos : les types non "
+                 "vides sont verrouillés.",
+            font=ctk.CTkFont(size=12), text_color=T_SECONDAIRE).pack(anchor="w", pady=(0, 8))
+
+        barre = ctk.CTkFrame(frame, fg_color="transparent")
+        barre.pack(fill="x", pady=(0, 6))
+        ctk.CTkButton(barre, text="🔄  Rafraîchir", width=130,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      text_color=T_SUR_NEUTRE,
+                      command=lambda: self._run(self._nomen_load, True)).pack(side="left")
+        self.nomen_statut = ctk.CTkLabel(barre, text="(en attente de connexion…)",
+                                         font=ctk.CTkFont(size=11),
+                                         text_color=T_SECONDAIRE)
+        self.nomen_statut.pack(side="left", padx=10)
+
+        corps = ctk.CTkFrame(frame, fg_color="transparent")
+        corps.pack(fill="both", expand=True)
+        corps.columnconfigure(0, weight=1, uniform="nomen")
+        corps.columnconfigure(1, weight=1, uniform="nomen")
+        corps.rowconfigure(0, weight=1)
+
+        # — Section TYPES —
+        col_t = ctk.CTkFrame(corps, fg_color="transparent")
+        col_t.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self.nomen_types_liste = ctk.CTkScrollableFrame(
+            col_t, label_text="Types de vidéo (un seul par vidéo)", fg_color=S_CARTE,
+            label_anchor="w", label_font=ctk.CTkFont(size=12, weight="bold"))
+        self.nomen_types_liste.pack(fill="both", expand=True)
+        form_t = ctk.CTkFrame(col_t, fg_color=S_CARTE)
+        form_t.pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(form_t, text="Nouveau type :", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE).pack(side="left", padx=(10, 6), pady=8)
+        self.nomen_type_titre = ctk.CTkEntry(form_t, placeholder_text="intitulé")
+        self.nomen_type_titre.pack(side="left", fill="x", expand=True, pady=8)
+        ctk.CTkButton(form_t, text="+  Créer", width=90,
+                      fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+                      command=self._nomen_creer_type).pack(side="left", padx=10, pady=8)
+
+        # — Section DISCIPLINES —
+        col_d = ctk.CTkFrame(corps, fg_color="transparent")
+        col_d.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self.nomen_disc_liste = ctk.CTkScrollableFrame(
+            col_d, label_text="Disciplines (plusieurs par vidéo)", fg_color=S_CARTE,
+            label_anchor="w", label_font=ctk.CTkFont(size=12, weight="bold"))
+        self.nomen_disc_liste.pack(fill="both", expand=True)
+        form_d = ctk.CTkFrame(col_d, fg_color=S_CARTE)
+        form_d.pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(form_d, text="Nouvelle discipline :", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE).pack(side="left", padx=(10, 6), pady=8)
+        self.nomen_disc_titre = ctk.CTkEntry(form_d, placeholder_text="intitulé")
+        self.nomen_disc_titre.pack(side="left", fill="x", expand=True, pady=8)
+        ctk.CTkButton(form_d, text="+  Créer", width=90,
+                      fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+                      command=self._nomen_creer_discipline).pack(side="left", padx=10, pady=8)
+
+        self.nomen_types = []
+        self.nomen_disciplines = []
+        self.nomen_compte_videos = {}      # url de type → nombre de vidéos
+
+    # ── Chargement ────────────────────────────────────────────────────────
+
+    def _nomen_load(self, force: bool = False):
+        """Lit les deux nomenclatures et compte les vidéos par type."""
+        if not self.api:
+            return
+        try:
+            self._ui(self.nomen_statut.configure, text="Chargement…",
+                     text_color=T_SECONDAIRE)
+            types = self.api.get_types()
+            disciplines = self.api.get_disciplines()
+
+            # Le nombre de vidéos par type est L'INFORMATION qui manque
+            # aujourd'hui pour décider quoi que ce soit : supprimer un type
+            # vide et supprimer un type porté par 57 vidéos ne sont pas la
+            # même opération. On réutilise le cache de l'onglet Vidéos s'il
+            # existe, plutôt que de relire tout le fonds une seconde fois.
+            comptes = {}
+            videos = getattr(self, "videos", None) or []
+            if not videos:
+                try:
+                    videos = self.api.get_all_videos()
+                except Exception:
+                    videos = []
+            for v in videos:
+                if not isinstance(v, dict):
+                    continue
+                t = v.get("type")
+                t = t.get("url") if isinstance(t, dict) else t
+                if t:
+                    cle = str(t).rstrip("/")
+                    comptes[cle] = comptes.get(cle, 0) + 1
+
+            self.nomen_types = types
+            self.nomen_disciplines = disciplines
+            self.nomen_compte_videos = comptes
+            self._ui(self._nomen_render)
+            self._ui(self.nomen_statut.configure,
+                     text=f"✅  {len(types)} type(s), {len(disciplines)} discipline(s)"
+                          f"  ·  {len(videos)} vidéo(s) analysée(s)",
+                     text_color=T_SUCCES)
+            self._auto_loaded.add("nomen")
+        except Exception as e:
+            self._ui(self.nomen_statut.configure, text=f"❌  {e}",
+                     text_color=T_ALERTE)
+            self._log(f"Types & disciplines : {e}")
+
+    def _nomen_render(self):
+        """Redessine les deux listes."""
+        for parent in (self.nomen_types_liste, self.nomen_disc_liste):
+            for w in parent.winfo_children():
+                w.destroy()
+
+        for t in self.nomen_types:
+            n = self.nomen_compte_videos.get(str(t.get("url", "")).rstrip("/"), 0)
+            self._nomen_ligne(self.nomen_types_liste, t, n, "type")
+        if not self.nomen_types:
+            ctk.CTkLabel(self.nomen_types_liste, text="Aucun type.",
+                         text_color=T_SECONDAIRE).pack(pady=20)
+
+        for d in self.nomen_disciplines:
+            self._nomen_ligne(self.nomen_disc_liste, d, None, "discipline")
+        if not self.nomen_disciplines:
+            ctk.CTkLabel(
+                self.nomen_disc_liste,
+                text="Aucune discipline.\nLa nomenclature reste à définir.",
+                text_color=T_SECONDAIRE, justify="center").pack(pady=20)
+
+    def _nomen_ligne(self, parent, obj: dict, nb_videos, genre: str):
+        """Une ligne : intitulé, nombre de vidéos (types), renommer, supprimer."""
+        row = ctk.CTkFrame(parent, fg_color=S_LIGNE, corner_radius=6)
+        row.pack(fill="x", padx=4, pady=3)
+        ctk.CTkLabel(row, text=str(obj.get("title", "?")), anchor="w",
+                     font=ctk.CTkFont(size=13)).pack(
+            side="left", padx=10, pady=6, fill="x", expand=True)
+
+        if nb_videos is not None:
+            # Le compte n'est pas décoratif : la suppression étant en CASCADE
+            # sur cette instance, c'est le nombre de vidéos qu'un clic
+            # détruirait. Un type non vide est d'ailleurs verrouillé.
+            ctk.CTkLabel(row, text=f"{nb_videos} vidéo(s)",
+                         font=ctk.CTkFont(size=11),
+                         text_color=T_ALERTE if nb_videos else T_SECONDAIRE).pack(
+                side="left", padx=6)
+
+        btn_r = ctk.CTkButton(row, text="✏", width=32, height=24,
+                              fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                              text_color=T_SUR_NEUTRE,
+                              command=lambda o=obj, g=genre: self._nomen_renommer(o, g))
+        btn_r.pack(side="left", padx=2)
+        ajouter_infobulle(btn_r, f"Renommer ce {genre}")
+
+        # Poubelle neutre, rouge AU SURVOL : même convention que partout
+        # ailleurs, l'action étant répétée sur chaque ligne.
+        btn_s = ctk.CTkButton(row, text="🗑", width=32, height=24,
+                              fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                              text_color=T_SUR_NEUTRE,
+                              command=lambda o=obj, g=genre, n=nb_videos:
+                                  self._nomen_supprimer(o, g, n))
+        btn_s.pack(side="left", padx=(2, 8))
+        if genre == "type" and nb_videos:
+            ajouter_infobulle(
+                btn_s, f"Verrouillé — {nb_videos} vidéo(s) seraient détruites")
+        else:
+            ajouter_infobulle(btn_s, f"Supprimer ce {genre}")
+
+    # ── Création ──────────────────────────────────────────────────────────
+
+    def _nomen_creer_type(self):
+        titre = self.nomen_type_titre.get().strip()
+        if not titre:
+            return
+        # `sites` est OBLIGATOIRE sur cette instance : sans lui, HTTP 400.
+        # `self.site_urls` est renseigné à la connexion (chargement des types
+        # et des sites) et contient déjà des URLs, pas des dictionnaires.
+        sites = list(self.site_urls or [])
+        if not sites:
+            self.nomen_statut.configure(
+                text="❌  Aucun site connu : impossible de créer un type.",
+                text_color=T_ALERTE)
+            return
+        self._run(self._nomen_creer, "type", titre, sites)
+
+    def _nomen_creer_discipline(self):
+        titre = self.nomen_disc_titre.get().strip()
+        if not titre:
+            return
+        # `site` au SINGULIER et sous forme de CHAÎNE : la forme liste est
+        # refusée par le serveur (sonde d'écriture).
+        # `site` au SINGULIER attend UNE url, pas une liste : on prend la
+        # première (l'instance n'en déclare qu'une).
+        site = (self.site_urls or [""])[0]
+        self._run(self._nomen_creer, "discipline", titre, site)
+
+    def _nomen_creer(self, genre: str, titre: str, site):
+        try:
+            if genre == "type":
+                self.api.create_type(titre, site)
+            else:
+                self.api.create_discipline(titre, site)
+            self._log(f"{genre.capitalize()} « {titre} » créé(e).")
+            self._ui(self._nomen_vider_champs)
+            self._nomen_load(True)
+            # Les menus déroulants de type (Téléversement, filtre Vidéos,
+            # action de masse) doivent refléter la création sans quoi le type
+            # neuf resterait invisible jusqu'au prochain démarrage.
+            if genre == "type":
+                self._ui(self._nomen_rafraichir_menus_type)
+        except Exception as e:
+            self._ui(self.nomen_statut.configure, text=f"❌  {e}",
+                     text_color=T_ALERTE)
+            self._log(f"Création {genre} : {e}")
+
+    def _nomen_vider_champs(self):
+        self.nomen_type_titre.delete(0, "end")
+        self.nomen_disc_titre.delete(0, "end")
+
+    def _nomen_rafraichir_menus_type(self):
+        """Répercute les types dans les menus qui les proposent."""
+        try:
+            self.types = self.nomen_types
+            self.type_map = {t.get("title", f"type-{t.get('id')}"): t.get("url", "")
+                             for t in self.nomen_types}
+            titres = list(self.type_map.keys()) or ["(aucun type)"]
+            self.type_combo.configure(values=titres)
+            self.browse_type.configure(values=["Tous"] + list(self.type_map.keys()))
+            self.browse_mass_type.configure(
+                values=["(aucun type)"] + list(self.type_map.keys()))
+        except Exception as e:
+            self._log(f"Rafraîchissement des menus de type : {e}")
+
+    # ── Renommage ─────────────────────────────────────────────────────────
+
+    def _nomen_renommer(self, obj: dict, genre: str):
+        fen = ctk.CTkToplevel(self)
+        fen.title(f"Renommer ce {genre}")
+        fen.geometry("420x160")
+        _focus_toplevel(fen, self)
+        ctk.CTkLabel(fen, text=f"Nouvel intitulé pour « {obj.get('title', '?')} » :",
+                     wraplength=380).pack(padx=16, pady=(16, 6))
+        champ = ctk.CTkEntry(fen, width=360)
+        champ.insert(0, str(obj.get("title", "")))
+        champ.pack(padx=16)
+        champ.focus_set()
+
+        def valider():
+            nouveau = champ.get().strip()
+            fen.destroy()
+            if nouveau and nouveau != obj.get("title"):
+                self._run(self._nomen_appliquer_renommage, obj, genre, nouveau)
+
+        barre = ctk.CTkFrame(fen, fg_color="transparent")
+        barre.pack(pady=14)
+        ctk.CTkButton(barre, text="Annuler", width=100, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=fen.destroy).pack(side="left", padx=6)
+        ctk.CTkButton(barre, text="Renommer", width=110, fg_color=C_ACTION,
+                      hover_color=C_ACTION_SURV, command=valider).pack(side="left", padx=6)
+        fen.bind("<Return>", lambda _e: valider())
+        fen.bind("<Escape>", lambda _e: fen.destroy())
+
+    def _nomen_appliquer_renommage(self, obj: dict, genre: str, nouveau: str):
+        try:
+            if genre == "type":
+                self.api.update_type(obj.get("url", ""), title=nouveau)
+            else:
+                # Le PATCH sur les disciplines n'a pas été confirmé par sonde :
+                # un refus est possible et doit s'afficher en clair.
+                self.api.update_discipline(obj.get("url", ""), title=nouveau)
+            self._log(f"{genre.capitalize()} renommé(e) en « {nouveau} ».")
+            self._nomen_load(True)
+            if genre == "type":
+                self._ui(self._nomen_rafraichir_menus_type)
+        except Exception as e:
+            self._ui(self.nomen_statut.configure,
+                     text=f"❌  Renommage refusé : {e}", text_color=T_ALERTE)
+            self._log(f"Renommage {genre} : {e}")
+
+    # ── Suppression ───────────────────────────────────────────────────────
+
+    def _nomen_supprimer(self, obj: dict, genre: str, nb_videos):
+        """Confirme puis supprime — ou REFUSE si des vidéos sont rattachées.
+
+        ⚠️ SUPPRESSION EN CASCADE, ÉTABLIE PAR SONDE.
+        Sur cette instance, supprimer un type SUPPRIME AUSSI SES VIDÉOS. Ce
+        n'est pas une hypothèse : la sonde l'a vérifié, et une vidéo de test y
+        est réellement passée. Le serveur ne proteste pas — il répond HTTP 204
+        et la vidéo n'existe plus.
+
+        Un avertissement ne suffit donc pas. Une confirmation se clique, et
+        celle-ci se cliquerait au milieu d'une session de rangement, sur un
+        type parmi d'autres. Un seul clic détruirait 57 vidéos sans retour
+        possible.
+
+        La suppression d'un type NON VIDE est donc INTERDITE par
+        l'application. Pour supprimer un type, il faut d'abord réaffecter ses
+        vidéos — ce que l'onglet Vidéos sait faire en masse, et qui laisse une
+        trace dans le journal.
+        """
+        titre = obj.get("title", "?")
+
+        if genre == "type" and nb_videos:
+            self._nomen_refuser_suppression(titre, nb_videos)
+            return
+
+        if nb_videos:
+            message = (f"Supprimer « {titre} » ?\n\n"
+                       f"⚠️  {nb_videos} vidéo(s) y sont rattachées.")
+        else:
+            message = (f"Supprimer {'le' if genre == 'type' else 'la'} {genre} "
+                       f"« {titre} » ?\n\nAucune vidéo n'y est rattachée.")
+
+        fen = ctk.CTkToplevel(self)
+        fen.title("Confirmer la suppression")
+        fen.geometry("460x230")
+        _focus_toplevel(fen, self)
+        ctk.CTkLabel(fen, text=message, wraplength=420, justify="left").pack(
+            padx=20, pady=(20, 10))
+        barre = ctk.CTkFrame(fen, fg_color="transparent")
+        barre.pack(pady=10)
+
+        def confirmer():
+            fen.destroy()
+            self._run(self._nomen_appliquer_suppression, obj, genre)
+
+        ctk.CTkButton(barre, text="Annuler", width=110, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=fen.destroy).pack(side="left", padx=8)
+        ctk.CTkButton(barre, text="Supprimer", width=130, fg_color=C_DESTRUCTIF,
+                      hover_color=C_DESTR_SURV, command=confirmer).pack(side="left", padx=8)
+        fen.bind("<Escape>", lambda _e: fen.destroy())
+
+    def _nomen_refuser_suppression(self, titre: str, nb_videos: int):
+        """Explique pourquoi la suppression est bloquée, et comment procéder.
+
+        Un refus sans explication pousse à chercher un contournement — ici,
+        l'administration Django, où la même suppression détruirait les vidéos
+        sans le moindre garde-fou. Le message indique donc le chemin sûr."""
+        fen = ctk.CTkToplevel(self)
+        fen.title("Suppression impossible")
+        fen.geometry("520x300")
+        _focus_toplevel(fen, self)
+        ctk.CTkLabel(fen, text="⛔  Suppression bloquée",
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=T_ALERTE).pack(padx=20, pady=(20, 8))
+        ctk.CTkLabel(
+            fen,
+            text=(f"Le type « {titre} » porte {nb_videos} vidéo(s).\n\n"
+                  "Sur cette instance, supprimer un type SUPPRIME AUSSI SES "
+                  "VIDÉOS, définitivement et sans confirmation du serveur. "
+                  "Vérifié par sonde.\n\n"
+                  "Pour supprimer ce type :\n"
+                  "1. onglet Vidéos, filtrer sur ce type ;\n"
+                  "2. « Modifier en masse » pour leur donner un autre type ;\n"
+                  "3. revenir ici, le type sera alors vide."),
+            wraplength=470, justify="left").pack(padx=20)
+        ctk.CTkButton(fen, text="J'ai compris", width=140,
+                      fg_color=C_ACTION, hover_color=C_ACTION_SURV,
+                      command=fen.destroy).pack(pady=18)
+        fen.bind("<Escape>", lambda _e: fen.destroy())
+        self._log(f"Suppression du type « {titre} » refusée : "
+                  f"{nb_videos} vidéo(s) seraient détruites.")
+
+    def _nomen_appliquer_suppression(self, obj: dict, genre: str):
+        try:
+            if genre == "type":
+                self.api.delete_type(obj.get("url", ""))
+            else:
+                self.api.delete_discipline(obj.get("url", ""))
+            self._log(f"{genre.capitalize()} « {obj.get('title')} » supprimé(e).")
+            self._nomen_load(True)
+            if genre == "type":
+                self._ui(self._nomen_rafraichir_menus_type)
+        except Exception as e:
+            # Le refus du serveur est présenté TEL QUEL : c'est lui qui décide
+            # du sort des vidéos rattachées, et masquer son motif laisserait
+            # l'utilisateur sans explication.
+            self._ui(self.nomen_statut.configure,
+                     text=f"❌  Suppression refusée : {e}", text_color=T_ALERTE)
+            self._log(f"Suppression {genre} : {e}")
 
     def _build_tab_groups(self):
         """Onglet de gestion des groupes d'accès : lister, créer, gérer les
@@ -7124,19 +7559,32 @@ class App(_AppBase):
                           "Contact : support-pod@utoulouse.fr.",
                      font=ctk.CTkFont(size=12), text_color=T_DISCRET).pack(anchor="w", padx=6, pady=(0, 8))
 
-        scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=2, pady=2)
+        # PAGE DE TEXTE, et non dix-sept cartes de widgets.
+        #
+        # Chaque section coûtait un cadre et deux étiquettes, soit près de neuf
+        # widgets réels une fois CustomTkinter passé par là. Pour dix-sept
+        # sections de texte STATIQUE, cela faisait 134 widgets — le plus lourd
+        # des douze onglets, pour la page la moins consultée.
+        #
+        # Or la bascule clair/sombre parcourt TOUS les widgets de
+        # l'application : mesuré, 871 widgets donnent 85 ms, 1771 en donnent
+        # 175. Cet onglet pesait donc sur une lenteur ressentie ailleurs.
+        #
+        # Une zone de texte unique rend le même service pour trois widgets, et
+        # apporte en prime la sélection et la copie du texte, impossibles avec
+        # des étiquettes.
+        self.help_box = ctk.CTkTextbox(frame, fg_color=S_CARTE, corner_radius=10,
+                                       wrap="word", font=ctk.CTkFont(size=12),
+                                       text_color=("gray20", "gray85"))
+        self.help_box.pack(fill="both", expand=True, padx=4, pady=4)
+        # Les titres restent distincts grâce aux balises de la zone de texte :
+        # la mise en forme est conservée sans coûter un widget par titre.
+        self._maj_couleur_titres_aide()
 
         def section(titre, corps, couleur_titre=("#1d4ed8", "#60a5fa")):
-            """Ajoute une carte (titre + texte) à la page d'aide."""
-            card = ctk.CTkFrame(scroll, fg_color=S_CARTE, corner_radius=10)
-            card.pack(fill="x", padx=4, pady=6)
-            ctk.CTkLabel(card, text=titre, font=ctk.CTkFont(size=14, weight="bold"),
-                         text_color=couleur_titre, justify="left").pack(
-                anchor="w", padx=14, pady=(12, 4))
-            ctk.CTkLabel(card, text=corps.strip(), font=ctk.CTkFont(size=12),
-                         text_color=("gray20", "gray85"), justify="left",
-                         wraplength=760).pack(anchor="w", padx=14, pady=(0, 12))
+            """Ajoute une section (titre + texte) à la page d'aide."""
+            self.help_box.insert("end", titre.strip() + "\n", "titre")
+            self.help_box.insert("end", corps.strip() + "\n\n")
 
         section(
             "🚀  Démarrage rapide",
@@ -7392,6 +7840,11 @@ class App(_AppBase):
             "support-pod@utoulouse.fr en joignant, si possible, le contenu de "
             "l'onglet Journal au moment du problème.",
             couleur_titre=("gray40", "gray70"))
+
+        # Lecture seule : le texte reste sélectionnable et copiable, mais ne
+        # peut plus être modifié par mégarde. À poser APRÈS l'insertion, une
+        # zone verrouillée refusant toute écriture.
+        self.help_box.configure(state="disabled")
 
     def _build_tab_about(self):
         """Onglet « À propos » : informations sur l'application, sa version,

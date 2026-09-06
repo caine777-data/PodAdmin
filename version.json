@@ -1,6 +1,6 @@
 {
-  "version": "1.5.3",
+  "version": "1.5.5",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Compte dans le bouton de masse, navigation qui ne deborde plus, filet de separation, en-tetes de panneaux.",
+  "notes": "IMPORTANT : la suppression d'un type detruit ses videos. Les types non vides sont desormais verrouilles.",
   "version_minimale": ""
 }

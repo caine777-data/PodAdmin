@@ -49,10 +49,22 @@ jobs:
       - name: Préparer l'icône Windows
         run: copy assets\icon.ico assets\podadmin.ico
 
-      - name: Compiler PodAdmin.exe (portable)
+      # --onedir et NON --onefile.
+      #
+      # En --onefile, l'exe est une archive auto-extractible : à CHAQUE
+      # lancement, Windows décompresse tout l'interpréteur Python et les
+      # bibliothèques dans un dossier temporaire avant d'exécuter quoi que ce
+      # soit. Mesuré côté application : 1,3 s d'import et 1,3 s de
+      # construction, auxquelles cette décompression s'ajoute intégralement.
+      #
+      # En --onedir, les fichiers sont déjà en place : le démarrage est 3 à 5
+      # fois plus rapide. Le prix est un dossier au lieu d'un fichier unique,
+      # ce qui ne change rien pour l'installeur — Inno Setup embarque le
+      # dossier — et impose seulement de dézipper le portable avant usage.
+      - name: Compiler PodAdmin (portable, --onedir)
         run: |
           $icon = (Test-Path "assets/podadmin.ico") ? "--icon=assets/podadmin.ico" : ""
-          pyinstaller --onefile --windowed --name "PodAdmin" `
+          pyinstaller --onedir --windowed --name "PodAdmin" `
             --version-file version.txt `
             $icon `
             --collect-all customtkinter `
@@ -64,11 +76,14 @@ jobs:
             --add-data "assets;assets" `
             app.py
 
-      - name: Publier l'exe portable Windows
+      # Le portable devient un DOSSIER : on publie son contenu entier.
+      # ⚠️ PodAdmin.exe seul ne fonctionne pas en --onedir — il lui faut les
+      # fichiers voisins. Le nom de l'artefact le rappelle.
+      - name: Publier le portable Windows (dossier complet)
         uses: actions/upload-artifact@v4
         with:
-          name: PodAdmin-Windows-portable
-          path: dist/PodAdmin.exe
+          name: PodAdmin-Windows-portable-dossier
+          path: dist/PodAdmin/
 
       # Installe Inno Setup (compilateur d'installeurs Windows) via Chocolatey.
       - name: Installer Inno Setup
@@ -82,7 +97,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.5.3
+          AppVersion=1.5.5
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
@@ -99,7 +114,10 @@ jobs:
           Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 
           [Files]
-          Source: "dist\PodAdmin.exe"; DestDir: "{app}"; Flags: ignoreversion
+          ; --onedir : tout le dossier est embarqué, sous-dossiers compris
+          ; (_internal). Ne copier que l'exe donnerait une application qui
+          ; s'installe sans erreur mais refuse de démarrer.
+          Source: "dist\PodAdmin\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Icons]
           Name: "{group}\PodAdmin"; Filename: "{app}\PodAdmin.exe"
@@ -152,9 +170,19 @@ jobs:
 
       - name: Compiler PodAdmin.app
         run: |
-          # --onefile : build macOS leger (~20-30 Mo) au prix d'un avertissement
-          # de depreciation PyInstaller (tolere aujourd'hui, bloquant en v7.0).
-          pyinstaller --onefile --windowed --name "PodAdmin" \
+          # --onedir et NON --onefile, pour deux raisons qui vont dans le même
+          # sens :
+          #   • le demarrage est 3 a 5 fois plus rapide, l'application n'ayant
+          #     plus a se decompresser dans un dossier temporaire a chaque
+          #     lancement ;
+          #   • --onefile combine a --windowed etait deprecie par PyInstaller
+          #     et devient BLOQUANT en v7.0. Le probleme est donc reglé avant
+          #     de se poser.
+          # Le paquet est plus gros (~60-80 Mo au lieu de 20-30), ce qui reste
+          # sans consequence pour une application distribuee par DMG.
+          # La suite du workflow est inchangee : --windowed produit
+          # dist/PodAdmin.app dans les deux modes.
+          pyinstaller --onedir --windowed --name "PodAdmin" \
             --icon assets/icon.icns \
             --collect-all customtkinter \
             --collect-all keyring \

@@ -531,8 +531,9 @@ class TestHierarchieVisuelle:
     def test_navigation_groupee_couvre_tous_les_onglets(self):
         """Le regroupement en blocs ne doit avoir égaré aucune entrée."""
         import app as module_app
-        attendus = {"upload", "encode", "browse", "reassign", "ct", "stats",
-                    "comptes", "groups", "config", "log", "help", "about"}
+        attendus = {"upload", "encode", "browse", "reassign", "ct", "nomen",
+                    "stats", "comptes", "groups", "config", "log", "help",
+                    "about"}
         source = self._source()
         assert "NAVIGATION = [" in source, "navigation par blocs absente"
         # Les onglets construits et les boutons de navigation doivent coïncider.
@@ -1022,8 +1023,8 @@ class TestCoherenceDesIcones:
         # Le bloc lu va de NAVIGATION à `self.nav_btns`, ce qui englobe aussi
         # EPINGLES : les 12 entrées sont donc bien toutes couvertes, 10 dans le
         # flux défilant et 2 épinglées en pied.
-        assert len(entrees) == 12, (
-            f"{len(entrees)} entrées de navigation trouvées au lieu de 12 : "
+        assert len(entrees) == 13, (
+            f"{len(entrees)} entrées de navigation trouvées au lieu de 13 : "
             "le format de NAVIGATION ou d'EPINGLES a changé, ces tests ne "
             "vérifient plus rien.")
         return entrees
@@ -1362,5 +1363,192 @@ class TestLibellesDeFiltres:
 
 
 def module_ctk():
+    import app as module_app
+    return module_app.ctk
+
+
+class TestPoidsDeLInterface:
+    """La bascule clair/sombre parcourt TOUS les widgets de l'application.
+
+    Mesuré : 871 widgets → 85 ms, 1 771 widgets → 175 ms. Sur Windows, comptez
+    deux à trois fois plus. Le nombre de widgets n'est donc pas un détail
+    d'implémentation : c'est directement la lenteur ressentie à chaque
+    bascule."""
+
+    # Relevé de 800 à 860 à l'ajout de l'onglet « Types & disciplines »
+    # (+56 widgets, mesuré à 807). Un plafond qu'on relève à chaque ajout ne
+    # sert plus à rien : il est là pour signaler une DÉRIVE, pas pour interdire
+    # un onglet. Si un ajout coûtait 300 widgets, c'est la construction qu'il
+    # faudrait revoir, pas ce chiffre.
+    PLAFOND_TOTAL = 860      # application neuve : constaté à 807
+    PLAFOND_AIDE = 40        # constaté à 14 ; était à 134
+
+    @staticmethod
+    def _compter(widget):
+        total = 1
+        for enfant in widget.winfo_children():
+            total += TestPoidsDeLInterface._compter(enfant)
+        return total
+
+    def test_aide_reste_legere(self, app):
+        """Dix-sept sections de texte STATIQUE coûtaient 134 widgets — le plus
+        lourd des douze onglets, pour la page la moins consultée."""
+        poids = self._compter(app.tabs["help"])
+        assert poids <= self.PLAFOND_AIDE, (
+            f"l'onglet Aide pèse {poids} widgets (plafond {self.PLAFOND_AIDE}) : "
+            "il a probablement été reconstruit à coups d'étiquettes.")
+
+    def test_poids_total_maitrise(self):
+        """Garde-fou global : un onglet ajouté sans précaution se verrait ici
+        plutôt que dans une lenteur inexpliquée.
+
+        ⚠️ Ce test instancie une application NEUVE au lieu d'employer le
+        fixture partagé. Deux tentatives ont échoué avant d'en arriver là :
+        compter la fenêtre entière incluait les boutons témoins créés par
+        d'autres tests, et compter les onglets incluait les listes qu'ils
+        avaient remplies (733 widgets au lieu de 659). Un seuil ne veut rien
+        dire s'il dépend de l'ordre d'exécution."""
+        import app as module_app
+        neuve = module_app.App()
+        try:
+            neuve.update()
+            poids = self._compter(neuve)
+        finally:
+            try:
+                neuve.destroy()
+            except Exception:
+                pass
+        assert poids <= self.PLAFOND_TOTAL, (
+            f"{poids} widgets dans les onglets (plafond {self.PLAFOND_TOTAL}) : "
+            "la bascule de thème ralentit d'autant.")
+
+    def test_titres_de_l_aide_lisibles_dans_les_deux_modes(self, app):
+        """Les balises d'une zone de texte n'acceptent qu'une couleur SIMPLE,
+        là où le reste emploie des couples résolus par CustomTkinter. Sans
+        adaptation explicite, le bleu foncé des titres devient illisible sur
+        fond sombre."""
+        import app as module_app
+        depart = module_app.ctk.get_appearance_mode()
+        try:
+            couleurs = {}
+            for _ in range(2):
+                app._basculer_theme()
+                app.update()
+                mode = module_app.ctk.get_appearance_mode().lower()
+                couleurs[mode] = str(app.help_box.tag_cget("titre", "foreground"))
+            assert len(set(couleurs.values())) == 2, (
+                f"même couleur de titre dans les deux modes : {couleurs}")
+        finally:
+            if module_app.ctk.get_appearance_mode() != depart:
+                app._basculer_theme()
+                app.update()
+
+
+class TestCompilation:
+    """Le mode de compilation décide du temps de démarrage.
+
+    En `--onefile`, l'exécutable est une archive auto-extractible : tout
+    l'interpréteur Python est décompressé dans un dossier temporaire à CHAQUE
+    lancement, avant que quoi que ce soit ne s'affiche. Mesuré côté
+    application, il y a déjà 1,3 s d'import et 1,3 s de construction — la
+    décompression s'y ajoute intégralement."""
+
+    @staticmethod
+    def _workflow() -> str:
+        import os
+        import app as module_app
+        racine = os.path.dirname(os.path.abspath(module_app.__file__))
+        chemin = os.path.join(racine, ".github", "workflows", "build.yml")
+        return open(chemin, encoding="utf-8").read()
+
+    def test_compilation_en_onedir(self):
+        import re
+        texte = self._workflow()
+        # On ne regarde que les LIGNES DE COMMANDE, les commentaires citant
+        # « --onefile » pour l'expliquer étant légitimes.
+        # `strip().startswith` et non `in` : sinon « pip install pyinstaller »
+        # est pris pour une commande de compilation et fait échouer le test
+        # pour une raison qui n'en est pas une.
+        commandes = [l for l in texte.split("\n")
+                     if l.strip().startswith("pyinstaller ")]
+        assert commandes, "aucune commande pyinstaller trouvée"
+        fautives = [l for l in commandes if "--onefile" in l]
+        assert not fautives, (
+            f"compilation encore en --onefile : {fautives}")
+        assert all("--onedir" in l for l in commandes), (
+            f"commandes sans --onedir : {commandes}")
+
+    def test_installeur_embarque_tout_le_dossier(self):
+        """En `--onedir`, ne copier que l'exe donnerait une application qui
+        s'installe sans erreur mais refuse de démarrer."""
+        texte = self._workflow()
+        assert "recursesubdirs" in texte, (
+            "l'installeur ne copie pas les sous-dossiers : PodAdmin.exe seul "
+            "ne démarre pas en --onedir")
+        assert 'Source: "dist\\PodAdmin\\*"' in texte
+
+
+class TestVerrouillageSuppressionType:
+    """⚠️ SUPPRESSION EN CASCADE, ÉTABLIE PAR SONDE SUR L'INSTANCE RÉELLE.
+
+    Supprimer un type y supprime AUSSI ses vidéos. Le serveur ne proteste
+    pas : il répond HTTP 204 et la vidéo n'existe plus. Une vidéo de test y
+    est réellement passée.
+
+    Un avertissement ne suffit pas — une confirmation se clique, et
+    celle-ci se cliquerait au milieu d'une session de rangement. Un seul clic
+    détruirait 57 vidéos. La suppression d'un type non vide doit donc être
+    IMPOSSIBLE, pas déconseillée."""
+
+    def test_type_non_vide_jamais_supprime(self, app, monkeypatch):
+        """Le cœur du garde-fou : l'appel de suppression ne doit pas partir."""
+        appels = []
+        monkeypatch.setattr(app, "_run",
+                            lambda fn, *a: appels.append((fn.__name__, a)))
+        fenetres = []
+        monkeypatch.setattr(app, "_nomen_refuser_suppression",
+                            lambda t, n: fenetres.append((t, n)))
+
+        app._nomen_supprimer({"title": "vidéo", "url": "u"}, "type", 57)
+
+        assert not appels, (
+            "une suppression a été lancée sur un type portant 57 vidéos")
+        assert fenetres == [("vidéo", 57)], "le refus n'a pas été présenté"
+
+    def test_type_vide_reste_supprimable(self, app, monkeypatch):
+        """Le verrou ne doit pas bloquer le cas légitime."""
+        ouvertes = []
+        monkeypatch.setattr(ctk_module().CTkToplevel, "__init__",
+                            lambda self, *a, **k: ouvertes.append(1))
+        try:
+            app._nomen_supprimer({"title": "Tutoriel", "url": "u"}, "type", 0)
+        except Exception:
+            pass    # la fenêtre neutralisée lève, seul compte qu'on soit arrivé là
+        assert ouvertes, "aucune confirmation proposée pour un type vide"
+
+    def test_discipline_non_concernee(self, app, monkeypatch):
+        """Les disciplines ne portent pas de vidéos par ce champ : le verrou
+        des types ne doit pas déborder sur elles."""
+        refus = []
+        monkeypatch.setattr(app, "_nomen_refuser_suppression",
+                            lambda t, n: refus.append(t))
+        ouvertes = []
+        monkeypatch.setattr(ctk_module().CTkToplevel, "__init__",
+                            lambda self, *a, **k: ouvertes.append(1))
+        try:
+            app._nomen_supprimer({"title": "Odontologie", "url": "u"},
+                                 "discipline", None)
+        except Exception:
+            pass
+        assert not refus, "le verrou des types s'applique à tort aux disciplines"
+
+    def test_avertissement_visible_dans_l_onglet(self):
+        """La cascade doit être annoncée à l'écran, pas seulement dans le code."""
+        corps = TestEchelleDeSurfaces._corps()
+        assert "les types non " in corps and "verrouillés" in corps, (
+            "l'onglet n'annonce pas que les types non vides sont verrouillés")
+
+
+def ctk_module():
     import app as module_app
     return module_app.ctk

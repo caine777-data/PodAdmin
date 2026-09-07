@@ -920,6 +920,10 @@ class App(_AppBase):
         self._build_tab_log()
         self._build_tab_about()
 
+        # Après la construction : les raccourcis référencent des widgets qui
+        # doivent exister.
+        self._poser_raccourcis()
+
     def _basculer_theme(self):
         """Passe du mode sombre au mode clair, et inversement.
 
@@ -1068,6 +1072,92 @@ class App(_AppBase):
             "ct":     self._ct_load,
             "nomen":  self._nomen_load,
         }
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  RACCOURCIS CLAVIER
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _poser_raccourcis(self):
+        """Installe les raccourcis globaux de l'application.
+
+        L'outil est employé quotidiennement et ne proposait qu'Échap dans la
+        moitié des fenêtres. Les gestes les plus répétés — chercher,
+        rafraîchir, changer d'onglet — passaient tous par la souris.
+
+        ⚠️ `bind_all` déclenche AUSSI dans les champs de saisie. Chaque
+        raccourci vérifie donc où se trouve le focus avant d'agir : Ctrl+A
+        doit continuer à sélectionner le texte d'un champ, et non les vidéos
+        de la liste. Sans cette précaution, on casserait un geste que tout le
+        monde connaît pour en ajouter un nouveau.
+        """
+        self.bind_all("<Control-f>", self._raccourci_chercher)
+        self.bind_all("<Control-F>", self._raccourci_chercher)
+        self.bind_all("<F5>", self._raccourci_rafraichir)
+        self.bind_all("<Control-a>", self._raccourci_tout_selectionner)
+        self.bind_all("<Control-A>", self._raccourci_tout_selectionner)
+        # Ctrl+1 à Ctrl+9 : accès direct aux neuf premiers onglets, dans
+        # l'ordre de la barre latérale.
+        for rang in range(1, 10):
+            self.bind_all(f"<Control-Key-{rang}>",
+                          lambda e, r=rang: self._raccourci_onglet(r))
+
+    def _saisie_active(self) -> bool:
+        """Le focus est-il dans un champ où l'on tape du texte ?"""
+        try:
+            widget = self.focus_get()
+        except Exception:
+            return False
+        return widget is not None and widget.winfo_class() in ("Entry", "Text")
+
+    # Champ de recherche de chaque onglet, pour Ctrl+F.
+    _CHAMPS_RECHERCHE = {"browse": "browse_text", "comptes": "comptes_filter"}
+
+    def _raccourci_chercher(self, _evt=None):
+        """Ctrl+F — place le curseur dans le champ de recherche de l'onglet."""
+        nom = self._CHAMPS_RECHERCHE.get(getattr(self, "onglet_courant", ""))
+        champ = getattr(self, nom, None) if nom else None
+        if champ is None:
+            return None            # onglet sans recherche : on ne fait rien
+        try:
+            champ.focus_set()
+            champ.select_range(0, "end")
+        except Exception:
+            pass
+        return "break"
+
+    def _raccourci_rafraichir(self, _evt=None):
+        """F5 — relit depuis le serveur l'onglet affiché.
+
+        On force la relecture en retirant l'onglet du cache : sans cela, la
+        touche n'aurait aucun effet visible sur un onglet déjà chargé, ce qui
+        est pire qu'une touche inactive."""
+        key = getattr(self, "onglet_courant", "")
+        if not self.api or key not in self._auto_loaders():
+            return None
+        self._auto_loaded.discard(key)
+        self._auto_charger(key)
+        return "break"
+
+    def _raccourci_tout_selectionner(self, _evt=None):
+        """Ctrl+A — retient toutes les vidéos affichées (onglet Vidéos).
+
+        Ne s'applique PAS dans un champ de saisie, où Ctrl+A doit garder son
+        sens habituel."""
+        if self._saisie_active():
+            return None
+        if getattr(self, "onglet_courant", "") != "browse":
+            return None
+        self._browse_tout_selectionner()
+        return "break"
+
+    def _raccourci_onglet(self, rang: int):
+        """Ctrl+1..9 — ouvre le n-ième onglet de la barre latérale."""
+        if self._saisie_active():
+            return None
+        cles = list(self.nav_btns)
+        if rang <= len(cles):
+            self._show_tab(cles[rang - 1])
+        return "break"
 
     def _auto_charger(self, key: str):
         """Déclenche le chargement automatique d'un onglet, si possible.
@@ -6235,6 +6325,10 @@ class App(_AppBase):
         win.geometry("380x440")
         win.transient(self)
         win.grab_set()                       # modale : bloque la fenêtre principale
+        # Seule fenêtre modale qui n'appelait pas `_focus_toplevel` : Échap n'y
+        # fermait rien, alors qu'il fonctionne partout ailleurs. Une modale qui
+        # ne réagit pas à Échap donne l'impression d'être bloquée.
+        win.bind("<Escape>", lambda _e: win.destroy())
         ctk.CTkLabel(win, text="Cochez le(s) groupe(s) autorisé(s) :",
                      font=ctk.CTkFont(size=13, weight="bold")).pack(
             anchor="w", padx=16, pady=(16, 6))
@@ -8010,7 +8104,16 @@ class App(_AppBase):
             "désigne une (« Valider »).\n\n"
             "Entrée ne valide JAMAIS au hasard : une fenêtre sans action "
             "principale évidente ne réagit pas à cette touche, pour éviter de "
-            "déclencher par mégarde une opération de masse.")
+            "déclencher par mégarde une opération de masse.\n\n"
+            "Dans la fenêtre principale :\n"
+            "• Ctrl+F — placer le curseur dans le champ de recherche de "
+            "l'onglet (Vidéos, Comptes) ;\n"
+            "• F5 — relire l'onglet affiché depuis le serveur ;\n"
+            "• Ctrl+A — retenir toutes les vidéos affichées (onglet Vidéos) ;\n"
+            "• Ctrl+1 à Ctrl+9 — ouvrir directement un onglet, dans l'ordre "
+            "de la barre de gauche.\n\n"
+            "Ctrl+A garde son sens habituel quand le curseur est dans un champ "
+            "de saisie : il y sélectionne le texte, pas les vidéos.")
 
         section(
             "🎨  Apparence : mode clair ou sombre",

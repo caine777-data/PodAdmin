@@ -203,6 +203,44 @@ Le renommage des disciplines, lui, a été confirmé (PATCH accepté, valeur rel
 
 ---
 
+## Avant de rendre les onglets « paresseux » (étape 6 de l'audit)
+
+`TestContratDesOngletsApresConnexion` décrit ce qui doit continuer de
+fonctionner si les onglets cessent d'être tous construits au démarrage. Ces
+tests ne corrigent rien aujourd'hui : ils sont le **filet** du refactoring.
+
+⚠️ **Le danger n'est pas au démarrage, il est à la connexion.** `_load_types`
+configure `type_combo` (onglet Téléversement) et les menus de type de l'onglet
+Vidéos. Si ces onglets ne sont pas construits, ce sont des `AttributeError`
+levées **dans un thread**, où elles sont avalées par le `except` du
+chargement : les menus resteraient vides, sans erreur visible, et plus personne
+ne pourrait choisir de type au dépôt.
+
+Le contrat liste les widgets touchés par le code de connexion, onglet par
+onglet. Vérifié : en simulant la construction à la demande, les tests nomment
+précisément les widgets manquants. Un test garde le filet lui-même — tout
+onglet ayant un chargement automatique doit figurer au contrat.
+
+---
+
+## Raccourcis clavier
+
+Fenêtre principale : `Ctrl+F` (champ de recherche de l'onglet), `F5` (relecture
+serveur), `Ctrl+A` (retenir toutes les vidéos affichées), `Ctrl+1..9` (onglets).
+Fenêtres secondaires : `Échap` ferme, `Entrée` valide quand une action
+principale est désignée.
+
+⚠️ `bind_all` déclenche **aussi dans les champs de saisie**. Tout raccourci
+susceptible d'entrer en conflit doit appeler `_saisie_active()` d'abord :
+`Ctrl+A` garde son sens habituel dans un champ. Casser un geste connu pour en
+ajouter un nouveau serait une régression.
+
+⚠️ `F5` retire l'onglet du cache avant de recharger : sans cela, la touche
+n'aurait aucun effet visible sur un onglet déjà chargé — pire qu'une touche
+inactive.
+
+---
+
 ## États vides
 
 Un panneau vide **explique**, il ne se contente pas de constater. « Aucune
@@ -367,7 +405,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.2**
+Version : **1.6.4**
 
 ---
 

@@ -2029,3 +2029,217 @@ class TestEtatsVides:
         app.update()
         assert len(cadre.winfo_children()) == 3
         cadre.destroy()
+
+
+class TestRaccourcisClavier:
+    """Raccourcis globaux, éprouvés par de VRAIES frappes.
+
+    ⚠️ `bind_all` déclenche aussi dans les champs de saisie. Ctrl+A doit y
+    garder son sens habituel — sélectionner le texte — et non retenir les
+    vidéos de la liste. Casser un geste que tout le monde connaît pour en
+    ajouter un nouveau serait une régression, pas une amélioration."""
+
+    @staticmethod
+    def _clavier() -> bool:
+        import shutil
+        return shutil.which("xdotool") is not None
+
+    @pytest.fixture
+    def app(self):
+        """Instance dédiée : ces tests envoient des frappes à la fenêtre
+        active, et ne supportent pas qu'un autre test ait laissé le focus
+        ailleurs."""
+        import app as module_app
+        a = module_app.App()
+        a.geometry("1180x760+0+0")
+        a.update()
+        yield a
+        try:
+            a.destroy()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _touche(app, sequence):
+        import os
+        import time
+        os.system(f"xdotool key {sequence}")
+        debut = time.time()
+        while time.time() - debut < 0.35:
+            app.update()
+            time.sleep(0.05)
+
+    def _peupler(self, app):
+        base = "https://exemple.invalid/rest"
+        app.videos = [{"slug": f"v{i}", "title": f"V{i}", "is_draft": False,
+                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
+                       "owner": "u", "date_added": "2026-01-01",
+                       "url": f"{base}/videos/v{i}/"} for i in range(4)]
+        app.browse_chan_by_url = {}
+        app.type_map = {}
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app.update()
+
+    def test_ctrl_chiffre_ouvre_l_onglet(self, app):
+        import pytest
+        if not self._clavier():
+            pytest.skip("xdotool absent")
+        cles = list(app.nav_btns)
+        self._touche(app, "ctrl+3")
+        assert app.onglet_courant == cles[2]
+        self._touche(app, "ctrl+1")
+        assert app.onglet_courant == cles[0]
+
+    def test_ctrl_f_donne_le_focus_au_champ(self, app):
+        """Le focus va sur l'Entry INTERNE du CTkEntry, pas sur le CTkEntry :
+        comparer au mauvais objet fait conclure à tort que rien ne marche."""
+        import pytest
+        if not self._clavier():
+            pytest.skip("xdotool absent")
+        self._peupler(app)
+        self._touche(app, "ctrl+f")
+        interne = getattr(app.browse_text, "_entry", None)
+        assert app.focus_get() in (app.browse_text, interne), (
+            f"focus ailleurs : {app.focus_get()}")
+
+    def test_ctrl_a_respecte_le_champ_de_saisie(self, app):
+        """Le point critique de tout ce lot."""
+        import pytest
+        if not self._clavier():
+            pytest.skip("xdotool absent")
+        self._peupler(app)
+        app.browse_multi.clear()
+
+        app.browse_text.focus_set()
+        app.update()
+        self._touche(app, "ctrl+a")
+        assert not app.browse_multi, (
+            "Ctrl+A dans le champ de saisie a retenu des vidéos : le geste "
+            "habituel de sélection du texte est cassé")
+
+        app.browse_list.focus_set()
+        app.update()
+        self._touche(app, "ctrl+a")
+        assert len(app.browse_multi) == 4, (
+            f"Ctrl+A hors du champ n'a rien retenu : {app.browse_multi}")
+
+    def test_f5_force_la_relecture(self, app):
+        """Sans retrait du cache, la touche n'aurait aucun effet visible sur un
+        onglet déjà chargé — pire qu'une touche inactive."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._raccourci_rafraichir)
+        assert "_auto_loaded.discard" in source, (
+            "F5 ne force pas la relecture depuis le serveur")
+
+    def test_toutes_les_modales_ferment_avec_echap(self):
+        """Une modale qui ne réagit pas à Échap donne l'impression d'être
+        bloquée, surtout quand la précédente y réagissait."""
+        corps = TestEchelleDeSurfaces._corps()
+        lignes = corps.split("\n")
+        sans = []
+        for i, ligne in enumerate(lignes):
+            if "CTkToplevel(" in ligne and "class " not in ligne:
+                bloc = "\n".join(lignes[i:i + 45])
+                # L'infobulle est une fenêtre SANS DÉCORATION
+                # (`overrideredirect`) : elle n'a ni titre, ni bouton de
+                # fermeture, et disparaît d'elle-même. Échap n'y a pas de sens.
+                if "overrideredirect" in bloc:
+                    continue
+                if "<Escape>" not in bloc and "_focus_toplevel(" not in bloc:
+                    sans.append(i + 1)
+        assert not sans, (
+            f"fenêtres sans Échap, lignes {sans} (relatives au corps)")
+
+
+class TestContratDesOngletsApresConnexion:
+    """FILET POUR LE REFACTORING « ONGLETS CONSTRUITS À LA DEMANDE ».
+
+    Ces tests ne corrigent rien aujourd'hui : ils décrivent ce qui doit
+    continuer de fonctionner si les onglets cessent d'être tous construits au
+    démarrage.
+
+    LE DANGER PRÉCIS. Après connexion, `_load_types` fait :
+
+        self._ui(self.type_combo.configure, values=titres)     # onglet upload
+        self._ui(self._browse_refresh_type_menu)               # onglet browse
+
+    `type_combo` appartient au Téléversement, `browse_type` et
+    `browse_mass_type` aux Vidéos. Si ces onglets ne sont pas construits, ce
+    sont des `AttributeError` — et pas au démarrage, **au moment de la
+    connexion**. Elles surviennent dans un THREAD, où l'exception est avalée
+    par le `except` du chargement : le menu resterait vide, silencieusement,
+    et l'utilisateur ne pourrait plus choisir de type au dépôt.
+
+    C'est pourquoi ce filet vérifie l'EXISTENCE des attributs, sans lancer
+    d'appel réseau : c'est exactement ce que le refactoring casserait."""
+
+    # Widgets touchés par le code de connexion et de chargement, par onglet.
+    # Établi en analysant `_load_types`, `_on_connected` et les chargeurs
+    # automatiques — pas au jugé.
+    CONTRAT = {
+        "upload":   ["type_combo", "visibility_combo"],
+        "browse":   ["browse_type", "browse_mass_type", "browse_status",
+                     "browse_text", "browse_list", "browse_detail"],
+        "encode":   ["encode_status", "encode_list"],
+        "stats":    ["stats_status", "stats_export_btn"],
+        "ct":       ["ct_status", "ct_list"],
+        "nomen":    ["nomen_statut", "nomen_types_liste", "nomen_disc_liste"],
+        "comptes":  ["comptes_results", "comptes_filter"],
+        "groups":   ["groups_list", "groups_status"],
+        "log":      ["log_box"],
+    }
+
+    def test_tous_les_widgets_du_contrat_existent(self, app):
+        """Sans onglet ouvert : c'est l'état dans lequel la connexion arrive."""
+        manquants = []
+        for onglet, attributs in self.CONTRAT.items():
+            for nom in attributs:
+                if not hasattr(app, nom):
+                    manquants.append(f"{onglet}.{nom}")
+        assert not manquants, (
+            "widgets absents alors que le code de connexion les configure : "
+            f"{manquants}")
+
+    def test_les_menus_de_type_survivent_au_chargement(self, app):
+        """Rejoue `_load_types` avec une API simulée, sans réseau.
+
+        Si un onglet n'est pas construit, cet appel lève — et le test le voit,
+        là où l'application avalerait l'exception dans son thread."""
+        class FausseAPI:
+            def get_types(self):
+                return [{"title": "Cours", "url": "https://x/rest/types/1/",
+                         "id": 1}]
+
+            def get_sites(self):
+                return [{"url": "https://x/rest/sites/1/", "name": "videos"}]
+
+        app.api = FausseAPI()
+        app._load_types()
+        app.update()
+        assert "Cours" in app.type_combo.cget("values"), (
+            "le menu de type du Téléversement n'a pas été alimenté")
+        assert "Cours" in app.browse_type.cget("values"), (
+            "le filtre de type de l'onglet Vidéos n'a pas été alimenté")
+
+    def test_le_journal_accepte_une_ligne_sans_onglet_ouvert(self, app):
+        """`_log` est appelé depuis partout, y compris avant toute ouverture
+        d'onglet : la zone de journal doit exister en permanence."""
+        app._log("ligne de contrôle")
+        app.update()
+        assert "ligne de contrôle" in app.log_box.get("1.0", "end")
+
+    def test_chaque_chargeur_automatique_a_son_onglet(self, app):
+        """Un chargeur sans onglet construit planterait dès l'ouverture."""
+        for cle in app._auto_loaders():
+            assert cle in app.tabs, (
+                f"« {cle} » a un chargeur automatique mais aucun onglet")
+
+    def test_le_contrat_couvre_les_onglets_a_chargement(self, app):
+        """Garde-fou sur le filet lui-même : un onglet qui charge des données
+        doit figurer au contrat, sans quoi le refactoring passerait au travers."""
+        oublies = [c for c in app._auto_loaders() if c not in self.CONTRAT]
+        assert not oublies, (
+            f"onglets à chargement absents du contrat : {oublies}")

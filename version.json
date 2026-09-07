@@ -1,6 +1,6 @@
 {
-  "version": "1.6.2",
+  "version": "1.6.4",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Les panneaux vides expliquent desormais quoi faire.",
+  "notes": "Raccourcis clavier et filet de tests pour le prochain refactoring.",
   "version_minimale": ""
 }

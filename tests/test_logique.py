@@ -787,3 +787,172 @@ class TestNomenclatures:
             "create_type doit envoyer « sites » sous forme de liste")
         assert '"site"' in source_disc and '"sites"' not in source_disc, (
             "create_discipline doit envoyer « site » au singulier")
+
+
+class TestContrastesAccessibilite:
+    """Toute teinte de texte doit atteindre 4,5:1 sur TOUTE l'échelle de
+    surfaces, dans les DEUX modes (WCAG 2.1 niveau AA, texte normal).
+
+    Ces teintes avaient été réglées quand le mode sombre était le seul
+    disponible ; le volet clair en avait été déduit à l'œil. Mesure faite,
+    cinq des sept étaient sous le seuil en clair — et trois l'étaient aussi en
+    sombre, ce qu'un premier examen visuel n'avait pas vu.
+
+    ⚠️ Le calcul porte sur le PIRE fond de l'échelle. Une première correction
+    a été calculée en oubliant S_PUCE dans la liste : elle semblait suffisante
+    (4,54) et plafonnait en réalité à 4,11. C'est précisément l'erreur que ce
+    test empêche de reproduire — d'où le fait qu'il lise les surfaces depuis
+    le module plutôt que de les recopier."""
+
+    SEUIL = 4.5
+
+    @staticmethod
+    def _luminance(valeur: str) -> float:
+        """Luminance relative WCAG d'une teinte « grayNN » ou « #rrggbb »."""
+        def canal(c):
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        if valeur.startswith("gray"):
+            return canal(int(valeur[4:]) / 100)
+        h = valeur.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        return 0.2126 * canal(r) + 0.7152 * canal(g) + 0.0722 * canal(b)
+
+    @classmethod
+    def _ratio(cls, a: str, b: str) -> float:
+        la, lb = cls._luminance(a), cls._luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    @staticmethod
+    def _surfaces(indice: int):
+        """Toutes les surfaces de l'échelle, lues DEPUIS le module.
+
+        Les recopier ici reproduirait l'oubli d'origine : une surface ajoutée
+        plus tard échapperait au test sans que personne ne s'en aperçoive."""
+        import app as module_app
+        noms = ("S_FOND", "S_BARRE", "S_CARTE", "S_LIGNE", "S_LIGNE_ALT",
+                "S_PUCE")
+        return {n: getattr(module_app, n)[indice] for n in noms
+                if hasattr(module_app, n)}
+
+    @staticmethod
+    def _textes(indice: int):
+        import app as module_app
+        noms = ("T_SECONDAIRE", "T_DISCRET", "T_SUCCES", "T_ALERTE",
+                "T_ERREUR", "T_CHAMP", "T_SUR_NEUTRE")
+        return {n: getattr(module_app, n)[indice] for n in noms
+                if hasattr(module_app, n)}
+
+    def _verifier(self, indice: int, mode: str):
+        surfaces = self._surfaces(indice)
+        assert len(surfaces) >= 5, "l'échelle de surfaces n'a pas été lue"
+        fautifs = []
+        for nom_texte, teinte in self._textes(indice).items():
+            for nom_fond, fond in surfaces.items():
+                r = self._ratio(teinte, fond)
+                if r < self.SEUIL:
+                    fautifs.append(f"{nom_texte} sur {nom_fond} = {r:.2f}")
+        assert not fautifs, (
+            f"contrastes insuffisants en mode {mode} (seuil {self.SEUIL}) : "
+            + " ; ".join(fautifs))
+
+    def test_mode_clair(self):
+        self._verifier(0, "clair")
+
+    def test_mode_sombre(self):
+        self._verifier(1, "sombre")
+
+    def test_texte_blanc_sur_les_boutons_colores(self):
+        """Les boutons d'action portent du texte blanc : eux aussi doivent
+        atteindre le seuil."""
+        import app as module_app
+        fautifs = []
+        for nom in ("C_ACTION", "C_SUCCES", "C_ALERTE", "C_DESTRUCTIF",
+                    "C_ACCENT"):
+            couple = getattr(module_app, nom, None)
+            if couple is None:
+                continue
+            for i, mode in ((0, "clair"), (1, "sombre")):
+                r = self._ratio(couple[i], "#ffffff")
+                if r < self.SEUIL:
+                    fautifs.append(f"{nom} ({mode}) = {r:.2f}")
+        assert not fautifs, f"texte blanc illisible sur : {fautifs}"
+
+
+class TestMessagesDErreur:
+    """Une exception ne doit jamais être montrée telle quelle à l'utilisateur.
+
+    Vingt endroits affichaient `f"❌  {e}"`. Un collègue du support pouvait
+    lire « HTTPSConnectionPool(host=…): Max retries exceeded with url… », qui
+    ne dit ni ce qui s'est passé, ni quoi faire.
+
+    Le détail technique n'est pas perdu : il part au Journal. C'est justement
+    ce que `_signaler` garantit — écran ET journal en un seul appel, pour
+    qu'on ne puisse plus faire l'un sans l'autre."""
+
+    def _traduire(self, e):
+        import app as module_app
+        return module_app.message_utilisateur(e)
+
+    def _erreur_api(self, statut=0, corps="", message="erreur"):
+        import pod_api
+        return pod_api.PodAPIError(message, statut, corps)
+
+    def test_les_codes_http_connus_sont_traduits(self):
+        attendus = {401: "Jeton", 403: "Droits", 404: "introuvable",
+                    409: "utilisé ailleurs", 500: "difficulté", 503: "difficulté"}
+        for statut, extrait in attendus.items():
+            texte = self._traduire(self._erreur_api(statut))
+            assert extrait.lower() in texte.lower(), (
+                f"HTTP {statut} mal traduit : {texte}")
+            assert "HTTP" not in texte, (
+                f"le code technique fuit dans le message : {texte}")
+
+    def test_le_motif_dun_refus_est_extrait_du_json(self):
+        """Django REST renvoie {"champ": ["motif"]} ; affiché brut, cela donne
+        des accolades au milieu d'une phrase."""
+        texte = self._traduire(self._erreur_api(
+            400, '{"sites":["Ce champ est obligatoire."]}'))
+        assert "Ce champ est obligatoire" in texte
+        assert "{" not in texte and "[" not in texte, (
+            f"le JSON brut apparaît encore : {texte}")
+
+    def test_les_noms_techniques_de_django_sont_masques(self):
+        """« detail » et « non_field_errors » n'apprennent rien à personne."""
+        for corps in ('{"detail":"Non authentifié."}',
+                      '{"non_field_errors":["Requête invalide."]}'):
+            texte = self._traduire(self._erreur_api(400, corps))
+            assert "detail" not in texte and "non_field" not in texte, texte
+
+    def test_les_pannes_reseau_sont_reconnues(self):
+        """Ce message-ci est celui que voyait l'utilisateur, en entier."""
+        e = Exception("HTTPSConnectionPool(host='videos.utoulouse.fr', port=443): "
+                      "Max retries exceeded with url: /rest/videos/")
+        texte = self._traduire(e)
+        assert "injoignable" in texte.lower()
+        assert "HTTPSConnectionPool" not in texte
+
+    def test_un_cas_inconnu_reste_honnete(self):
+        """Faute de savoir, on renvoie vers le Journal plutôt que d'inventer
+        une cause."""
+        texte = self._traduire(ValueError("quelque chose d'inattendu"))
+        assert "Journal" in texte
+        assert "quelque chose d'inattendu" in texte
+
+    def test_aucun_message_brut_ne_subsiste(self):
+        """Garde-fou sur la source : c'est la forme exacte qui posait
+        problème."""
+        import app as module_app
+        source = open(module_app.__file__.replace(".pyc", ".py"),
+                      encoding="utf-8").read()
+        assert 'text=f"❌  {e}"' not in source, (
+            "une exception est encore affichée telle quelle")
+
+    def test_signaler_journalise_le_detail(self):
+        """Le détail technique doit rester disponible pour le support."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._signaler)
+        assert "self._log(" in source, (
+            "`_signaler` n'écrit pas dans le Journal : le détail serait perdu")
+        assert "body" in source, "le corps de la réponse n'est pas journalisé"

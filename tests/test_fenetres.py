@@ -1918,3 +1918,114 @@ class TestSelectionMultiple:
             "le relâchement Ctrl n'est pas intercepté")
         assert '"<Shift-ButtonRelease-1>"' in corps, (
             "le relâchement Maj n'est pas intercepté")
+
+
+class TestTaillesDeCibles:
+    """Aucun bouton ne doit descendre sous la cible minimale confortable.
+
+    Six hauteurs cohabitaient (22, 24, 26, 28, 32, 40) sans règle. Neuf
+    boutons étaient à 22 ou 24 px — et c'étaient ceux des rangées de liste,
+    donc les plus souvent visés, dans les zones les plus denses."""
+
+    MINIMUM = 26
+
+    def test_aucun_bouton_sous_le_minimum(self):
+        import re
+        corps = TestEchelleDeSurfaces._corps()
+        fautifs = []
+        for ligne, appel in TestHierarchieVisuelle._appels(corps, "CTkButton"):
+            m = re.search(r"height=(\d+)", appel)
+            if m and int(m.group(1)) < self.MINIMUM:
+                fautifs.append((ligne, int(m.group(1))))
+        assert not fautifs, (
+            f"boutons sous {self.MINIMUM} px (ligne, hauteur) : {fautifs}")
+
+    def test_hauteurs_prises_dans_l_echelle(self):
+        """Une hauteur écrite en clair rouvre la porte aux six valeurs
+        improvisées d'origine."""
+        import re
+        import app as module_app
+        autorisees = {module_app.H_COMPACT, module_app.H_NORMAL,
+                      module_app.H_PRINCIPAL,
+                      32, 34}          # navigation et rangée épinglée, assumées
+        corps = TestEchelleDeSurfaces._corps()
+        hors = set()
+        for _ligne, appel in TestHierarchieVisuelle._appels(corps, "CTkButton"):
+            m = re.search(r"height=(\d+)", appel)
+            if m and int(m.group(1)) not in autorisees:
+                hors.add(int(m.group(1)))
+        assert not hors, (
+            f"hauteurs hors échelle : {sorted(hors)}. "
+            f"Employer H_COMPACT, H_NORMAL ou H_PRINCIPAL.")
+
+    def test_echelle_ordonnee(self):
+        import app as module_app
+        assert (module_app.H_COMPACT < module_app.H_NORMAL
+                < module_app.H_PRINCIPAL), "l'échelle de hauteurs est incohérente"
+        assert module_app.H_COMPACT >= self.MINIMUM
+
+
+class TestEtatsVides:
+    """Un panneau vide doit EXPLIQUER, pas seulement constater.
+
+    « Aucune vidéo ne correspond. » dit ce qui manque, jamais pourquoi ni
+    comment y remédier — et c'est précisément le moment où l'utilisateur ne
+    sait pas quoi faire."""
+
+    def test_les_panneaux_les_plus_vus_emploient_la_forme_commune(self):
+        """Sept panneaux, dont les deux de l'onglet Vidéos."""
+        corps = TestEchelleDeSurfaces._corps()
+        assert corps.count("etat_vide(") >= 7, (
+            f"seulement {corps.count('etat_vide(')} états vides harmonisés")
+
+    def test_l_etat_vide_de_videos_est_affiche(self, app):
+        """Vérification par l'USAGE : on provoque un filtre sans résultat.
+
+        Compter les appels dans la source ne prouve rien — encore faut-il que
+        le chemin qui les contient soit atteint."""
+        base = "https://exemple.invalid/rest"
+        app.videos = [{"slug": "v0", "title": "Anatomie", "is_draft": False,
+                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
+                       "owner": "u", "date_added": "2026-01-01",
+                       "url": f"{base}/videos/v0/"}]
+        app.browse_chan_by_url = {}
+        app.type_map = {}
+        app._show_tab("browse")
+        app.browse_text.delete(0, "end")
+        app.browse_text.insert(0, "zzzzz_introuvable")
+        app._browse_do_filter()
+        app.update()
+        app.update_idletasks()
+        try:
+            textes = [w.cget("text") for w in app.browse_list.winfo_children()
+                      if hasattr(w, "cget")]
+            joint = " ".join(str(t) for t in textes)
+            assert "Aucune vidéo ne correspond" in joint, (
+                "l'état vide ne s'affiche pas")
+            assert "filtres" in joint or "recherche" in joint, (
+                f"l'état vide ne dit pas quoi faire : {joint}")
+        finally:
+            app.browse_text.delete(0, "end")
+            app._browse_do_filter()
+            app.update()
+
+    def test_l_aide_reste_facultative(self, app):
+        """Quand il n'y a réellement rien à faire, inventer une action serait
+        pire que rien : `etat_vide` doit accepter d'être appelée sans aide."""
+        import app as module_app
+        cadre = module_app.ctk.CTkFrame(app)
+        module_app.etat_vide(cadre, "📄", "Rien ici.")
+        app.update()
+        assert len(cadre.winfo_children()) == 2, (
+            "l'aide vide crée quand même une étiquette")
+        cadre.destroy()
+
+    def test_trois_widgets_au_maximum(self, app):
+        """Un état vide ne doit pas peser : il s'affiche dans des panneaux qui
+        en contiennent déjà beaucoup."""
+        import app as module_app
+        cadre = module_app.ctk.CTkFrame(app)
+        module_app.etat_vide(cadre, "📄", "Titre.", "Une aide.")
+        app.update()
+        assert len(cadre.winfo_children()) == 3
+        cadre.destroy()

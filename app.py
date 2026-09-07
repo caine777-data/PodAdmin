@@ -104,8 +104,12 @@ C_ACTION_SURV  = ("#1d4ed8", "#1d4ed8")
 # celui de son action propre. Le commentaire citait « Rafraîchir » en exemple
 # alors que les quatre boutons de ce nom sont neutres depuis la 1.5.2 : c'est
 # ainsi qu'un onglet ajouté plus tard aurait repris le bleu.
-C_SUCCES       = ("#15803d", "#16a34a")   # validation : Lancer, Enregistrer
-C_SUCCES_SURV  = ("#166534", "#15803d")
+# Le vert du mode sombre était plus clair que celui du mode clair, ce qui
+# ramenait le contraste du texte BLANC à 3,30 — sous le seuil AA. Les deux
+# modes emploient désormais la même teinte : un bouton d'action n'a pas besoin
+# de s'éclaircir en mode sombre, il porte déjà sa propre couleur.
+C_SUCCES       = ("#15803d", "#15803d")   # validation : Lancer, Enregistrer
+C_SUCCES_SURV  = ("#166534", "#166534")
 C_ALERTE       = ("#b45309", "#b45309")   # avertissement, interruption
 C_ALERTE_SURV  = ("#92400e", "#92400e")
 C_ERREUR       = ("#b91c1c", "#ef4444")   # échec, message d'erreur
@@ -195,14 +199,49 @@ STYLE_ZONE = {
 # — Couleurs de TEXTE ——————————————————————————————————————————————————
 # `gray` (3,93:1) passait sous le minimum de lisibilité WCAG AA (4,5:1) et
 # était pourtant la teinte secondaire la plus employée : 101 occurrences.
-T_SECONDAIRE   = ("gray45", "gray70")     # mesuré à 7,40:1 sur fond sombre
-T_DISCRET      = ("gray50", "gray60")     # mentions de bas de panneau
-T_SUCCES       = ("#15803d", "#22c55e")
-T_ALERTE       = ("#b45309", "#f59e0b")
-T_ERREUR       = ("#b91c1c", "#ef4444")
+# ⚠️ TEINTES DE TEXTE : le volet CLAIR a été mesuré, pas seulement déduit.
+#
+# Ces couleurs avaient été réglées à l'époque où le mode sombre était le seul
+# disponible ; le volet clair en avait été déduit à l'œil. Mesure faite selon
+# WCAG (seuil AA = 4,5:1 pour du texte normal), CINQ des sept teintes étaient
+# sous le seuil sur les fonds clairs de l'échelle de surfaces :
+#
+#     T_SECONDAIRE  gray45   → 3,28   T_SUCCES  #15803d → 3,46
+#     T_DISCRET     gray50   → 2,74   T_ALERTE  #b45309 → 3,46
+#                                     T_ERREUR  #b91c1c → 4,46
+#
+# Les valeurs ci-dessous sont calculées sur le PIRE fond de l'échelle, pas sur
+# un fond moyen : une mention lisible sur S_CARTE et illisible sur S_LIGNE
+# resterait un défaut.
+#
+# LE VOLET SOMBRE N'ÉTAIT PAS CONFORME NON PLUS, contrairement à ce que
+# l'audit annonçait : mesuré uniquement sur S_CARTE et S_BARRE, il passait ;
+# mesuré sur S_PUCE (gray26), T_ERREUR tombait à 2,66 et T_SUCCES à 4,39.
+#
+# ⚠️ Le pire fond est S_PUCE (gray84), pas S_CARTE. Une première correction
+# visait gray39, calculée en oubliant S_PUCE dans la liste : elle plafonnait à
+# 4,11. D'où le test automatique ci-dessous, qui parcourt TOUTE l'échelle —
+# c'est exactement le genre d'oubli qu'un calcul à la main reproduit.
+T_SECONDAIRE   = ("gray36", "gray70")     # 4,62 sur le pire fond clair
+T_DISCRET      = ("gray36", "gray70")     # 4,62 clair / 4,74 sombre
+T_SUCCES       = ("#166534", "#4ade80")   # 4,92 clair / 5,74 sombre
+T_ALERTE       = ("#92400e", "#f59e0b")   # 4,89 clair / 4,66 sombre
+T_ERREUR       = ("#991b1b", "#fca5a5")   # 5,73 clair / 5,27 sombre
 
 # — Tailles de police ——————————————————————————————————————————————————
 # Les tailles allaient de 9 à 26 px sans échelle. Cinq niveaux suffisent.
+# — Hauteurs de cibles cliquables ——————————————————————————————————————
+# Six hauteurs différentes cohabitaient (22, 24, 26, 28, 32, 40) sans qu'aucune
+# règle ne dise laquelle employer. Neuf boutons descendaient à 22 ou 24 px,
+# sous la cible minimale confortable — et c'étaient ceux des listes, donc les
+# plus souvent visés, dans les rangées les plus denses.
+#
+# Trois niveaux suffisent. Le niveau NORMAL vaut 28, qui est aussi le défaut de
+# CustomTkinter : les 81 boutons qui ne précisent rien s'y rangent déjà.
+H_COMPACT   = 26    # bouton d'une rangée de liste (icône seule, action répétée)
+H_NORMAL    = 28    # bouton courant
+H_PRINCIPAL = 40    # action principale d'un écran
+
 T_TITRE   = 20    # titre d'onglet
 T_SOUS    = 16    # titre de section
 T_CORPS   = 13    # texte courant
@@ -216,6 +255,154 @@ MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
 # Adresse du support, mise en COPIE CACHÉE des messages de délivrance de jeton :
 # cela garde une trace de l'envoi sans exposer l'adresse au destinataire.
 SUPPORT_MAIL = "support-pod@utoulouse.fr"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  ÉTATS VIDES
+# ════════════════════════════════════════════════════════════════════════════
+
+def etat_vide(parent, icone: str, titre: str, aide: str = "") -> None:
+    """Affiche un panneau vide qui EXPLIQUE au lieu de constater.
+
+    Un état vide est le moment où l'utilisateur ne sait pas quoi faire : c'est
+    précisément là qu'une ligne grise au centre d'un grand panneau — « Aucune
+    vidéo ne correspond. » — ne l'aide pas. Elle dit ce qui manque, jamais
+    pourquoi ni comment y remédier.
+
+    Trois éléments donc : une icône qui signale que l'écran fonctionne, une
+    phrase qui nomme la situation, et une aide qui indique le geste suivant.
+    L'aide est facultative — quand il n'y a réellement rien à faire (une liste
+    qui se remplira d'elle-même), en inventer une serait pire que rien.
+
+    Trois widgets au maximum, et un seul état vide est affiché à la fois :
+    l'effet sur le poids total de l'interface est négligeable.
+    """
+    ctk.CTkLabel(parent, text=icone, font=ctk.CTkFont(size=28),
+                 text_color=T_DISCRET).pack(pady=(28, 6))
+    ctk.CTkLabel(parent, text=titre, font=ctk.CTkFont(size=T_CORPS),
+                 text_color=T_SECONDAIRE, justify="center").pack()
+    if aide:
+        # 280 et non 360 : ces panneaux font environ 400 px de large, et un
+        # repli trop tardif rejetait le dernier mot seul sur sa ligne.
+        ctk.CTkLabel(parent, text=aide, font=ctk.CTkFont(size=T_MINI),
+                     text_color=T_DISCRET, justify="center",
+                     wraplength=280).pack(padx=12, pady=(4, 28))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  MESSAGES D'ERREUR
+# ════════════════════════════════════════════════════════════════════════════
+
+def _motif_lisible(corps: str) -> str:
+    """Extrait d'une réponse d'erreur le motif en clair.
+
+    Django REST renvoie ses refus en JSON — {"sites": ["Ce champ est
+    obligatoire."]} — parfois imbriqué. On en tire les phrases, en préfixant
+    par le nom du champ quand il est connu : « sites : Ce champ est
+    obligatoire. » est autrement plus utile que l'accolade brute.
+
+    En cas de doute, on renvoie le texte tel quel plutôt que rien : un motif
+    mal présenté vaut mieux qu'un motif perdu.
+    """
+    corps = (corps or "").strip()
+    if not corps:
+        return ""
+    try:
+        import json as _json
+        donnees = _json.loads(corps)
+    except Exception:
+        return corps.replace("\n", " ")[:160]
+
+    morceaux = []
+
+    def parcourir(valeur, champ=None):
+        if isinstance(valeur, dict):
+            for cle, sous in valeur.items():
+                parcourir(sous, cle)
+        elif isinstance(valeur, (list, tuple)):
+            for sous in valeur:
+                parcourir(sous, champ)
+        else:
+            texte = str(valeur).strip()
+            if texte:
+                # « detail » et « non_field_errors » sont des noms techniques
+                # de Django REST : les afficher n'apprendrait rien.
+                if champ and champ not in ("detail", "non_field_errors"):
+                    morceaux.append(f"{champ} : {texte}")
+                else:
+                    morceaux.append(texte)
+
+    parcourir(donnees)
+    return " ; ".join(morceaux)[:200]
+
+
+def message_utilisateur(e: Exception) -> str:
+    """Traduit une exception en une phrase compréhensible et ACTIONNABLE.
+
+    Vingt endroits affichaient l'exception telle quelle. Un collègue du support
+    pouvait lire :
+
+        ❌ HTTPSConnectionPool(host='videos.utoulouse.fr', port=443): Max
+           retries exceeded with url: /rest/videos/ (Caused by
+           NewConnectionError(...))
+
+    Ce texte ne dit ni ce qui s'est passé, ni quoi faire, et il inquiète. Le
+    détail technique n'est pas perdu pour autant : il part dans le Journal,
+    où il reste disponible pour le diagnostic et pour un signalement au
+    support.
+
+    La règle suivie ici : dire CE QUI S'EST PASSÉ, puis CE QU'ON PEUT FAIRE.
+    Un message qui ne propose rien laisse l'utilisateur bloqué.
+    """
+    texte = str(e) or e.__class__.__name__
+    statut = getattr(e, "status", 0) or 0
+
+    # — Erreurs de l'API Pod, reconnues par leur code HTTP —
+    if statut == 401:
+        return ("Jeton refusé par l'instance. Vérifiez-le dans l'onglet "
+                "Configuration, ou régénérez-en un.")
+    if statut == 403:
+        return ("Droits insuffisants pour cette opération. Un compte "
+                "superutilisateur est nécessaire.")
+    if statut == 404:
+        return ("Élément introuvable sur l'instance : il a peut-être été "
+                "supprimé entre-temps. Rafraîchissez la liste.")
+    if statut == 400:
+        # Le corps de réponse porte le motif exact du refus. Django REST le
+        # renvoie en JSON, sous la forme {"champ": ["motif", …]} : affiché
+        # brut, cela donne des accolades et des crochets au milieu d'une
+        # phrase. On en extrait le texte lisible.
+        detail = _motif_lisible(getattr(e, "body", ""))
+        if detail:
+            return f"Requête refusée : {detail}"
+        return "Requête refusée par l'instance (donnée invalide ou manquante)."
+    if statut == 409:
+        return ("Opération refusée : l'élément est utilisé ailleurs, ou une "
+                "autre modification l'a précédée.")
+    if statut and 500 <= statut < 600:
+        return ("L'instance Pod rencontre une difficulté (erreur serveur). "
+                "Réessayez dans quelques minutes ; si cela persiste, "
+                "prévenez la DSI.")
+
+    # — Erreurs réseau, reconnues sur le texte : les classes exactes varient
+    #   selon que l'appel est passé par requests ou par urllib. —
+    bas = texte.lower()
+    if any(m in bas for m in ("max retries", "connection", "connexion",
+                              "nameresolution", "getaddrinfo", "unreachable")):
+        return ("Instance injoignable. Vérifiez votre connexion réseau et "
+                "l'URL saisie dans l'onglet Configuration.")
+    if any(m in bas for m in ("timeout", "timed out", "délai")):
+        return ("L'instance met trop de temps à répondre. Réessayez ; sur un "
+                "gros fichier, l'opération peut être longue.")
+    if any(m in bas for m in ("certificate", "ssl", "certificat")):
+        return ("Certificat de sécurité refusé. Signalez-le à la DSI plutôt "
+                "que de contourner la vérification.")
+    if "fichier introuvable" in bas:
+        return texte          # déjà clair, et il nomme le fichier
+
+    # — Cas non reconnu : on reste honnête plutôt que d'inventer une cause —
+    court = texte if len(texte) <= 140 else texte[:140] + "…"
+    return f"Échec de l'opération : {court}  (détail dans l'onglet Journal)"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1881,9 +2068,7 @@ class App(_AppBase):
                      text_color=T_SUCCES)
             self._auto_loaded.add("nomen")
         except Exception as e:
-            self._ui(self.nomen_statut.configure, text=f"❌  {e}",
-                     text_color=T_ALERTE)
-            self._log(f"Types & disciplines : {e}")
+            self._signaler(self.nomen_statut, e, "Types & disciplines")
 
     def _nomen_render(self):
         """Redessine les deux listes."""
@@ -1895,8 +2080,8 @@ class App(_AppBase):
             n = self.nomen_compte_videos.get(str(t.get("url", "")).rstrip("/"), 0)
             self._nomen_ligne(self.nomen_types_liste, t, n, "type")
         if not self.nomen_types:
-            ctk.CTkLabel(self.nomen_types_liste, text="Aucun type.",
-                         text_color=T_SECONDAIRE).pack(pady=20)
+            etat_vide(self.nomen_types_liste, "🏷️", "Aucun type.",
+                      "Créez-en un ci-dessous : chaque vidéo doit en porter un.")
 
         for d in self.nomen_disciplines:
             self._nomen_ligne(self.nomen_disc_liste, d, None, "discipline")
@@ -1923,7 +2108,7 @@ class App(_AppBase):
                          text_color=T_ALERTE if nb_videos else T_SECONDAIRE).pack(
                 side="left", padx=6)
 
-        btn_r = ctk.CTkButton(row, text="✏", width=32, height=24,
+        btn_r = ctk.CTkButton(row, text="✏", width=32, height=H_COMPACT,
                               fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                               text_color=T_SUR_NEUTRE,
                               command=lambda o=obj, g=genre: self._nomen_renommer(o, g))
@@ -1932,7 +2117,7 @@ class App(_AppBase):
 
         # Poubelle neutre, rouge AU SURVOL : même convention que partout
         # ailleurs, l'action étant répétée sur chaque ligne.
-        btn_s = ctk.CTkButton(row, text="🗑", width=32, height=24,
+        btn_s = ctk.CTkButton(row, text="🗑", width=32, height=H_COMPACT,
                               fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
                               text_color=T_SUR_NEUTRE,
                               command=lambda o=obj, g=genre, n=nb_videos:
@@ -1987,9 +2172,7 @@ class App(_AppBase):
             if genre == "type":
                 self._ui(self._nomen_rafraichir_menus_type)
         except Exception as e:
-            self._ui(self.nomen_statut.configure, text=f"❌  {e}",
-                     text_color=T_ALERTE)
-            self._log(f"Création {genre} : {e}")
+            self._signaler(self.nomen_statut, e, f"Création {genre}")
 
     def _nomen_vider_champs(self):
         self.nomen_type_titre.delete(0, "end")
@@ -2239,15 +2422,16 @@ class App(_AppBase):
                      text=f"{len(self.access_groups)} groupe(s).", text_color=T_SECONDAIRE)
             self._ui(self._render_groups_list)
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.groups_status, e)
 
     def _render_groups_list(self):
         """Affiche une ligne par groupe (manuel = modifiable, SSO = verrouillé)."""
         for w in self.groups_list.winfo_children():
             w.destroy()
         if not self.access_groups:
-            ctk.CTkLabel(self.groups_list, text="Aucun groupe. Cliquez sur « Recharger ».",
-                         text_color=T_SECONDAIRE).pack(anchor="w", padx=8, pady=8)
+            etat_vide(self.groups_list, "🔐", "Aucun groupe d'accès.",
+                      "Cliquez « Recharger ». Les groupes se créent dans "
+                      "l'administration Django de l'instance.")
             return
         for g in self.access_groups:
             manual = self._is_manual_group(g)
@@ -2330,7 +2514,7 @@ class App(_AppBase):
             self._ui(self._log, f"Groupe d'accès créé : {code}")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.groups_status, e)
             self._ui(self._log, f"❌ Création groupe {code} : {e}")
 
     # — Suppression d'un groupe manuel —
@@ -2353,7 +2537,7 @@ class App(_AppBase):
             self._ui(self._log, f"Groupe d'accès supprimé : {g.get('code_name')}")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.groups_status, e)
             self._ui(self._log, f"❌ Suppression groupe : {e}")
 
     # — Gestion des membres d'un groupe manuel —
@@ -2421,7 +2605,7 @@ class App(_AppBase):
                      f"Groupe « {g.get('code_name')} » : {len(owner_urls)} membre·s définis.")
             self._do_groups_reload()
         except Exception as e:
-            self._ui(self.groups_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.groups_status, e)
             self._ui(self._log, f"❌ Membres groupe « {g.get('code_name')} » : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -3305,7 +3489,7 @@ class App(_AppBase):
                          text_color=T_SUCCES)
                 self._ui(self._log, f"Encodage : {len(videos)} vidéos scannées.")
         except Exception as e:
-            self._ui(self.encode_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.encode_status, e)
             self._ui(self._log, f"❌ Scan encodage : {e}")
 
     # ── Rendu (compteurs + liste filtrée) ───────────────────────────────────
@@ -3348,8 +3532,8 @@ class App(_AppBase):
         self.encode_relaunch_btn.configure(state="normal" if (vids and relaunchable) else "disabled")
 
         if not vids:
-            ctk.CTkLabel(self.encode_list, text="Aucune vidéo dans cet état.",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            etat_vide(self.encode_list, "🎬", "Aucune vidéo dans cet état.",
+                      "Changez de filtre d'état, ou rafraîchissez la liste.")
             return
 
         # Une ligne par vidéo : [pastille état] titre · slug · étape  [Relancer]
@@ -3507,9 +3691,8 @@ class App(_AppBase):
             w.destroy()
 
         if not self.all_users:
-            ctk.CTkLabel(self.comptes_results,
-                         text="Liste non chargée. Connectez-vous puis cliquez sur « Recharger ».",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            etat_vide(self.comptes_results, "👤", "Liste non chargée.",
+                      "Connectez-vous, puis cliquez sur « Recharger ».")
             self.comptes_count_lbl.configure(text="")
             return
 
@@ -3766,7 +3949,7 @@ class App(_AppBase):
         # « Tout sélectionner » porte sur TOUTES les vidéos filtrées, y compris
         # celles qui ne sont pas affichées : l'affichage est plafonné à 300
         # lignes pour rester fluide, mais la sélection ne l'est pas.
-        ctk.CTkButton(entete, text="☑ Tout sélectionner", width=140, height=24,
+        ctk.CTkButton(entete, text="☑ Tout sélectionner", width=140, height=H_COMPACT,
                       font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
                       hover_color=C_NEUTRE_SURV,
                       command=self._browse_tout_selectionner, text_color=T_SUR_NEUTRE).grid(row=0, column=1, padx=4)
@@ -3842,7 +4025,7 @@ class App(_AppBase):
                      force=getattr(self, "_browse_force_reload", False),
                      progress_cb=prog)
         except Exception as e:
-            self._ui(self.browse_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.browse_status, e)
             self._ui(self._log, f"❌ Chargement explorateur : {e}")
 
     def _browse_after_videos(self):
@@ -3996,8 +4179,9 @@ class App(_AppBase):
         self._maj_bouton_masse()
 
         if not self.browse_filtered:
-            ctk.CTkLabel(self.browse_list, text="Aucune vidéo ne correspond.",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            etat_vide(self.browse_list, "🔍", "Aucune vidéo ne correspond.",
+                      "Élargissez la recherche, ou remettez les filtres sur "
+                      "« Tous » et « Toutes ».")
             return
 
         CAP = 300
@@ -4577,9 +4761,12 @@ class App(_AppBase):
             w.destroy()
         v = self.browse_selected
         if not v:
-            ctk.CTkLabel(self.browse_detail,
-                         text="Sélectionnez une vidéo dans la liste pour l'éditer.",
-                         text_color=T_SECONDAIRE).pack(pady=14)
+            # Ce panneau-ci n'est pas vide par manque de données : il attend
+            # un geste. L'aide décrit donc ce que le clic apportera, plutôt
+            # que de répéter l'invitation.
+            etat_vide(self.browse_detail, "👈", "Sélectionnez une vidéo.",
+                      "Titre, statut, chaînes, co-propriétaires et sous-titres "
+                      "s'afficheront ici.")
             return
 
         slug = v.get("slug", "?")
@@ -5849,7 +6036,7 @@ class App(_AppBase):
                      f"Aperçu réaffectation : {len(mine)} vidéo(s) pour "
                      f"{self.reassign_source.get('username')} (sur {len(videos)} au total).")
         except Exception as e:
-            self._ui(self.reassign_progress.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.reassign_progress, e)
             self._ui(self._log, f"❌ Erreur aperçu réaffectation : {e}")
 
     def _render_reassign_preview(self):
@@ -5861,9 +6048,11 @@ class App(_AppBase):
         self.reassign_rowlbls = {}
 
         if not self.reassign_videos:
-            ctk.CTkLabel(self.reassign_results,
-                         text="Aucune vidéo trouvée pour ce compte.",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            etat_vide(self.reassign_results, "🔄",
+                      "Aucune vidéo pour ce compte.",
+                      "Vérifiez le compte choisi : les vidéos peuvent "
+                      "appartenir au compte véhicule après un dépôt en "
+                      "morceaux.")
             self.reassign_progress.configure(text="0 vidéo.", text_color=T_SECONDAIRE)
             self.reassign_apply_btn.configure(state="disabled")
             return
@@ -5871,9 +6060,9 @@ class App(_AppBase):
         # En-tête : (dé)sélection globale
         head = ctk.CTkFrame(self.reassign_results, fg_color="transparent")
         head.pack(fill="x", pady=(0, 4))
-        ctk.CTkButton(head, text="Tout cocher", width=100, height=24, fg_color=C_NEUTRE,
+        ctk.CTkButton(head, text="Tout cocher", width=100, height=H_COMPACT, fg_color=C_NEUTRE,
                       command=lambda: self._reassign_check_all(True), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
-        ctk.CTkButton(head, text="Tout décocher", width=110, height=24, fg_color=C_NEUTRE,
+        ctk.CTkButton(head, text="Tout décocher", width=110, height=H_COMPACT, fg_color=C_NEUTRE,
                       command=lambda: self._reassign_check_all(False), text_color=T_SUR_NEUTRE).pack(side="left", padx=2)
 
         # Une ligne par vidéo : [case] titre · slug … [statut ✔/✗]
@@ -6216,7 +6405,7 @@ class App(_AppBase):
             self._ui(self._log,
                      alerte if alerte else f"Inventaire : {len(videos)} vidéos analysées.")
         except Exception as e:
-            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.stats_status, e)
             self._ui(self._log, f"❌ Inventaire : {e}")
 
     @staticmethod
@@ -6656,7 +6845,7 @@ class App(_AppBase):
                      text=f"✅  Exporté : {os.path.basename(path)}", text_color=T_SUCCES)
             self._ui(self._log, f"Inventaire exporté → {path}")
         except Exception as e:
-            self._ui(self.stats_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.stats_status, e)
             self._ui(self._log, f"❌ Export inventaire : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -6766,7 +6955,7 @@ class App(_AppBase):
                           f"{self._loaded_stamp()}",
                      text_color=T_SUCCES)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Chargement chaînes/thèmes : {e}")
 
     def _refresh_ct_channel_menu(self):
@@ -6787,9 +6976,8 @@ class App(_AppBase):
             w.destroy()
 
         if not self.ct_channels:
-            ctk.CTkLabel(self.ct_list,
-                         text="Aucune chaîne. Cliquez « Charger » ou créez-en une ci-dessous.",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            etat_vide(self.ct_list, "📺", "Aucune chaîne.",
+                      "Cliquez « Rafraîchir », ou créez-en une ci-dessous.")
             return
 
         # Regrouper les thèmes par URL de chaîne (champ `channel` du thème)
@@ -6857,17 +7045,17 @@ class App(_AppBase):
                 ctk.CTkLabel(trow, text=f"└  {t.get('title', '(sans titre)')}",
                              anchor="w", font=ctk.CTkFont(size=12)).pack(
                     side="left", padx=6, pady=2, fill="x", expand=True)
-                ctk.CTkButton(trow, text="✏", width=34, height=24,
+                ctk.CTkButton(trow, text="✏", width=34, height=H_COMPACT,
                               fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                               text_color=T_SUR_NEUTRE,
                               command=lambda th=t: self._ct_rename_theme(th)).pack(side="left", padx=2)
-                ctk.CTkButton(trow, text="🎨", width=34, height=24, fg_color=C_ACCENT,
+                ctk.CTkButton(trow, text="🎨", width=34, height=H_COMPACT, fg_color=C_ACCENT,
                               hover_color=C_ACCENT_SURV,
                               command=lambda th=t: self._ct_habillage(th, "theme")).pack(
                     side="left", padx=2)
                 ctk.CTkFrame(trow, width=1, height=18,
                              fg_color=S_PUCE).pack(side="left", padx=6)
-                btn_t = ctk.CTkButton(trow, text="🗑", width=32, height=24,
+                btn_t = ctk.CTkButton(trow, text="🗑", width=32, height=H_COMPACT,
                                       font=ctk.CTkFont(size=T_PETIT),
                                       fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
                                       text_color=T_SUR_NEUTRE,
@@ -6895,7 +7083,7 @@ class App(_AppBase):
             self._ui(self._ct_clear_new_channel)
             self._do_ct_load()      # recharge (on est déjà dans un thread)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Création chaîne : {e}")
 
     def _ct_clear_new_channel(self):
@@ -6924,7 +7112,7 @@ class App(_AppBase):
             self._ui(lambda: self.ct_new_theme_title.delete(0, "end"))
             self._do_ct_load()
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Création thème : {e}")
 
     # ── Modification ───────────────────────────────────────────────────────
@@ -7156,7 +7344,7 @@ class App(_AppBase):
                 # Pas de thème : on va directement au sélecteur de la chaîne entière
                 self._ui(lambda: self._ct_open_channel_picker(ch))
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Chargement vidéos (chaîne) : {e}")
 
     def _ct_organizer_dialog(self, ch, themes):
@@ -7426,7 +7614,7 @@ class App(_AppBase):
                      f"Chaîne « {ch.get('title')} » : {len(urls)} administrateur(s) défini(s).")
             self._ui(self._render_ct)      # refléter le changement dans la liste
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Administrateurs « {ch.get('title')} » : {e}")
 
     def _ct_manage_groups(self, ch):
@@ -7480,7 +7668,7 @@ class App(_AppBase):
                      text=f"{len(vids)} vidéo(s) dans la chaîne.", text_color=T_SECONDAIRE)
             self._ui(lambda: self._ct_groups_dialog(ch, common, counts, len(vids)))
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Lecture restrictions chaîne : {e}")
 
     def _ct_groups_dialog(self, ch, current_norm, counts=None, nb_videos=0):
@@ -7609,7 +7797,7 @@ class App(_AppBase):
                      f"{len(group_urls)} groupe(s).")
             self._ui(self._render_ct)  # refléter le changement dans la liste
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Restriction chaîne : {e}")
 
     def _ct_toggle_visible(self, ch):
@@ -7631,7 +7819,7 @@ class App(_AppBase):
             # Les autres onglets affichent des noms de chaîne : les rafraîchir.
             self._ui(self.schedule_refresh, channels=True)
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Modification {kind} : {e}")
 
     # ── Suppression (double confirmation) ──────────────────────────────────
@@ -7667,7 +7855,7 @@ class App(_AppBase):
             self._ui(self._log, f"{kind.capitalize()} supprimé(e) : {label}")
             self._do_ct_load()
         except Exception as e:
-            self._ui(self.ct_status.configure, text=f"❌  {e}", text_color=T_ERREUR)
+            self._signaler(self.ct_status, e)
             self._ui(self._log, f"❌ Suppression {kind} : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -8065,6 +8253,30 @@ class App(_AppBase):
         self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
         self._log("Application démarrée.")
+
+    def _signaler(self, widget, e: Exception, contexte: str = ""):
+        """Affiche une erreur COMPRÉHENSIBLE et journalise le DÉTAIL technique.
+
+        Un seul appel pour les deux, afin qu'on ne puisse plus faire l'un sans
+        l'autre : vingt endroits affichaient l'exception brute à l'écran, et
+        certains ne la journalisaient nulle part — le détail était alors perdu
+        pour de bon, y compris pour le support.
+
+        Sûre depuis un thread : l'affichage passe par `_ui`.
+        """
+        try:
+            self._ui(widget.configure, text=f"❌  {message_utilisateur(e)}",
+                     text_color=T_ERREUR)
+        except Exception:
+            pass
+        detail = f"{e.__class__.__name__}: {e}"
+        statut = getattr(e, "status", 0)
+        if statut:
+            detail += f"  [HTTP {statut}]"
+        corps = (getattr(e, "body", "") or "").strip().replace("\n", " ")
+        if corps:
+            detail += f"  corps={corps[:300]}"
+        self._log(f"{contexte + ' : ' if contexte else ''}{detail}")
 
     def _log(self, msg: str):
         """Ajoute une ligne horodatée au journal (écran ET fichier)."""
@@ -8792,7 +9004,7 @@ class BannerPicker(ctk.CTkToplevel):
             ctk.CTkLabel(case, text=(("✅ " if actuelle else "") + nom[:22]),
                          font=ctk.CTkFont(size=10),
                          text_color=(T_SUCCES if actuelle else T_SECONDAIRE)).pack()
-            ctk.CTkButton(case, text="Choisir", height=22, width=140,
+            ctk.CTkButton(case, text="Choisir", height=H_COMPACT, width=140,
                           font=ctk.CTkFont(size=11), fg_color=C_ACTION, hover_color=C_ACTION_SURV,
                           command=lambda u=img.get("url", ""): self._choisir(u)).pack(pady=(2, 6))
 

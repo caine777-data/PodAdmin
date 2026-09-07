@@ -203,6 +203,63 @@ Le renommage des disciplines, lui, a été confirmé (PATCH accepté, valeur rel
 
 ---
 
+## États vides
+
+Un panneau vide **explique**, il ne se contente pas de constater. « Aucune
+vidéo ne correspond. » dit ce qui manque, jamais pourquoi ni comment y
+remédier — et c'est précisément le moment où l'utilisateur ne sait pas quoi
+faire.
+
+`etat_vide(parent, icône, titre, aide)` pose la forme commune : une icône, une
+phrase qui nomme la situation, une aide qui indique le geste suivant. Sept
+panneaux l'emploient, dont les deux de l'onglet Vidéos.
+
+⚠️ **L'aide est facultative, et doit le rester.** Quand il n'y a réellement
+rien à faire — une liste qui se remplira d'elle-même — en inventer une serait
+pire que rien.
+
+---
+
+## Messages d'erreur
+
+⚠️ **Une exception ne s'affiche jamais telle quelle.** Vingt endroits faisaient
+`text=f"❌  {e}"` : un collègue du support pouvait lire
+« HTTPSConnectionPool(host=…): Max retries exceeded with url… », qui ne dit ni
+ce qui s'est passé, ni quoi faire.
+
+`message_utilisateur(e)` traduit les cas connus — pas de réseau, jeton refusé,
+droits insuffisants, ressource absente, serveur en difficulté, délai dépassé,
+certificat — en une phrase **actionnable**. Pour un refus HTTP 400, le motif
+est extrait du JSON de Django REST : « sites : Ce champ est obligatoire. »
+plutôt que l'accolade brute.
+
+`self._signaler(widget, e, contexte)` fait l'affichage **et** la journalisation
+en un seul appel, pour qu'on ne puisse plus faire l'un sans l'autre : le détail
+technique (classe, code HTTP, corps de réponse) part au **Journal**, où il
+reste disponible pour le support. Sept tests couvrent la traduction
+(`TestMessagesDErreur`).
+
+---
+
+## Accessibilité
+
+Toute teinte de texte atteint **4,5:1** (WCAG 2.1 AA) sur **toute** l'échelle de
+surfaces et dans les **deux** modes. Deux tests le calculent
+(`TestContrastesAccessibilite`) et lisent les surfaces depuis le module, de
+sorte qu'une surface ajoutée plus tard soit couverte automatiquement.
+
+⚠️ Ces teintes avaient été réglées quand le mode sombre était le seul
+disponible. Cinq des sept étaient sous le seuil en clair — et trois l'étaient
+aussi en sombre, ce qu'un examen visuel n'avait pas vu. **Un contraste se
+calcule, il ne s'apprécie pas à l'œil.**
+
+**Hauteurs de cibles** — trois niveaux : `H_COMPACT` (26, rangée de liste),
+`H_NORMAL` (28, courant, aussi le défaut CustomTkinter), `H_PRINCIPAL` (40).
+Rien en dessous de 26 px : les boutons de liste, les plus souvent visés,
+descendaient à 22.
+
+---
+
 ## Conventions visuelles
 
 Deux échelles, à respecter pour toute nouvelle interface.
@@ -310,7 +367,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.5.9**
+Version : **1.6.2**
 
 ---
 

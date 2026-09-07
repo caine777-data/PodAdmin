@@ -1,6 +1,6 @@
 {
-  "version": "1.5.9",
+  "version": "1.6.2",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Correction de la selection multiple (Ctrl+clic et Maj+clic) dans l'onglet Videos.",
+  "notes": "Les panneaux vides expliquent desormais quoi faire.",
   "version_minimale": ""
 }

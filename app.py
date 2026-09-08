@@ -7364,6 +7364,24 @@ class App(_AppBase):
                                                                    rafraichir_couleur), text_color=T_SUR_NEUTRE).pack(side="left")
             ligne += 1
 
+            # Couleur enregistrée SANS dièse : elle est sans effet, et rien ne
+            # le disait. Les chaînes réglées avant la correction sont dans ce
+            # cas ; un simple enregistrement depuis cette fenêtre les répare,
+            # mais encore faut-il savoir qu'il y a quelque chose à réparer.
+            couleur_brute = (element.get("color") or "").strip()
+            if couleur_brute and not couleur_brute.startswith("#"):
+                # Message COURT : deux tentatives d'ajustement du repli n'ont
+                # pas suffi, le cadre étant plus étroit qu'il n'y paraît. Un
+                # texte bref tient de toute façon mieux qu'un paragraphe
+                # calibré au pixel — et se lit plus vite.
+                ctk.CTkLabel(
+                    corps, anchor="w", justify="left", wraplength=340,
+                    font=ctk.CTkFont(size=T_MINI), text_color=T_ALERTE,
+                    text="⚠️  Sans dièse : sans effet sur le site.\n"
+                         "Enregistrez pour corriger."
+                ).grid(row=ligne, column=1, sticky="w", padx=(0, 8), pady=(0, 6))
+                ligne += 1
+
         # — Bannière —
         ctk.CTkLabel(corps, text="Bannière :", width=110, anchor="e").grid(
             row=ligne, column=0, padx=8, pady=8)
@@ -7420,14 +7438,24 @@ class App(_AppBase):
                 msg.configure(text="Le titre ne peut pas être vide.", text_color=T_ALERTE)
                 return
             if est_chaine:
+                # Le champ accepte les deux écritures : on retire un éventuel
+                # dièse pour la validation…
                 coul = (couleur_entry.get() or "").strip().lstrip("#")
                 if coul and not (len(coul) in (3, 6)
                                  and all(c in "0123456789abcdefABCDEF" for c in coul)):
                     msg.configure(
                         text="Couleur invalide : attendu 3 ou 6 caractères hexadécimaux "
-                             "(ex. 223333).", text_color=T_ALERTE)
+                             "(ex. #223333).", text_color=T_ALERTE)
                     return
-                payload["color"] = coul
+                # …mais on ENVOIE avec le dièse.
+                #
+                # ⚠️ PodAdmin l'envoyait sans, et la couleur n'avait alors
+                # AUCUN effet : Pod insère la valeur telle quelle dans une
+                # règle CSS, et « background-color: 223333 » est invalide — le
+                # navigateur l'ignore en silence, sans la moindre erreur.
+                # Vérifié : la même chaîne enregistrée « #223333 » depuis
+                # l'administration Django applique bien la couleur.
+                payload["color"] = f"#{coul}" if coul else ""
                 payload["visible"] = bool(visible_var.get())
             msg.configure(text="⏳ Enregistrement…", text_color=T_SECONDAIRE)
             self._run(self._do_ct_habillage, element, genre, payload, win, msg)

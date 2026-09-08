@@ -1058,3 +1058,53 @@ class TestBannieres:
         assert "mktemp" in source, (
             "l'adaptation doit écrire dans un fichier temporaire, jamais "
             "écraser l'original de l'utilisateur")
+
+
+class TestCouleurDeChaine:
+    """⚠️ La couleur d'une chaîne doit être envoyée AVEC le dièse.
+
+    PodAdmin faisait `lstrip("#")` puis envoyait « 223333 ». Pod insère la
+    valeur telle quelle dans une règle CSS, où « background-color: 223333 » est
+    invalide : le navigateur l'ignore en silence. Le réglage semblait donc ne
+    servir à rien.
+
+    Vérifié sur l'instance : la même chaîne enregistrée « #223333 » depuis
+    l'administration Django applique bien la couleur."""
+
+    def test_la_couleur_est_envoyee_avec_le_diese(self):
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._ct_habillage)
+        assert 'payload["color"] = f"#{coul}"' in source, (
+            "la couleur est envoyée sans dièse : elle sera sans effet")
+
+    def test_le_champ_accepte_les_deux_ecritures(self):
+        """L'utilisateur peut taper « 223333 » ou « #223333 » : c'est à
+        l'application de normaliser, pas à lui de deviner."""
+        for saisie, attendu in (("223333", "#223333"), ("#223333", "#223333"),
+                                ("  #ABC  ", "#ABC"), ("", "")):
+            nettoye = saisie.strip().lstrip("#")
+            envoye = f"#{nettoye}" if nettoye else ""
+            assert envoye == attendu, f"{saisie!r} → {envoye!r}, attendu {attendu!r}"
+
+    def test_une_couleur_deja_enregistree_sans_diese_est_signalee(self):
+        """Les chaînes réglées avant la correction restent inopérantes : un
+        simple enregistrement les répare, encore faut-il le savoir."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._ct_habillage)
+        assert 'startswith("#")' in source, (
+            "aucun contrôle de la couleur déjà enregistrée")
+        assert "Sans dièse" in source, "l'avertissement n'est pas affiché"
+
+    def test_la_validation_reste_stricte(self):
+        """Ajouter le dièse ne doit pas relâcher le contrôle du format."""
+        for valeur, valide in (("223333", True), ("abc", True), ("ABCDEF", True),
+                               ("12345", False), ("gggggg", False),
+                               ("2233333", False)):
+            nettoye = valeur.strip().lstrip("#")
+            ok = (len(nettoye) in (3, 6)
+                  and all(c in "0123456789abcdefABCDEF" for c in nettoye))
+            assert ok == valide, f"{valeur!r} jugé {ok}, attendu {valide}"

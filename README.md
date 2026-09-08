@@ -223,6 +223,27 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Couleur d'une chaîne
+
+⚠️ **La couleur doit être envoyée AVEC le dièse.** PodAdmin faisait
+`lstrip("#")` et envoyait « 223333 ». Pod insère la valeur telle quelle dans une
+règle CSS, où `background-color: 223333` est **invalide** : le navigateur
+l'ignore en silence. Le réglage semblait donc sans effet, sans la moindre
+erreur nulle part.
+
+Vérifié sur l'instance : la même chaîne enregistrée `#223333` depuis
+l'administration Django applique bien la couleur.
+
+Le champ accepte les deux écritures à la saisie — c'est à l'application de
+normaliser. Et une chaîne dont la couleur est **déjà** enregistrée sans dièse
+est signalée à l'ouverture : un simple enregistrement la répare, encore
+faut-il savoir qu'il y a quelque chose à réparer.
+
+Le champ **« Style supplémentaire »** (CSS libre) n'est volontairement pas
+exposé : une erreur de syntaxe casserait l'affichage public de la chaîne.
+
+---
+
 ## Bannières de chaîne
 
 ⚠️ Pod affiche la bannière sur **toute la largeur**, et pas seulement sur la
@@ -429,7 +450,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.5**
+Version : **1.6.6**
 
 ---
 

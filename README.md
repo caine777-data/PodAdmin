@@ -223,6 +223,30 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Bannières de chaîne
+
+⚠️ Pod affiche la bannière sur **toute la largeur**, et pas seulement sur la
+page de la chaîne : elle apparaît au-dessus de **chaque vidéo**. Un logo de
+606×595 y occupe environ **1 178 px de haut** sur un écran de 1200 — il faut
+faire défiler pour atteindre le lecteur. Le problème est connu du projet
+Esup-Pod (discussion #785), qui recommande d'orienter les propriétaires vers un
+format plus ergonomique.
+
+Au dépôt d'une image, PodAdmin mesure et annonce la hauteur qu'elle occupera
+réellement, puis propose `adapter_en_banniere` : format 1600×400, image
+redimensionnée à la hauteur et **centrée** sur un fond repris de son coin
+supérieur gauche. Ni déformation, ni rognage — un logo carré perdrait les trois
+quarts de sa surface s'il était rogné.
+
+⚠️ **La case n'est cochée que si l'image en a besoin** (rapport L/H inférieur à
+`BANNIERE_RAPPORT_MINI`). Adapter une image déjà large la **dégraderait** : un
+3000×500 passerait de 200 à 300 px de haut.
+
+⚠️ L'adaptation écrit dans un fichier **temporaire**, supprimé dans un
+`finally`. L'original de l'utilisateur n'est jamais modifié.
+
+---
+
 ## Raccourcis clavier
 
 Fenêtre principale : `Ctrl+F` (champ de recherche de l'onglet), `F5` (relecture
@@ -405,7 +429,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.4**
+Version : **1.6.5**
 
 ---
 

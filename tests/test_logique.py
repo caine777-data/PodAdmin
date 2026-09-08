@@ -956,3 +956,105 @@ class TestMessagesDErreur:
         assert "self._log(" in source, (
             "`_signaler` n'écrit pas dans le Journal : le détail serait perdu")
         assert "body" in source, "le corps de la réponse n'est pas journalisé"
+
+
+class TestBannieres:
+    """Une bannière presque carrée occupe plus d'un écran de haut.
+
+    Pod affiche la bannière d'une chaîne sur TOUTE LA LARGEUR, et pas seulement
+    sur la page de la chaîne : elle apparaît au-dessus de CHAQUE vidéo. Un logo
+    de 606×595 y occupe environ 1 178 px de haut sur un écran de 1200 — il faut
+    faire défiler pour atteindre le lecteur. Le problème est connu du projet
+    Esup-Pod, qui recommande d'orienter les propriétaires vers un format plus
+    ergonomique."""
+
+    def _image(self, taille, mode="RGB"):
+        import tempfile
+        from PIL import Image
+        chemin = tempfile.mktemp(suffix=".png")
+        couleur = 200 if mode == "L" else (255, 255, 255)
+        Image.new(mode, taille, couleur).save(chemin)
+        return chemin
+
+    def test_le_chiffre_parlant_est_la_hauteur_a_l_ecran(self):
+        """« 606×595 » n'alarme personne, « 1178 px de haut » si."""
+        import app as module_app
+        assert module_app.hauteur_affichee(606, 595) == 1178
+        assert module_app.hauteur_affichee(1600, 400) == 300
+
+    def test_l_adaptation_ramene_au_format_vise(self):
+        import os
+        import tempfile
+
+        import app as module_app
+        for taille in ((606, 595), (300, 900), (3000, 500), (20, 20)):
+            src = self._image(taille)
+            out = tempfile.mktemp(suffix=".jpg")
+            try:
+                assert module_app.adapter_en_banniere(src, out) == (
+                    module_app.BANNIERE_LARGEUR, module_app.BANNIERE_HAUTEUR)
+            finally:
+                for f in (src, out):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+
+    def test_les_modes_exotiques_passent(self):
+        """Niveaux de gris et transparence ne doivent pas faire échouer le
+        dépôt : l'utilisateur choisit l'image qu'il a."""
+        import os
+        import tempfile
+
+        import app as module_app
+        for mode in ("L", "RGBA", "P"):
+            src = self._image((400, 400), mode)
+            out = tempfile.mktemp(suffix=".jpg")
+            try:
+                module_app.adapter_en_banniere(src, out)
+                assert os.path.getsize(out) > 0
+            finally:
+                for f in (src, out):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+
+    def test_l_image_source_n_est_jamais_modifiee(self):
+        """L'original de l'utilisateur doit être retrouvé intact."""
+        import os
+
+        import app as module_app
+        src = self._image((606, 595))
+        avant = open(src, "rb").read()
+        out = src.replace(".png", "_out.jpg")
+        try:
+            module_app.adapter_en_banniere(src, out)
+            assert open(src, "rb").read() == avant, "l'image source a été modifiée"
+        finally:
+            for f in (src, out):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+
+    def test_le_seuil_epargne_les_images_deja_larges(self):
+        """⚠️ Adapter une image DÉJÀ large la dégraderait : un 3000×500 passe
+        de 200 px à 300 px de haut. Le seuil doit donc gouverner la
+        proposition, pas seulement l'avertissement."""
+        import app as module_app
+        assert 3000 / 500 >= module_app.BANNIERE_RAPPORT_MINI
+        assert 606 / 595 < module_app.BANNIERE_RAPPORT_MINI
+        assert 300 / 900 < module_app.BANNIERE_RAPPORT_MINI
+
+    def test_le_fichier_temporaire_est_nettoye(self):
+        """Sans le `finally`, chaque dépôt laisserait un fichier derrière lui."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.BannerPicker._deposer)
+        assert "finally:" in source and "remove(temporaire)" in source, (
+            "le fichier temporaire d'adaptation n'est pas supprimé")
+        assert "mktemp" in source, (
+            "l'adaptation doit écrire dans un fichier temporaire, jamais "
+            "écraser l'original de l'utilisateur")

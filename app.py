@@ -258,6 +258,80 @@ SUPPORT_MAIL = "support-pod@utoulouse.fr"
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  BANNIÈRES DE CHAÎNE
+# ════════════════════════════════════════════════════════════════════════════
+
+# Format visé pour une bannière : large et basse.
+BANNIERE_LARGEUR = 1600
+BANNIERE_HAUTEUR = 400
+# En deçà de ce rapport largeur/hauteur, l'image est jugée trop haute pour
+# servir de bannière. 2,5 laisse passer un 16:9 (1,78 → non, il est corrigé)…
+# non : 16:9 vaut 1,78 et sera donc proposé à l'adaptation, ce qui est voulu —
+# une photo 16:9 en pleine largeur occupe déjà 675 px de haut sur un écran de
+# 1200.
+BANNIERE_RAPPORT_MINI = 2.5
+
+
+def hauteur_affichee(largeur_px: int, hauteur_px: int,
+                     largeur_ecran: int = 1200) -> int:
+    """Hauteur qu'occupera l'image, affichée sur toute la largeur.
+
+    C'est le chiffre qui parle : « 606×595 » n'alarme personne, « 1178 px de
+    haut sur votre écran » si."""
+    if not largeur_px:
+        return 0
+    return round(largeur_ecran * hauteur_px / largeur_px)
+
+
+def adapter_en_banniere(chemin_source: str, chemin_sortie: str) -> tuple:
+    """Recompose l'image au format bannière et renvoie (largeur, hauteur).
+
+    Pod affiche la bannière d'une chaîne sur TOUTE LA LARGEUR, et pas seulement
+    sur la page de la chaîne : elle apparaît aussi au-dessus de chaque vidéo.
+    Une image presque carrée y occupe donc plus d'un écran de haut, et il faut
+    faire défiler pour atteindre le lecteur. Le problème est connu du projet
+    Esup-Pod, qui recommande d'accompagner les propriétaires vers un format
+    plus ergonomique — c'est ce que fait cette fonction.
+
+    L'image n'est ni déformée ni rognée : elle est REDIMENSIONNÉE À LA HAUTEUR
+    puis CENTRÉE sur un fond repris de son propre coin supérieur gauche. Un
+    logo sur fond blanc donne donc une bande blanche, sans raccord visible.
+
+    Rogner aurait été plus « rempli », mais couperait le logo : sur une image
+    carrée, il faudrait en retirer les trois quarts.
+    """
+    from PIL import Image as _Image
+    src = _Image.open(chemin_source)
+    if src.mode not in ("RGB", "L"):
+        src = src.convert("RGB")
+    largeur, hauteur = src.size
+
+    # Couleur de fond : le coin supérieur gauche, qui est le fond de l'image
+    # dans l'immense majorité des logos. En cas de doute, on retombe sur blanc.
+    try:
+        fond = src.getpixel((1, 1))
+        if isinstance(fond, int):
+            fond = (fond, fond, fond)
+        fond = tuple(fond[:3])
+    except Exception:
+        fond = (255, 255, 255)
+
+    canevas = _Image.new("RGB", (BANNIERE_LARGEUR, BANNIERE_HAUTEUR), fond)
+    # Marge haut et bas : un logo collé aux bords paraît coupé.
+    marge = 20
+    h_cible = BANNIERE_HAUTEUR - 2 * marge
+    l_cible = max(1, round(largeur * h_cible / hauteur))
+    if l_cible > BANNIERE_LARGEUR:          # image déjà très large : on borne
+        l_cible = BANNIERE_LARGEUR
+        h_cible = max(1, round(hauteur * l_cible / largeur))
+    redim = src.resize((l_cible, h_cible), _Image.LANCZOS)
+    canevas.paste(redim, ((BANNIERE_LARGEUR - l_cible) // 2,
+                          (BANNIERE_HAUTEUR - h_cible) // 2))
+    canevas.save(chemin_sortie, quality=88)
+    return canevas.size
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  ÉTATS VIDES
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -9183,6 +9257,28 @@ class BannerPicker(ctk.CTkToplevel):
         self.dossier_menu.grid(row=2, column=1, columnspan=2, sticky="ew",
                                padx=(0, 8), pady=8)
 
+        # — Adaptation au format bannière —
+        #
+        # Pod affiche la bannière sur toute la largeur, y compris au-dessus de
+        # chaque vidéo de la chaîne : une image presque carrée y occupe plus
+        # d'un écran de haut. La case n'est cochée que si l'image en a besoin
+        # (voir `_analyser_image`) : proposer l'adaptation d'une image déjà
+        # large la DÉGRADERAIT — un 3000×400 passerait de 200 à 300 px.
+        self.adapter_var = ctk.BooleanVar(value=False)
+        self.adapter_case = ctk.CTkCheckBox(
+            cadre, variable=self.adapter_var, font=ctk.CTkFont(size=11),
+            text=f"Adapter au format bannière "
+                 f"({BANNIERE_LARGEUR}×{BANNIERE_HAUTEUR})")
+        self.adapter_case.grid(row=3, column=1, columnspan=2, sticky="w",
+                               padx=(0, 8), pady=(0, 6))
+        # Diagnostic de l'image choisie : dimensions et hauteur réelle à
+        # l'écran, qui est le chiffre parlant.
+        self.image_info = ctk.CTkLabel(cadre, text="", font=ctk.CTkFont(size=T_MINI),
+                                       text_color=T_SECONDAIRE, anchor="w",
+                                       justify="left", wraplength=520)
+        self.image_info.grid(row=4, column=1, columnspan=2, sticky="w",
+                             padx=(0, 8), pady=(0, 8))
+
         self.msg_local = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(size=11),
                                       wraplength=650, justify="left", anchor="w")
         self.msg_local.pack(fill="x", padx=10, pady=(4, 0))
@@ -9226,6 +9322,44 @@ class BannerPicker(ctk.CTkToplevel):
         if not self.nom_entry.get().strip():
             import os as _os
             self.nom_entry.insert(0, _os.path.splitext(_os.path.basename(chemin))[0])
+        self._analyser_image(chemin)
+
+    def _analyser_image(self, chemin: str):
+        """Mesure l'image et conseille, sans rien imposer.
+
+        La case n'est cochée d'office QUE si l'image en a besoin : une image
+        déjà large serait dégradée par l'adaptation, et cocher par défaut dans
+        ce cas reviendrait à abîmer un choix correct."""
+        if not HAS_PIL:
+            self.image_info.configure(
+                text="Dimensions non vérifiables (Pillow absent).",
+                text_color=T_SECONDAIRE)
+            return
+        try:
+            from PIL import Image as _Image
+            with _Image.open(chemin) as im:
+                largeur, hauteur = im.size
+        except Exception:
+            self.image_info.configure(text="Image illisible.", text_color=T_ALERTE)
+            self.adapter_var.set(False)
+            return
+
+        rapport = largeur / hauteur if hauteur else 0
+        haut_px = hauteur_affichee(largeur, hauteur)
+        if rapport < BANNIERE_RAPPORT_MINI:
+            self.adapter_var.set(True)
+            self.image_info.configure(
+                text=(f"{largeur}×{hauteur} — trop haute pour une bannière : "
+                      f"elle occuperait environ {haut_px} px de haut sur un "
+                      f"écran de 1200, au-dessus de CHAQUE vidéo de la chaîne. "
+                      f"L'adaptation la ramène à 300 px."),
+                text_color=T_ALERTE)
+        else:
+            self.adapter_var.set(False)
+            self.image_info.configure(
+                text=(f"{largeur}×{hauteur} — format convenable "
+                      f"(environ {haut_px} px de haut à l'écran)."),
+                text_color=T_SUCCES)
 
     def _deposer(self):
         """Dépose l'image choisie puis la retient comme bannière."""
@@ -9254,16 +9388,44 @@ class BannerPicker(ctk.CTkToplevel):
 
         self.msg_local.configure(text="⏳ Dépôt en cours…", text_color=T_SECONDAIRE)
 
+        adapter = bool(self.adapter_var.get())
+
         def travail():
-            """(Thread) Dépôt de l'image sur l'instance."""
+            """(Thread) Adaptation éventuelle, puis dépôt sur l'instance."""
+            envoye = chemin
+            temporaire = None
             try:
+                if adapter:
+                    # Fichier TEMPORAIRE : l'original de l'utilisateur n'est
+                    # jamais modifié ni écrasé. Il le retrouve intact.
+                    import tempfile as _tf
+                    temporaire = _tf.mktemp(suffix=".jpg", prefix="podadmin_ban_")
+                    taille = adapter_en_banniere(chemin, temporaire)
+                    envoye = temporaire
+                    self.master_app._ui(
+                        self.msg_local.configure,
+                        text=f"⏳ Image adaptée en {taille[0]}×{taille[1]}, "
+                             f"dépôt en cours…",
+                        text_color=T_SECONDAIRE)
                 img = self.master_app.api.upload_image(
-                    chemin, self.nom_entry.get().strip(), dossier_url, createur)
+                    envoye, self.nom_entry.get().strip(), dossier_url, createur)
                 url = img.get("url", "")
                 self.master_app._ui(self._choisir, url)
             except Exception as e:
                 self.master_app._ui(self.msg_local.configure,
-                                    text=f"❌ {e}", text_color=T_ERREUR)
+                                    text=f"❌ {message_utilisateur(e)}",
+                                    text_color=T_ERREUR)
+                self.master_app._ui(self.master_app._log,
+                                    f"Dépôt d'image : {e.__class__.__name__}: {e}")
+            finally:
+                # Le fichier temporaire est retiré dans tous les cas : sans
+                # cela, chaque dépôt en laisserait un dans le dossier temporaire.
+                if temporaire:
+                    try:
+                        import os as _os
+                        _os.remove(temporaire)
+                    except Exception:
+                        pass
         self.master_app._run(travail)
 
     # ── Sortie ────────────────────────────────────────────────────────────

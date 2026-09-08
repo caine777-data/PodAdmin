@@ -1,6 +1,6 @@
 {
-  "version": "1.6.4",
+  "version": "1.6.5",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Raccourcis clavier et filet de tests pour le prochain refactoring.",
+  "notes": "Bannieres de chaine : adaptation automatique au bon format, sur proposition.",
   "version_minimale": ""
 }

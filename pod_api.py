@@ -408,6 +408,16 @@ class PodAPI:
         return self._patch(self._video_endpoint(video),
                            json={"additional_owners": list(owner_urls)})
 
+    def set_disciplines(self, video, discipline_urls: list[str]) -> dict:
+        """Remplace les disciplines d'une vidéo (réf = dict, URL, id ou slug).
+
+        ⚠️ Relation MULTIPLE : on envoie une LISTE d'URLs, même pour une seule
+        discipline. Établi par sonde — les vidéos renvoient `discipline: []`,
+        une liste vide, qui ne se confond pas avec une absence de valeur.
+        """
+        return self._patch(self._video_endpoint(video),
+                           json={"discipline": list(discipline_urls)})
+
     # ── 6. Contributeurs (crédits) ────────────────────────────────────────
 
     def add_contributor(self, video_url: str, name: str, email: str = "",

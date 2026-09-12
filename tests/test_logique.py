@@ -1108,3 +1108,85 @@ class TestCouleurDeChaine:
             ok = (len(nettoye) in (3, 6)
                   and all(c in "0123456789abcdefABCDEF" for c in nettoye))
             assert ok == valide, f"{valeur!r} jugé {ok}, attendu {valide}"
+
+
+class TestDisciplineGlobale:
+    """Discipline commune au lot, filtre et action de masse.
+
+    Classer au dépôt coûte un choix ; rattacher après coup coûte une reprise de
+    centaines de vidéos. Mais le champ reste FACULTATIF : le rendre obligatoire
+    pousserait à choisir au hasard, ce qui donne l'illusion d'un classement."""
+
+    def test_le_rattachement_se_fait_en_liste(self):
+        """⚠️ Relation MULTIPLE, établie par sonde : les vidéos renvoient
+        `discipline: []`. Envoyer une URL nue donnerait un HTTP 400."""
+        import inspect
+
+        import pod_api
+        source = inspect.getsource(pod_api.PodAPI.set_disciplines)
+        assert '"discipline": list(discipline_urls)' in source, (
+            "la discipline doit être envoyée sous forme de liste")
+
+    def test_le_depot_transmet_la_discipline(self):
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._do_batch_upload)
+        assert "set_disciplines" in source, (
+            "le dépôt ne rattache aucune discipline")
+
+    def test_un_echec_de_discipline_ne_perd_pas_la_video(self):
+        """La vidéo est déposée ; seul son classement manque. Faire échouer le
+        dépôt pour cela serait disproportionné."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._do_batch_upload)
+        bloc = source[source.index("set_disciplines") - 400:
+                      source.index("set_disciplines") + 400]
+        assert "except Exception" in bloc, (
+            "un échec de rattachement ferait échouer le dépôt")
+
+    def test_la_relance_transmet_aussi_la_discipline(self):
+        """Sans cela, une vidéo relancée après échec perdrait son classement."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._retry_failed)
+        assert "discipline_url" in source, (
+            "la relance des échecs ne transmet pas la discipline")
+
+    def test_le_filtre_teste_l_appartenance_pas_l_egalite(self):
+        """Le champ est une LISTE sur la vidéo : comparer par égalité ne
+        trouverait jamais rien dès qu'une vidéo porte deux disciplines."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._browse_do_filter)
+        assert "a_discipline" in source and "in [str(x).rstrip" in source, (
+            "le filtre discipline ne teste pas l'appartenance")
+
+    def test_l_action_de_masse_previent_du_remplacement(self):
+        """⚠️ Elle REMPLACE les disciplines existantes, elle ne s'y ajoute
+        pas : envoyer une liste écrase l'ensemble. Rien à l'écran ne le
+        laisserait deviner."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._browse_mass_set_discipline)
+        assert "REMPLAC" in source.upper(), (
+            "la confirmation ne prévient pas du remplacement")
+
+    def test_le_cache_est_mis_a_jour_apres_affectation(self):
+        """Sans cela, le filtre continuerait d'ignorer les vidéos qu'on vient
+        de classer, jusqu'au prochain rafraîchissement serveur."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._do_browse_mass_set_discipline)
+        assert 'v["discipline"] = [url]' in source
+
+    def test_table_vide_annoncee_explicitement(self):
+        """Un menu vide se prend pour une panne de chargement."""
+        import app as module_app
+        assert "aucune discipline définie" in module_app.App.AUCUNE_DISCIPLINE.lower()

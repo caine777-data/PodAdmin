@@ -1,6 +1,6 @@
 {
-  "version": "1.6.6",
+  "version": "1.6.7",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Correction : la couleur d'une chaine etait envoyee sans diese et restait sans effet.",
+  "notes": "Discipline au televersement, filtre et action de masse. Bouton Retirer les terminees.",
   "version_minimale": ""
 }

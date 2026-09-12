@@ -1278,6 +1278,17 @@ class App(_AppBase):
                       fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                       command=self._clear_items, text_color=T_SUR_NEUTRE).pack(side="left")
 
+        # « Retirer les terminées » — n'apparaît que s'il y a de quoi retirer.
+        #
+        # Après un lot, les lignes réussies n'ont plus d'usage, mais il fallait
+        # les supprimer UNE PAR UNE pour repartir. « Vider la liste » ne
+        # convient pas : elle emporte aussi les échecs, qu'on voulait relancer.
+        self.purge_btn = ctk.CTkButton(
+            sel, text="✅  Retirer les terminées", width=200,
+            fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+            text_color=T_SUR_NEUTRE, command=self._retirer_terminees)
+        # (pas de .pack ici : posé par `_maj_bouton_purge`)
+
         self.count_lbl = ctk.CTkLabel(sel, text="0 vidéo(s)", text_color=T_SECONDAIRE,
                                       font=ctk.CTkFont(size=11))
         self.count_lbl.pack(side="right")
@@ -1301,6 +1312,19 @@ class App(_AppBase):
             **STYLE_ZONE)
         self.visibility_combo.set("Brouillon / Privé")
         self.visibility_combo.grid(row=1, column=3, padx=4, pady=8, sticky="w")
+
+        # Discipline commune au lot — FACULTATIVE.
+        #
+        # Classer au dépôt coûte un choix ; rattacher après coup coûte une
+        # reprise de centaines de vidéos. Mais rendre le champ obligatoire
+        # pousserait à choisir au hasard, ce qui est pire que pas de
+        # classement : cela donne l'illusion d'un classement.
+        ctk.CTkLabel(common, text="Discipline :").grid(
+            row=2, column=2, padx=(20, 4), pady=8, sticky="e")
+        self.upload_discipline = ctk.CTkOptionMenu(
+            common, width=200, values=[self.AUCUNE_DISCIPLINE], **STYLE_CHAMP)
+        self.upload_discipline.set(self.AUCUNE_DISCIPLINE)
+        self.upload_discipline.grid(row=2, column=3, padx=4, pady=8, sticky="w")
 
         self.encode_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(common, text="Lancer l'encodage après le téléversement",
@@ -1515,6 +1539,36 @@ class App(_AppBase):
         self.items.clear()
         self._refresh_list()
 
+    def _retirer_terminees(self):
+        """Retire les vidéos ENVOYÉES, et elles seules.
+
+        Les échecs restent : ce sont eux qu'on voudra relancer, et les perdre
+        obligerait à re-sélectionner les fichiers un par un."""
+        avant = len(self.items)
+        self.items = [it for it in self.items if not it.done]
+        retirees = avant - len(self.items)
+        if retirees:
+            self._refresh_list()
+            self._log(f"{retirees} vidéo(s) envoyée(s) retirée(s) de la liste.")
+
+    def _maj_bouton_purge(self):
+        """Affiche « Retirer les terminées » avec leur nombre, ou le cache.
+
+        Le nombre compte : « Retirer les terminées » laisse penser qu'on va
+        peut-être perdre autre chose ; « Retirer les 12 terminées » ne laisse
+        aucun doute."""
+        bouton = getattr(self, "purge_btn", None)
+        if bouton is None:
+            return
+        n = sum(1 for it in self.items if it.done)
+        if n:
+            bouton.configure(text=f"✅  Retirer les {n} terminée"
+                                  f"{'s' if n > 1 else ''}")
+            if not bouton.winfo_ismapped():
+                bouton.pack(side="left", padx=(8, 0))
+        elif bouton.winfo_ismapped():
+            bouton.pack_forget()
+
     def _refresh_list(self):
         """Reconstruit le tableau des vidéos en attente (nom, titre éditable, état)."""
         for w in self.list_frame.winfo_children():
@@ -1575,6 +1629,7 @@ class App(_AppBase):
             it.status_lbl.pack(side="right", padx=6)
 
         self.count_lbl.configure(text=f"{len(self.items)} vidéo(s)")
+        self._maj_bouton_purge()
 
     def _remove_item(self, item: UploadItem):
         """Retire une vidéo de la file et rafraîchit l'affichage."""
@@ -1679,7 +1734,12 @@ class App(_AppBase):
         # Lecture des widgets ICI (thread principal), puis passage en arguments.
         is_draft = self.visibility_combo.get().startswith("Brouillon")
         do_encode = self.encode_var.get()
-        self._run(self._do_batch_upload, owner_url, type_url, is_draft, do_encode)
+        # La discipline est lue ICI, dans le thread principal : lire un widget
+        # Tk depuis un thread de travail n'est pas fiable.
+        discipline_url = self.discipline_map.get(
+            self.upload_discipline.get(), "") if hasattr(self, "discipline_map") else ""
+        self._run(self._do_batch_upload, owner_url, type_url, is_draft,
+                  do_encode, discipline_url)
 
     @staticmethod
     def _file_size(path: str) -> int:
@@ -1812,7 +1872,8 @@ class App(_AppBase):
         return video
 
     def _do_batch_upload(self, owner_url: str, type_url: str,
-                         is_draft: bool, do_encode: bool):
+                         is_draft: bool, do_encode: bool,
+                         discipline_url: str = ""):
         """(Thread) Téléverse chaque vidéo, ajoute les crédits, lance l'encodage, suit la progression."""
         # `is_draft` et `do_encode` sont reçus en ARGUMENTS : ils ont été lus
         # dans le thread principal par l'appelant. Lire un widget Tk depuis un
@@ -1962,6 +2023,23 @@ class App(_AppBase):
                     it.slug = video.get("slug", "") if isinstance(video, dict) else ""
                     it.video_url = video.get("url", "") if isinstance(video, dict) else ""
 
+                # Discipline — rattachée APRÈS création, par PATCH.
+                #
+                # Elle n'est pas envoyée dans le formulaire de création : le
+                # champ y est une relation multiple, et la sonde a établi que
+                # le rattachement passe par un PATCH avec une LISTE d'URLs.
+                #
+                # Un échec ici ne doit PAS faire échouer le dépôt : la vidéo
+                # est déposée, seul son classement manque. On le journalise et
+                # on continue — perdre une vidéo pour une discipline serait
+                # disproportionné.
+                if discipline_url and it.slug:
+                    try:
+                        self.api.set_disciplines(it.slug, [discipline_url])
+                    except Exception as e:
+                        self._ui(self._log,
+                                 f"Discipline non rattachée ({it.title}) : {e}")
+
                 # Encodage
                 if do_encode and it.slug:
                     try:
@@ -2002,11 +2080,22 @@ class App(_AppBase):
         self.file_progress.set(0)
         self.file_progress_lbl.configure(text="")
         self._masquer_progression()
-        color = "#22c55e" if ok == total else "#f59e0b"
-        self.global_msg.configure(text=f"Terminé : {ok}/{total} vidéo(s) téléversée(s).", text_color=color)
+        reussite = (ok == total)
+        self.global_msg.configure(
+            text=(f"✅  Terminé : {ok} vidéo(s) téléversée(s). "
+                  f"Vous pouvez les retirer de la liste."
+                  if reussite else
+                  f"Terminé : {ok}/{total} vidéo(s) téléversée(s)."),
+            text_color=T_SUCCES if reussite else T_ALERTE)
         self._log(f"Lot terminé : {ok}/{total} réussis.")
         # Afficher le bouton « Relancer les échecs » s'il reste des échecs
         self._update_retry_button()
+        # …et proposer le retrait, mais SEULEMENT si tout est passé.
+        #
+        # En cas d'échec, le geste attendu est « Relancer les échecs » :
+        # proposer en même temps de retirer des lignes brouillerait le message
+        # au moment où il doit être le plus clair.
+        self._maj_bouton_purge()
 
         # Les vidéos qui viennent d'être déposées n'existent PAS dans le magasin
         # partagé : il a été rempli avant l'envoi. Sans relecture, les onglets
@@ -2078,7 +2167,12 @@ class App(_AppBase):
         # Lecture des widgets ICI (thread principal), puis passage en arguments.
         is_draft = self.visibility_combo.get().startswith("Brouillon")
         do_encode = self.encode_var.get()
-        self._run(self._do_batch_upload, owner_url, type_url, is_draft, do_encode)
+        # La discipline est lue ICI, dans le thread principal : lire un widget
+        # Tk depuis un thread de travail n'est pas fiable.
+        discipline_url = self.discipline_map.get(
+            self.upload_discipline.get(), "") if hasattr(self, "discipline_map") else ""
+        self._run(self._do_batch_upload, owner_url, type_url, is_draft,
+                  do_encode, discipline_url)
 
     # ═════════════════════════════════════════════════════════════════════
     #  (L'onglet Co-auteurs a été SUPPRIMÉ : aucun contributeur n'était utilisé
@@ -3253,6 +3347,30 @@ class App(_AppBase):
         self.status_lbl.configure(text="Connecté" if ok else "Non connecté",
                                   text_color=T_SUCCES if ok else "#ef4444")
 
+    # Libellé employé partout quand aucune discipline n'est définie : il oriente
+    # vers l'onglet où en créer, au lieu de laisser un menu vide.
+    AUCUNE_DISCIPLINE = "(aucune discipline définie)"
+    SANS_DISCIPLINE = "(sans discipline)"
+
+    def _rafraichir_menus_discipline(self):
+        """Répercute les disciplines dans les menus qui les proposent."""
+        titres = sorted(getattr(self, "discipline_map", {}), key=str.lower)
+        try:
+            if titres:
+                self.upload_discipline.configure(
+                    values=[self.SANS_DISCIPLINE] + titres)
+                self.browse_discipline.configure(values=["Toutes"] + titres)
+                self.browse_mass_disc.configure(
+                    values=[self.SANS_DISCIPLINE] + titres)
+            else:
+                for menu in (self.upload_discipline, self.browse_mass_disc):
+                    menu.configure(values=[self.AUCUNE_DISCIPLINE])
+                    menu.set(self.AUCUNE_DISCIPLINE)
+                self.browse_discipline.configure(values=["Toutes"])
+                self.browse_discipline.set("Toutes")
+        except Exception as e:
+            self._log(f"Rafraîchissement des menus de discipline : {e}")
+
     def _load_types(self):
         """(Thread) Charge les types de vidéo et les sites (champ requis à l'upload)."""
         try:
@@ -3266,6 +3384,20 @@ class App(_AppBase):
             self._ui(self._browse_refresh_type_menu)
         except Exception as e:
             self._ui(self._log, f"Impossible de charger les types : {e}")
+        # Disciplines — même mécanique que les types.
+        #
+        # La table est VIDE tant que la nomenclature n'a pas été arrêtée : les
+        # menus le diront explicitement plutôt que d'afficher une liste vide,
+        # qu'on prendrait pour une panne de chargement.
+        try:
+            self.disciplines = self.api.get_disciplines()
+            self.discipline_map = {
+                d.get("title", f"discipline-{d.get('id')}"): d.get("url", "")
+                for d in self.disciplines if d.get("title")}
+            self._ui(self._rafraichir_menus_discipline)
+        except Exception as e:
+            self.disciplines, self.discipline_map = [], {}
+            self._ui(self._log, f"Impossible de charger les disciplines : {e}")
         # Sites (champ requis à l'upload sur instance multi-établissements)
         try:
             sites = self.api.get_sites()
@@ -4036,6 +4168,22 @@ class App(_AppBase):
         # Ordre d'affichage. Par défaut « Plus récentes » : c'est l'ordre
         # renvoyé par l'API, celui auquel on est habitué. Le tri alphabétique
         # sert à retrouver une vidéo dont on connaît le titre.
+        # Filtre Discipline — sur la SECONDE rangée.
+        #
+        # Mesuré : en sixième position sur la première, il la faisait déborder
+        # de 160 px en fenêtre minimale (1000 px) et écrasait le champ de
+        # recherche à 140 px. La seconde rangée était à moitié vide.
+        #
+        # Il sert autant à retrouver les vidéos classées qu'à repérer CELLES
+        # QUI NE LE SONT PAS : sans cela, on ne sait pas ce qu'il reste à faire.
+        bloc_disc = bloc_filtre(filt2, "Discipline")
+        bloc_disc.pack(side="left", padx=(0, 14))
+        self.browse_discipline = ctk.CTkOptionMenu(
+            bloc_disc, width=150, values=["Toutes"],
+            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
+        self.browse_discipline.set("Toutes")
+        self.browse_discipline.pack()
+
         bloc_tri = bloc_filtre(filt2, "Trier")
         bloc_tri.pack(side="left", padx=(0, 14))
         self.browse_tri = ctk.CTkOptionMenu(
@@ -4073,11 +4221,20 @@ class App(_AppBase):
         massbar = ctk.CTkFrame(frame, fg_color=S_CARTE,
                                corner_radius=8, border_width=1, border_color=S_FILET)
         massbar.pack(fill="x", pady=(4, 4))
-        ctk.CTkLabel(massbar, text="✏️  Modifier en masse — appliquer ce type aux vidéos affichées :",
+        # Libellé court : avec deux menus et le bouton, la phrase longue
+        # d'origine faisait sortir le bouton de l'écran — il s'affichait
+        # « ppliquer à 1 vidé ».
+        ctk.CTkLabel(massbar, text="✏️  En masse — type :",
                      font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE
-                     ).pack(side="left", padx=(10, 8), pady=6)
-        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=170, values=["(aucun type)"], **STYLE_CHAMP)
+                     ).pack(side="left", padx=(10, 6), pady=6)
+        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=150, values=["(aucun type)"], **STYLE_CHAMP)
         self.browse_mass_type.pack(side="left", pady=6)
+        ctk.CTkLabel(massbar, text="ou discipline :", font=ctk.CTkFont(size=11),
+                     text_color=T_SECONDAIRE).pack(side="left", padx=(10, 6), pady=6)
+        self.browse_mass_disc = ctk.CTkOptionMenu(
+            massbar, width=150, values=[self.AUCUNE_DISCIPLINE], **STYLE_CHAMP)
+        self.browse_mass_disc.set(self.AUCUNE_DISCIPLINE)
+        self.browse_mass_disc.pack(side="left", pady=6)
         # LE COMPTE EST DANS LE BOUTON.
         #
         # « Appliquer » nu, à côté d'un libellé disant « aux vidéos affichées »
@@ -4307,6 +4464,22 @@ class App(_AppBase):
                 vt = vt.get("url") if isinstance(vt, dict) else vt
                 return str(vt).rstrip("/") == turl
             vids = [v for v in vids if has_type(v)]
+
+        # Filtre discipline. Le champ est une LISTE sur la vidéo : on teste
+        # l'appartenance, pas l'égalité.
+        disc = (self.browse_discipline.get()
+                if hasattr(self, "browse_discipline") else "Toutes")
+        if disc and disc != "Toutes":
+            durl = str((getattr(self, "discipline_map", {}) or {})
+                       .get(disc, "")).rstrip("/")
+
+            def a_discipline(v):
+                valeurs = v.get("discipline") or []
+                if not isinstance(valeurs, (list, tuple)):
+                    valeurs = [valeurs]
+                return durl in [str(x).rstrip("/") for x in valeurs]
+
+            vids = [v for v in vids if a_discipline(v)]
         # Filtre texte (titre / slug / propriétaire)
         txt = self.browse_text.get().strip().lower()
         if txt:
@@ -5304,8 +5477,21 @@ class App(_AppBase):
             bouton.configure(text=f"Appliquer aux {n} vidéos", state="normal")
 
     def _browse_mass_set_type(self):
-        """Affecte le type choisi à TOUTES les vidéos actuellement affichées
-        (résultat du filtre courant). Double confirmation, puis exécution."""
+        """Affecte le type OU la discipline choisis à toutes les vidéos
+        affichées (résultat du filtre courant).
+
+        Un seul bouton pour les deux : appliquer les deux d'un coup
+        multiplierait les effets d'un unique clic, sur une action déjà lourde.
+        Si une discipline est choisie, c'est elle qui est appliquée — c'est le
+        choix le plus récent de l'utilisateur, et le type reste modifiable au
+        clic suivant."""
+        disc_choix = (self.browse_mass_disc.get()
+                      if hasattr(self, "browse_mass_disc") else "")
+        disc_url = (getattr(self, "discipline_map", {}) or {}).get(disc_choix)
+        if disc_url:
+            self._browse_mass_set_discipline(disc_choix, disc_url)
+            return
+
         choice = self.browse_mass_type.get()
         new_url = (self.type_map or {}).get(choice)
         vids = list(self.browse_filtered)
@@ -5319,6 +5505,47 @@ class App(_AppBase):
                 "Cette action écrase le type actuel de chacune."):
             return
         self._run(self._do_browse_mass_set_type, vids, new_url, choice)
+
+    def _browse_mass_set_discipline(self, choix: str, url: str):
+        """Affecte une discipline à toutes les vidéos affichées.
+
+        ⚠️ REMPLACE les disciplines existantes, elle ne s'y ajoute pas : le
+        champ est une liste, et envoyer une valeur écrase l'ensemble. La
+        confirmation le dit, car rien à l'écran ne le laisserait deviner."""
+        vids = list(self.browse_filtered)
+        if not vids:
+            self._browse_set_msg("Aucune vidéo affichée.", T_ALERTE)
+            return
+        if not messagebox.askyesno(
+                "Discipline en masse",
+                f"Affecter la discipline « {choix} » à {len(vids)} vidéo(s) "
+                f"affichée(s) ?\n\n"
+                "Les disciplines actuelles de ces vidéos seront REMPLACÉES."):
+            return
+        self._run(self._do_browse_mass_set_discipline, vids, url, choix)
+
+    def _do_browse_mass_set_discipline(self, vids, url, choix):
+        """(Thread) Applique la discipline à chaque vidéo affichée."""
+        ok = fail = 0
+        for v in vids:
+            slug = v.get("slug", "")
+            if not slug:
+                continue
+            try:
+                self.api.set_disciplines(slug, [url])
+                # Mise à jour du cache : sans cela, le filtre « Discipline »
+                # continuerait d'ignorer les vidéos qu'on vient de classer,
+                # jusqu'au prochain rafraîchissement serveur.
+                v["discipline"] = [url]
+                ok += 1
+            except Exception as e:
+                fail += 1
+                self._ui(self._log, f"Discipline ({slug}) : {e}")
+        self._ui(self._browse_set_msg,
+                 f"Discipline « {choix} » : {ok} vidéo(s) mise(s) à jour"
+                 + (f", {fail} en échec." if fail else "."),
+                 T_SUCCES if not fail else T_ALERTE)
+        self._ui(self._browse_render_list)
 
     def _do_browse_mass_set_type(self, vids, new_url, choice):
         """(Thread) Applique le type à chaque vidéo affichée, avec bilan."""

@@ -223,6 +223,46 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Discipline
+
+Trois points, indissociables — le champ au dépôt ne sert à rien sans moyen de
+rattraper ensuite :
+
+| Où | Quoi |
+|---|---|
+| Téléversement | discipline commune au lot, **facultative** |
+| Vidéos | filtre par discipline |
+| Vidéos | action de masse « affecter une discipline aux vidéos affichées » |
+
+⚠️ Le champ ne doit **jamais** devenir obligatoire : cela pousserait à choisir
+au hasard, ce qui donne l'illusion d'un classement — pire que pas de classement.
+
+⚠️ Le rattachement se fait par **PATCH après création**, avec une **liste**
+d'URLs : le champ est une relation multiple. Un échec de rattachement ne fait
+pas échouer le dépôt — la vidéo est déposée, seul son classement manque.
+
+⚠️ L'action de masse **remplace** les disciplines existantes, elle ne s'y
+ajoute pas : envoyer une liste écrase l'ensemble. La confirmation le dit.
+
+⚠️ Le filtre teste l'**appartenance**, pas l'égalité : une vidéo peut porter
+plusieurs disciplines.
+
+Tant que la table est vide, les menus affichent « (aucune discipline définie) »
+— un menu vide se prend pour une panne de chargement.
+
+---
+
+## Retrait des vidéos envoyées
+
+« Vider la liste » emportait aussi les échecs, c'est-à-dire précisément ce
+qu'on voulait relancer. Un bouton **« Retirer les N terminées »** n'apparaît
+que s'il y a de quoi retirer, annonce le nombre, et laisse les échecs. Le bilan
+de fin de lot le propose — mais **seulement si tout est passé** : sinon le
+geste attendu est « Relancer les échecs », et deux propositions brouilleraient
+le message.
+
+---
+
 ## Couleur d'une chaîne
 
 ⚠️ **La couleur doit être envoyée AVEC le dièse.** PodAdmin faisait
@@ -450,7 +490,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.6**
+Version : **1.6.7**
 
 ---
 

@@ -914,6 +914,25 @@ class TestInfobulle:
         import shutil
         return shutil.which("xdotool") is not None
 
+    @pytest.fixture
+    def app(self):
+        """Instance dédiée, comme pour la sélection multiple.
+
+        Ces tests survolent un bouton avec une VRAIE souris. Avec le fixture
+        partagé, l'onglet affiché et la position de la fenêtre dépendaient des
+        tests précédents : le bouton témoin se retrouvait couvert ou hors du
+        point survolé, et l'infobulle n'apparaissait jamais. Le test passait
+        isolément et échouait en suite complète — le pire des deux mondes."""
+        import app as module_app
+        a = module_app.App()
+        a.geometry("1180x760+0+0")
+        a.update()
+        yield a
+        try:
+            a.destroy()
+        except Exception:
+            pass
+
     @staticmethod
     def _survoler(app, widget, duree=1.2):
         import os
@@ -1341,6 +1360,23 @@ class TestLibellesDeFiltres:
         assert filtrer(ch="MFCA") == 1
         assert filtrer(ty="Cours") == 1
 
+    def test_la_barre_de_masse_tient_en_fenetre_minimale(self, app):
+        """Avec deux menus et le bouton, la phrase longue d'origine faisait
+        sortir le bouton de l'écran : il s'affichait « ppliquer à 1 vidé »."""
+        app._show_tab("browse")
+        app.geometry("1000x660")
+        app.update()
+        app.update_idletasks()
+        try:
+            b = app.browse_mass_btn
+            droite = b.winfo_rootx() + b.winfo_width()
+            assert droite <= app.winfo_width(), (
+                f"le bouton de masse est tronqué : il finit à {droite} px pour "
+                f"une fenêtre de {app.winfo_width()}")
+        finally:
+            app.geometry("1180x760")
+            app.update()
+
     def test_tient_en_fenetre_minimale(self, app):
         """Les filtres sont sur deux rangées parce qu'ils débordaient déjà :
         sur une seule ligne, huit contrôles réclamaient 1237 px pour 752
@@ -1349,9 +1385,12 @@ class TestLibellesDeFiltres:
         app.update()
         app.update_idletasks()
         try:
+            # `browse_discipline` est sur la SECONDE rangée : en sixième
+            # position sur la première, il la faisait déborder de 160 px.
             droite = max(getattr(app, n).winfo_rootx() + getattr(app, n).winfo_width()
                          for n in ("browse_statut", "browse_encode",
-                                   "browse_chan", "browse_type"))
+                                   "browse_chan", "browse_type",
+                                   "browse_discipline"))
             assert droite <= app.winfo_width(), (
                 f"filtres tronqués : le dernier finit à {droite} px pour une "
                 f"fenêtre de {app.winfo_width()}")
@@ -2243,3 +2282,73 @@ class TestContratDesOngletsApresConnexion:
         oublies = [c for c in app._auto_loaders() if c not in self.CONTRAT]
         assert not oublies, (
             f"onglets à chargement absents du contrat : {oublies}")
+
+
+class TestRetraitDesTerminees:
+    """Après un lot, les lignes envoyées n'ont plus d'usage — mais il fallait
+    les supprimer UNE PAR UNE pour repartir.
+
+    « Vider la liste » ne convenait pas : elle emporte aussi les échecs,
+    c'est-à-dire précisément ce qu'on voulait relancer."""
+
+    def _preparer(self, app, terminees=3, echecs=1, attente=1):
+        app._show_tab("upload")
+        app._clear_items()
+        total = terminees + echecs + attente
+        app._add_paths([f"/tmp/essai_{i}.mp4" for i in range(total)])
+        for i, item in enumerate(app.items):
+            if i < terminees:
+                item.done = True
+                app._set_item_status(item, "✅ terminé")
+            elif i < terminees + echecs:
+                app._set_item_status(item, "❌ échec")
+        app._refresh_list()
+        app.update()
+
+    def test_le_bouton_n_apparait_que_s_il_y_a_de_quoi_retirer(self, app):
+        self._preparer(app, terminees=0, echecs=1, attente=2)
+        assert not app.purge_btn.winfo_ismapped()
+        self._preparer(app, terminees=2, echecs=0, attente=1)
+        assert app.purge_btn.winfo_ismapped()
+
+    def test_le_bouton_annonce_le_nombre(self, app):
+        """« Retirer les terminées » laisse craindre d'en perdre d'autres ;
+        « Retirer les 12 terminées » ne laisse aucun doute."""
+        self._preparer(app, terminees=12, echecs=0, attente=0)
+        assert "12" in app.purge_btn.cget("text")
+        self._preparer(app, terminees=1, echecs=0, attente=1)
+        texte = app.purge_btn.cget("text")
+        assert "1 terminée" in texte and "terminées" not in texte, (
+            f"accord au singulier manquant : {texte}")
+
+    def test_les_echecs_survivent_au_retrait(self, app):
+        """Le cœur du sujet : ce sont eux qu'on voudra relancer."""
+        self._preparer(app, terminees=3, echecs=2, attente=1)
+        app._retirer_terminees()
+        app.update()
+        assert len(app.items) == 3, (
+            f"{len(app.items)} lignes restantes au lieu de 3")
+        assert all(not it.done for it in app.items)
+        assert sum(1 for it in app.items
+                   if str(it.status).endswith("échec")) == 2
+
+    def test_le_bouton_disparait_une_fois_la_liste_nettoyee(self, app):
+        self._preparer(app, terminees=2, echecs=1, attente=0)
+        app._retirer_terminees()
+        app.update()
+        assert not app.purge_btn.winfo_ismapped()
+
+    def test_la_fin_de_lot_propose_le_retrait_si_tout_est_passe(self, app):
+        """En cas d'échec, le geste attendu est « Relancer » : proposer aussi
+        le retrait brouillerait le message au moment où il doit être clair."""
+        self._preparer(app, terminees=4, echecs=0, attente=0)
+        app._on_batch_done(4, 4)
+        app.update()
+        assert "retirer" in app.global_msg.cget("text").lower(), (
+            f"le bilan ne propose pas le retrait : {app.global_msg.cget('text')}")
+
+        self._preparer(app, terminees=3, echecs=1, attente=0)
+        app._on_batch_done(3, 4)
+        app.update()
+        assert "retirer" not in app.global_msg.cget("text").lower(), (
+            "le retrait est proposé alors qu'il reste des échecs")

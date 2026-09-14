@@ -2352,3 +2352,93 @@ class TestRetraitDesTerminees:
         app.update()
         assert "retirer" not in app.global_msg.cget("text").lower(), (
             "le retrait est proposé alors qu'il reste des échecs")
+
+
+class TestAucuneSuperposition:
+    """Deux widgets ne doivent jamais occuper la même place.
+
+    ⚠️ Tk superpose SANS PRÉVENIR deux widgets placés sur la même cellule de
+    grille : aucune erreur, aucun avertissement, juste un affichage illisible.
+    C'est arrivé en 1.6.7 — le champ « Discipline » a été posé en ligne 2,
+    colonnes 2-3, où « Propriétaires additionnels » se trouvait déjà.
+
+    Ce test balaie les conteneurs à grille des onglets et signale tout
+    recouvrement. Il ne remplace pas le regard, mais il attrape ce que la
+    relecture du code ne montre pas : le numéro de ligne est juste, c'est son
+    voisin qu'on a oublié."""
+
+    @staticmethod
+    def _boite(widget):
+        return (widget.winfo_rootx(), widget.winfo_rooty(),
+                widget.winfo_rootx() + widget.winfo_width(),
+                widget.winfo_rooty() + widget.winfo_height())
+
+    @classmethod
+    def _se_recouvrent(cls, w1, w2) -> bool:
+        a1, b1, c1, d1 = cls._boite(w1)
+        a2, b2, c2, d2 = cls._boite(w2)
+        return a1 < c2 and a2 < c1 and b1 < d2 and b2 < d1
+
+    @staticmethod
+    def _nom(widget) -> str:
+        try:
+            texte = str(widget.cget("text")).strip()
+            if texte:
+                return texte[:32]
+        except Exception:
+            pass
+        return widget.winfo_class()
+
+    def _controler(self, app, conteneur):
+        """Ne compare que les widgets placés par GRID dans ce conteneur.
+
+        Les widgets `pack` s'empilent par construction et ne peuvent pas se
+        recouvrir ; les inclure produirait de faux positifs."""
+        # ⚠️ NE PAS filtrer sur `winfo_class()` : il renvoie « Frame » pour
+        # TOUS les widgets CustomTkinter, y compris CTkOptionMenu et
+        # CTkButton. Une première version excluait « Frame » et ne comparait
+        # donc plus rien — elle laissait passer la superposition qu'elle était
+        # censée détecter, vérifié par mutation.
+        #
+        # On filtre sur le TYPE Python : un CTkFrame exact est un conteneur
+        # (il couvre ses enfants par construction) ; ses sous-classes sont des
+        # widgets à part entière.
+        import app as module_app
+        enfants = [w for w in conteneur.winfo_children()
+                   if w.winfo_ismapped() and w.winfo_manager() == "grid"
+                   and w.winfo_class() != "Canvas"
+                   and type(w) is not module_app.ctk.CTkFrame]
+        fautifs = []
+        for i, w1 in enumerate(enfants):
+            for w2 in enfants[i + 1:]:
+                if self._se_recouvrent(w1, w2):
+                    fautifs.append(f"« {self._nom(w1)} » et « {self._nom(w2)} »")
+        return fautifs
+
+    def test_reglages_du_televersement(self, app):
+        """Le cas précis qui a échappé à la relecture."""
+        app._show_tab("upload")
+        app.update()
+        app.update_idletasks()
+        commun = app.upload_discipline.master
+        fautifs = self._controler(app, commun)
+        assert not fautifs, f"widgets superposés : {fautifs}"
+
+    def test_tous_les_onglets(self, app):
+        """Balayage large : chaque conteneur à grille de chaque onglet."""
+        fautifs = []
+
+        def parcourir(widget, onglet):
+            enfants = [w for w in widget.winfo_children() if w.winfo_ismapped()]
+            if any(w.winfo_manager() == "grid" for w in enfants):
+                for probleme in self._controler(app, widget):
+                    fautifs.append(f"{onglet} : {probleme}")
+            for enfant in enfants:
+                parcourir(enfant, onglet)
+
+        for cle in app.tabs:
+            app._show_tab(cle)
+            app.update()
+            app.update_idletasks()
+            parcourir(app.tabs[cle], cle)
+        assert not fautifs, "widgets superposés :\n  " + "\n  ".join(fautifs)

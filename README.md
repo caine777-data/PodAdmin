@@ -223,6 +223,28 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Superpositions de widgets
+
+⚠️ **Tk superpose sans prévenir deux widgets placés sur la même cellule de
+grille** : aucune erreur, aucun avertissement, juste un affichage illisible.
+Le numéro de ligne peut être juste — c'est son voisin qu'on a oublié.
+
+`TestAucuneSuperposition` balaie les conteneurs à grille de tous les onglets et
+mesure les recouvrements réels à l'écran.
+
+⚠️ **Ne pas filtrer ces widgets sur `winfo_class()`** : il renvoie « Frame »
+pour TOUS les widgets CustomTkinter, CTkOptionMenu compris. Une première
+version excluait « Frame » et ne comparait donc plus rien — elle laissait
+passer la superposition qu'elle devait détecter. Le filtre porte sur le type
+Python.
+
+Ce test a révélé un défaut latent dans l'onglet Configuration : l'avertissement
+« coffre-fort indisponible » partageait sa ligne avec un autre texte. Invisible
+tant qu'il reste vide — mais il se remplit précisément pour porter un
+avertissement de sécurité.
+
+---
+
 ## Discipline
 
 Trois points, indissociables — le champ au dépôt ne sert à rien sans moyen de
@@ -490,7 +512,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.7**
+Version : **1.6.8**
 
 ---
 

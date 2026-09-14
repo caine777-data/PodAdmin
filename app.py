@@ -1306,29 +1306,37 @@ class App(_AppBase):
                                           **STYLE_ZONE)
         self.type_combo.grid(row=1, column=1, padx=4, pady=8, sticky="w")
 
-        ctk.CTkLabel(common, text="Visibilité :").grid(row=1, column=2, padx=(20, 4), pady=8, sticky="e")
-        self.visibility_combo = ctk.CTkComboBox(
-            common, width=200, values=["Brouillon / Privé", "Public"],
-            **STYLE_ZONE)
-        self.visibility_combo.set("Brouillon / Privé")
-        self.visibility_combo.grid(row=1, column=3, padx=4, pady=8, sticky="w")
-
         # Discipline commune au lot — FACULTATIVE.
         #
         # Classer au dépôt coûte un choix ; rattacher après coup coûte une
         # reprise de centaines de vidéos. Mais rendre le champ obligatoire
         # pousserait à choisir au hasard, ce qui est pire que pas de
         # classement : cela donne l'illusion d'un classement.
+        #
+        # ⚠️ Placée en ligne 1 à côté du TYPE, sa voisine logique — et non en
+        # ligne 2, où « Propriétaires additionnels » occupe déjà les colonnes
+        # 2 et 3. Tk superpose sans prévenir deux widgets sur la même cellule :
+        # aucune erreur, juste un affichage illisible.
         ctk.CTkLabel(common, text="Discipline :").grid(
-            row=2, column=2, padx=(20, 4), pady=8, sticky="e")
+            row=1, column=2, padx=(20, 4), pady=8, sticky="e")
         self.upload_discipline = ctk.CTkOptionMenu(
             common, width=200, values=[self.AUCUNE_DISCIPLINE], **STYLE_CHAMP)
         self.upload_discipline.set(self.AUCUNE_DISCIPLINE)
-        self.upload_discipline.grid(row=2, column=3, padx=4, pady=8, sticky="w")
+        self.upload_discipline.grid(row=1, column=3, padx=4, pady=8, sticky="w")
+
+        # Visibilité — descendue en ligne 2, colonnes 0-1, à la place libre
+        # laissée par la case d'encodage (qui passe en ligne 3).
+        ctk.CTkLabel(common, text="Visibilité :").grid(
+            row=2, column=0, padx=(12, 4), pady=8, sticky="e")
+        self.visibility_combo = ctk.CTkComboBox(
+            common, width=200, values=["Brouillon / Privé", "Public"],
+            **STYLE_ZONE)
+        self.visibility_combo.set("Brouillon / Privé")
+        self.visibility_combo.grid(row=2, column=1, padx=4, pady=8, sticky="w")
 
         self.encode_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(common, text="Lancer l'encodage après le téléversement",
-                        variable=self.encode_var).grid(row=2, column=0, columnspan=2,
+                        variable=self.encode_var).grid(row=3, column=0, columnspan=2,
                                                         padx=12, pady=(0, 6), sticky="w")
 
         # Propriétaire des vidéos (OBLIGATOIRE — choix explicite avant l'envoi)
@@ -2914,7 +2922,15 @@ class App(_AppBase):
         self.token_storage_lbl = ctk.CTkLabel(
             api_box, text="", font=ctk.CTkFont(size=11),
             text_color=T_ALERTE, anchor="w", wraplength=620, justify="left")
-        self.token_storage_lbl.grid(row=3, column=1, columnspan=2, sticky="w", padx=8)
+        # Ligne 3 réservée à CE libellé seul.
+        #
+        # Il partageait la ligne avec le texte du compte véhicule. Invisible
+        # tant qu'il reste vide — ce qui est le cas normal — mais il se
+        # remplit justement quand le coffre-fort du système est indisponible,
+        # c'est-à-dire pour porter un AVERTISSEMENT DE SÉCURITÉ. Il se serait
+        # alors superposé au texte voisin, au pire moment.
+        self.token_storage_lbl.grid(row=3, column=0, columnspan=3, sticky="w",
+                                    padx=12)
 
         # — Compte VÉHICULE (local) pour le chunké des gros fichiers —
         ctk.CTkLabel(api_box,
@@ -2924,28 +2940,28 @@ class App(_AppBase):
                           "FACULTATIF : un compte intégré est déjà utilisé par défaut. "
                           "Ne remplissez ces champs que pour employer un autre compte.",
                      text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11)).grid(
-            row=3, column=0, columnspan=3, padx=12, pady=(6, 0), sticky="w")
+            row=4, column=0, columnspan=3, padx=12, pady=(6, 0), sticky="w")
 
-        ctk.CTkLabel(api_box, text="Identifiant :", width=110, anchor="e").grid(row=4, column=0, padx=8, pady=8)
+        ctk.CTkLabel(api_box, text="Identifiant :", width=110, anchor="e").grid(row=5, column=0, padx=8, pady=8)
         self.user_entry = ctk.CTkEntry(api_box, width=430,
                                        placeholder_text="identifiant local du compte véhicule (optionnel)")
         if self.vehicle_username:
             self.user_entry.insert(0, self.vehicle_username)
-        self.user_entry.grid(row=4, column=1, padx=8, pady=8, sticky="ew")
+        self.user_entry.grid(row=5, column=1, padx=8, pady=8, sticky="ew")
 
-        ctk.CTkLabel(api_box, text="Mot de passe :", width=110, anchor="e").grid(row=5, column=0, padx=8, pady=8)
+        ctk.CTkLabel(api_box, text="Mot de passe :", width=110, anchor="e").grid(row=6, column=0, padx=8, pady=8)
         self.pass_entry = ctk.CTkEntry(api_box, width=430, show="*",
                                        placeholder_text="mot de passe (collage Ctrl+V possible)")
         if self.vehicle_password:
             self.pass_entry.insert(0, self.vehicle_password)
-        self.pass_entry.grid(row=5, column=1, padx=8, pady=8, sticky="ew")
+        self.pass_entry.grid(row=6, column=1, padx=8, pady=8, sticky="ew")
         self.show_pass = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(api_box, text="Afficher", variable=self.show_pass,
                         command=lambda: self.pass_entry.configure(
-                            show="" if self.show_pass.get() else "*")).grid(row=5, column=2, padx=4)
+                            show="" if self.show_pass.get() else "*")).grid(row=6, column=2, padx=4)
 
         btn_row = ctk.CTkFrame(api_box, fg_color="transparent")
-        btn_row.grid(row=6, column=1, columnspan=2, padx=8, pady=10, sticky="w")
+        btn_row.grid(row=7, column=1, columnspan=2, padx=8, pady=10, sticky="w")
         ctk.CTkButton(btn_row, text="🔌  Tester & se connecter", fg_color=C_SUCCES,
                       hover_color=C_SUCCES_SURV, command=self._connect).pack(side="left")
         ctk.CTkButton(btn_row, text="🚪  Oublier le token / Se déconnecter", width=260,

@@ -939,13 +939,24 @@ class TestMessagesDErreur:
         assert "quelque chose d'inattendu" in texte
 
     def test_aucun_message_brut_ne_subsiste(self):
-        """Garde-fou sur la source : c'est la forme exacte qui posait
-        problème."""
+        """Garde-fou sur la source : aucune exception insérée telle quelle
+        dans un texte affiché.
+
+        ⚠️ Une première version ne cherchait que la forme EXACTE
+        `text=f"❌  {e}"`. Elle passait alors que neuf messages bruts
+        subsistaient sous d'autres formes (« Renommage refusé : {e} »,
+        « Échec : {e} », « ❌ {err} »…), dont celui de la CONNEXION. La
+        recherche porte désormais sur toute variable d'exception (e, exc, err)
+        insérée dans un `text=f"…"`."""
+        import re
+
         import app as module_app
         source = open(module_app.__file__.replace(".pyc", ".py"),
                       encoding="utf-8").read()
-        assert 'text=f"❌  {e}"' not in source, (
-            "une exception est encore affichée telle quelle")
+        fautifs = [(source[:m.start()].count("\n") + 1, m.group(0)[:60])
+                   for m in re.finditer(r'text=f"[^"]*\{(?:e|exc|err)\}', source)]
+        assert not fautifs, (
+            f"exception(s) affichée(s) telles quelles (ligne, extrait) : {fautifs}")
 
     def test_signaler_journalise_le_detail(self):
         """Le détail technique doit rester disponible pour le support."""
@@ -1190,3 +1201,72 @@ class TestDisciplineGlobale:
         """Un menu vide se prend pour une panne de chargement."""
         import app as module_app
         assert "aucune discipline définie" in module_app.App.AUCUNE_DISCIPLINE.lower()
+
+
+
+class TestAdressesEquipe:
+    """Bouton « Écrire à l'équipe » de l'onglet Comptes.
+
+    Extraction des adresses des comptes « équipe » (is_staff), puis message
+    avec les destinataires en COPIE CACHÉE."""
+
+    def _extraire(self, users):
+        import app as module_app
+        return module_app.adresses_equipe(users)
+
+    def test_seuls_les_comptes_equipe_sont_retenus(self):
+        adresses, _ = self._extraire([
+            {"username": "a", "is_staff": True, "email": "a@ut.fr"},
+            {"username": "b", "is_staff": False, "email": "b@ut.fr"}])
+        assert adresses == ["a@ut.fr"]
+
+    def test_doublons_elimines_sans_tenir_compte_de_la_casse(self):
+        """Une même personne peut avoir deux comptes."""
+        adresses, _ = self._extraire([
+            {"username": "a", "is_staff": True, "email": "Alice@ut.fr"},
+            {"username": "a2", "is_staff": True, "email": "alice@ut.fr"}])
+        assert len(adresses) == 1
+
+    def test_comptes_sans_adresse_signales_pas_perdus(self):
+        """Un compte équipe sans adresse (ex. compte véhicule) doit être
+        signalé, pas ignoré en silence."""
+        _, sans = self._extraire([
+            {"username": "DEPOT", "is_staff": True, "email": ""},
+            {"username": "x", "is_staff": True, "email": None},
+            {"username": "y", "is_staff": True, "email": "pas une adresse"}])
+        assert sans == ["DEPOT", "x", "y"]
+
+    def test_liste_vide(self):
+        assert self._extraire([]) == ([], [])
+
+    def test_les_adresses_partent_en_copie_cachee(self):
+        """⚠️ Cci et non « À » : sinon chaque enseignant verrait l'adresse
+        de tous les autres."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._comptes_ecrire_equipe)
+        assert "?bcc=" in source, "les adresses ne sont pas en copie cachée"
+        assert "mailto:{urllib.parse.quote(SUPPORT_MAIL)}" in source, (
+            "le destinataire visible doit être le support, pas l'équipe")
+
+    def test_lien_trop_long_non_ouvert(self):
+        """Un lien tronqué par la messagerie enverrait le message à une
+        PARTIE de l'équipe seulement, sans que personne ne s'en aperçoive."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._comptes_ecrire_equipe)
+        assert "MAILTO_LONGUEUR_MAX" in source
+        assert module_app.MAILTO_LONGUEUR_MAX <= 2000
+
+    def test_le_journal_ne_contient_pas_les_adresses(self):
+        """Le journal garde le nombre d'adresses, pas la liste."""
+        import inspect
+
+        import app as module_app
+        for methode in (module_app.App._comptes_copier_equipe,
+                        module_app.App._comptes_ecrire_equipe):
+            for ligne in inspect.getsource(methode).splitlines():
+                if "self._log(" in ligne:
+                    assert "join(adresses)" not in ligne and "{adresses}" not in ligne

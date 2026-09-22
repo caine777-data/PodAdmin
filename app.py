@@ -256,6 +256,37 @@ MOODLE_URL = "https://moodle.utoulouse.fr/course/section.php?id=72329"
 # cela garde une trace de l'envoi sans exposer l'adresse au destinataire.
 SUPPORT_MAIL = "support-pod@utoulouse.fr"
 
+# Au-delà de cette longueur, un lien « mailto: » est tronqué ou refusé par
+# Windows et par Outlook (limite pratique autour de 2 000 caractères). On
+# garde une marge : au-dessus, les adresses sont seulement copiées.
+MAILTO_LONGUEUR_MAX = 1800
+
+
+def adresses_equipe(users: list) -> tuple:
+    """Adresses e-mail des comptes ayant le statut « équipe » (is_staff).
+
+    Renvoie (adresses, comptes_sans_adresse) :
+      • adresses : liste triée, SANS doublon (comparaison insensible à la
+        casse — une même personne peut avoir deux comptes) ;
+      • comptes_sans_adresse : identifiants des comptes équipe dont l'adresse
+        est vide ou invalide, pour les signaler plutôt que les perdre en
+        silence.
+    """
+    vues, adresses, sans = set(), [], []
+    for u in users or []:
+        if not u.get("is_staff"):
+            continue
+        mail = (u.get("email") or "").strip()
+        if "@" not in mail or " " in mail:
+            sans.append(u.get("username") or "?")
+            continue
+        cle = mail.lower()
+        if cle not in vues:
+            vues.add(cle)
+            adresses.append(mail)
+    adresses.sort(key=str.lower)
+    return adresses, sorted(sans, key=str.lower)
+
 
 # ════════════════════════════════════════════════════════════════════════════
 #  BANNIÈRES DE CHAÎNE
@@ -2502,7 +2533,7 @@ class App(_AppBase):
                 self._ui(self._nomen_rafraichir_menus_type)
         except Exception as e:
             self._ui(self.nomen_statut.configure,
-                     text=f"❌  Renommage refusé : {e}", text_color=T_ALERTE)
+                     text=f"❌  Renommage refusé : {message_utilisateur(e)}", text_color=T_ALERTE)
             self._log(f"Renommage {genre} : {e}")
 
     # ── Suppression ───────────────────────────────────────────────────────
@@ -2605,7 +2636,7 @@ class App(_AppBase):
             # du sort des vidéos rattachées, et masquer son motif laisserait
             # l'utilisateur sans explication.
             self._ui(self.nomen_statut.configure,
-                     text=f"❌  Suppression refusée : {e}", text_color=T_ALERTE)
+                     text=f"❌  Suppression refusée : {message_utilisateur(e)}", text_color=T_ALERTE)
             self._log(f"Suppression {genre} : {e}")
 
     def _build_tab_groups(self):
@@ -3092,7 +3123,7 @@ class App(_AppBase):
                      "Connectez-vous en administrateur si ce n'est pas déjà fait.",
                 text_color=T_SUCCES)
         except Exception as e:
-            self.config_admin_msg.configure(text=f"❌ Ouverture impossible : {e}",
+            self.config_admin_msg.configure(text=f"❌ Ouverture impossible : {message_utilisateur(e)}",
                                             text_color=T_ERREUR)
             self._log(f"❌ Ouverture de l'administration : {e}")
 
@@ -3143,7 +3174,7 @@ class App(_AppBase):
             api = PodAPI(url, token)
             count = api.test_connection()
         except Exception as e:
-            self._ui(self.config_msg.configure, text=f"❌  Échec : {e}", text_color=T_ERREUR)
+            self._signaler(self.config_msg, e, "Connexion")
             self._ui(self._set_status, False)
             return
         # Test de la session véhicule seulement si des identifiants sont saisis.
@@ -3470,8 +3501,7 @@ class App(_AppBase):
                 self._ui(self._log, "⚠️ /rest/users/ a renvoyé 0 utilisateur — vérifiez les droits du token "
                                     "(ou lancez verifier.py).")
         except Exception as e:
-            self._ui(self.users_count_lbl.configure, text=f"❌  Erreur : {e}", text_color=T_ERREUR)
-            self._ui(self._log, f"❌ Erreur chargement utilisateurs : {e}")
+            self._signaler(self.users_count_lbl, e, "Chargement des utilisateurs")
 
     def _user_pk(self, u: dict) -> str:
         """Identifiant NUMÉRIQUE d'un compte (clé primaire Django).
@@ -3609,6 +3639,85 @@ class App(_AppBase):
                 text_color=T_SUCCES)
         except Exception as e:
             self._log(f"❌ Ouverture du client de messagerie : {e}")
+
+    def _comptes_copier_equipe(self, silencieux: bool = False) -> list:
+        """Copie les adresses « équipe » dans le presse-papiers (séparées par
+        « ; », format accepté par Outlook et Zimbra). Renvoie la liste."""
+        adresses, sans = adresses_equipe(self.all_users)
+        if not adresses:
+            self.comptes_msg.configure(
+                text="Aucune adresse : aucun compte « équipe » chargé ou "
+                     "renseigné. Cliquez sur « Recharger ».",
+                text_color=T_ALERTE)
+            return []
+        self.clipboard_clear()
+        self.clipboard_append("; ".join(adresses))
+        self.update()          # rend le presse-papiers effectif sous Windows
+        if not silencieux:
+            self.comptes_msg.configure(
+                text=f"📋  {len(adresses)} adresse(s) copiée(s) dans le "
+                     f"presse-papiers." + self._mention_sans_adresse(sans)
+                     + self._mention_doublons(adresses, sans),
+                text_color=T_SUCCES)
+        # Le journal garde le NOMBRE, pas la liste : elle n'a rien à y faire.
+        self._log(f"Adresses équipe copiées : {len(adresses)}.")
+        return adresses
+
+    def _mention_doublons(self, adresses: list, sans: list) -> str:
+        """Explique l'écart entre le nombre de comptes « équipe » annoncé et
+        le nombre d'adresses : sans cette mention, « 5 comptes équipe » et
+        « 3 adresses » laissent croire à une perte."""
+        n_staff = sum(1 for u in self.all_users if u.get("is_staff"))
+        fusionnes = n_staff - len(sans) - len(adresses)
+        if fusionnes <= 0:
+            return ""
+        return (f" {fusionnes} adresse(s) en double fusionnée(s) (même "
+                f"personne, plusieurs comptes).")
+
+    @staticmethod
+    def _mention_sans_adresse(sans: list) -> str:
+        if not sans:
+            return ""
+        apercu = ", ".join(sans[:5]) + ("…" if len(sans) > 5 else "")
+        return f" {len(sans)} compte(s) équipe sans adresse ignoré(s) : {apercu}."
+
+    def _comptes_ecrire_equipe(self):
+        """Ouvre un message vers toute l'équipe, adresses en COPIE CACHÉE.
+
+        ⚠️ Cci et non « À » : sinon chaque destinataire verrait l'adresse de
+        tous les autres. Le destinataire visible est l'adresse du support.
+
+        Les adresses sont TOUJOURS copiées aussi : si le lien est trop long
+        pour la messagerie (au-delà de MAILTO_LONGUEUR_MAX), il n'est pas
+        ouvert — un lien tronqué enverrait le message à une partie seulement
+        de l'équipe, sans que personne ne s'en aperçoive."""
+        adresses = self._comptes_copier_equipe(silencieux=True)
+        if not adresses:
+            return
+        _, sans = adresses_equipe(self.all_users)
+        import urllib.parse
+        lien = (f"mailto:{urllib.parse.quote(SUPPORT_MAIL)}"
+                f"?bcc={urllib.parse.quote(','.join(adresses), safe='@,')}")
+        if len(lien) > MAILTO_LONGUEUR_MAX:
+            self.comptes_msg.configure(
+                text=f"Trop d'adresses pour ouvrir directement la messagerie "
+                     f"({len(adresses)}). Elles sont copiées : créez un message "
+                     f"et collez-les dans le champ Cci." +
+                     self._mention_sans_adresse(sans),
+                text_color=T_ALERTE)
+            return
+        try:
+            import webbrowser
+            webbrowser.open(lien)
+            self.comptes_msg.configure(
+                text=f"✉  Message ouvert : {len(adresses)} destinataire(s) en "
+                     f"copie cachée (adresses aussi copiées dans le "
+                     f"presse-papiers)." + self._mention_sans_adresse(sans)
+                     + self._mention_doublons(adresses, sans),
+                text_color=T_SUCCES)
+            self._log(f"✉️ Message à l'équipe ouvert ({len(adresses)} en Cci).")
+        except Exception as e:
+            self._signaler(self.comptes_msg, e, "Ouverture de la messagerie")
 
     def _user_label(self, u: dict) -> str:
         """Libellé lisible d'un compte : « identifiant — Prénom Nom »."""
@@ -3956,9 +4065,30 @@ class App(_AppBase):
                       fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                       command=lambda: self._run(self._reload_users_for_admin), text_color=T_SUR_NEUTRE).pack(side="left", padx=8)
 
-        self.comptes_count_lbl = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
+        # Compteur à gauche, actions « équipe » à droite. Sur une ligne à
+        # part : ajoutés à la barre de filtres, ces deux boutons la faisaient
+        # déborder en fenêtre minimale.
+        ligne_equipe = ctk.CTkFrame(frame, fg_color="transparent")
+        ligne_equipe.pack(fill="x", pady=(6, 2))
+        self.comptes_count_lbl = ctk.CTkLabel(ligne_equipe, text="", text_color=T_SECONDAIRE,
                                               font=ctk.CTkFont(size=11))
-        self.comptes_count_lbl.pack(anchor="w", pady=(6, 2))
+        self.comptes_count_lbl.pack(side="left")
+        self.comptes_copier_btn = ctk.CTkButton(
+            ligne_equipe, text="📋  Copier les adresses", width=170, height=H_COMPACT,
+            fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+            command=self._comptes_copier_equipe)
+        self.comptes_copier_btn.pack(side="right")
+        self.comptes_mail_btn = ctk.CTkButton(
+            ligne_equipe, text="✉  Écrire à l'équipe", width=190, height=H_COMPACT,
+            fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+            command=self._comptes_ecrire_equipe)
+        self.comptes_mail_btn.pack(side="right", padx=(0, 6))
+        ajouter_infobulle(self.comptes_mail_btn,
+                          "Ouvre un message avec toutes les adresses « équipe » "
+                          "en copie cachée (Cci)")
+        ajouter_infobulle(self.comptes_copier_btn,
+                          "Copie toutes les adresses « équipe » dans le "
+                          "presse-papiers, séparées par « ; »")
 
         # Retour visuel des actions « 🔑 Token » et « ✉️ » de chaque ligne.
         self.comptes_msg = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
@@ -3990,9 +4120,7 @@ class App(_AppBase):
             self._ui(self._refresh_reassign_pickers)
             self._ui(self._log, f"Comptes rechargés : {len(users)}.")
         except Exception as e:
-            self._ui(self.comptes_count_lbl.configure,
-                     text=f"❌  Erreur : {e}", text_color=T_ERREUR)
-            self._ui(self._log, f"❌ Erreur chargement comptes : {e}")
+            self._signaler(self.comptes_count_lbl, e, "Chargement des comptes")
 
     def _render_comptes(self):
         """Affiche la liste filtrée des comptes dans l'onglet Comptes."""
@@ -4024,6 +4152,10 @@ class App(_AppBase):
                                         (u.get("username") or "").lower()))
 
         staff_n = sum(1 for u in self.all_users if u.get("is_staff"))
+        if hasattr(self, "comptes_mail_btn"):
+            n_mails = len(adresses_equipe(self.all_users)[0])
+            self.comptes_mail_btn.configure(
+                text=f"✉  Écrire à l'équipe ({n_mails})")
         self.comptes_count_lbl.configure(
             text=f"{len(self.all_users)} compte(s) — {staff_n} avec statut équipe. "
                  f"{len(matches)} affiché(s).")
@@ -4095,7 +4227,7 @@ class App(_AppBase):
         except Exception as e:
             self._ui(var.set, not want)      # échec → revenir à l'état précédent
             self._ui(self.comptes_count_lbl.configure,
-                     text=f"❌  Échec pour {uname} : {e}", text_color=T_ERREUR)
+                     text=f"❌  Échec pour {uname} : {message_utilisateur(e)}", text_color=T_ERREUR)
             self._ui(self._log, f"❌ Échec MAJ statut de {uname} : {e}")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -5348,7 +5480,12 @@ class App(_AppBase):
         for w in self.browse_subs.winfo_children():
             w.destroy()
         if err:
-            ctk.CTkLabel(self.browse_subs, text=f"❌ {err}", text_color=T_ERREUR,
+            # `err` arrive sous forme de texte (message d'exception) : on le
+            # traduit comme les autres, `message_utilisateur` acceptant une
+            # exception reconstruite à partir du texte.
+            ctk.CTkLabel(self.browse_subs,
+                         text=f"❌ {message_utilisateur(Exception(str(err)))}",
+                         text_color=T_ERREUR,
                          font=ctk.CTkFont(size=11)).pack(anchor="w")
             return
         if not tracks:
@@ -7735,8 +7872,7 @@ class App(_AppBase):
             self._ui(win.destroy)
             self._do_ct_load()          # recharge chaînes et thèmes
         except Exception as e:
-            self._ui(msg.configure, text=f"❌ {e}", text_color=T_ERREUR)
-            self._ui(self._log, f"❌ Habillage : {e}")
+            self._signaler(msg, e, "Habillage")
 
     def _ct_rename_channel(self, ch):
         """Renomme une chaîne (boîte de saisie)."""
@@ -8555,6 +8691,9 @@ class App(_AppBase):
 
         section(
             "🗂  Les onglets d'administration",
+            "• Comptes : « Écrire à l'équipe » ouvre un message à tous les comptes "
+            "« équipe », adresses en copie cachée ; « Copier les adresses » les "
+            "met dans le presse-papiers, séparées par « ; ».\n"
             "• Comptes : recherche, statut « Équipe », création de jeton et message "
             "d'accueil (voir la rubrique « Donner un accès »).\n"
             "• Réaffectation : changer le propriétaire de vidéos (par lot).\n"
@@ -9376,8 +9515,7 @@ class BannerPicker(ctk.CTkToplevel):
             try:
                 images = self.master_app.api.get_images()
             except Exception as e:
-                self.master_app._ui(self.compteur.configure,
-                                    text=f"❌ {e}", text_color=T_ERREUR)
+                self.master_app._signaler(self.compteur, e, "Bibliothèque d'images")
                 return
             self.images = images
             self.master_app._ui(self._filtrer)

@@ -1,6 +1,6 @@
 {
-  "version": "1.6.8",
+  "version": "1.6.9",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Correction de deux superpositions de champs (Televersement et Configuration).",
+  "notes": "Comptes : bouton Ecrire a l'equipe. Messages d'erreur restants traduits.",
   "version_minimale": ""
 }

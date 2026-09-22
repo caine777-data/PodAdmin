@@ -223,6 +223,26 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Écrire à l'équipe (onglet Comptes)
+
+« ✉ Écrire à l'équipe » ouvre un message vers tous les comptes au statut
+« équipe » (is_staff) ; « 📋 Copier les adresses » les met dans le
+presse-papiers, séparées par « ; » (accepté par Outlook et Zimbra).
+
+⚠️ Les adresses partent en **copie cachée (Cci)**, le destinataire visible étant
+le support : en « À », chaque enseignant verrait l'adresse de tous les autres.
+
+⚠️ Au-delà de `MAILTO_LONGUEUR_MAX` caractères, le lien n'est **pas** ouvert :
+un lien tronqué par la messagerie n'atteindrait qu'une partie de l'équipe, sans
+que personne ne s'en aperçoive. Les adresses sont alors seulement copiées, à
+coller dans le champ Cci.
+
+Les doublons (même personne, plusieurs comptes) sont fusionnés, et les comptes
+équipe sans adresse (ex. compte véhicule) sont signalés, jamais ignorés en
+silence. Le Journal garde le nombre d'adresses, pas la liste.
+
+---
+
 ## Superpositions de widgets
 
 ⚠️ **Tk superpose sans prévenir deux widgets placés sur la même cellule de
@@ -512,7 +532,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.8**
+Version : **1.6.9**
 
 ---
 

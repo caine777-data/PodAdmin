@@ -13,9 +13,9 @@ Le cas échéant, un bandeau apparaît en bas de la barre latérale avec un bout
 
 ## Étape 1. Créer le dépôt public
 
-Le dépôt de code reste **privé** (il contient le mot de passe du compte
-véhicule). On crée un second dépôt, **public**, qui ne contiendra que le fichier
-de version et les exécutables — aucun secret.
+Le dépôt de code reste **privé**. On crée un second dépôt, **public**, qui ne
+contiendra que le fichier de version et les exécutables (voir « Le dépôt public
+expose-t-il quelque chose de sensible ? » en fin de guide).
 
 1. Sur GitHub, cliquer sur **+** (en haut à droite) → **New repository**
 2. **Repository name** : `podadmin-releases`
@@ -71,10 +71,13 @@ C'est terminé.
 2. Pousser avec **GitHub Desktop** (dépôt privé)
 3. Sur GitHub : onglet **Actions** → workflow **Build installers** →
    **Run workflow**
-4. **NOUVEAU** — deux champs apparaissent :
-   - **Numéro de version** : saisir `1.1.0` (par exemple)
-   - **Phrase du bandeau** (facultatif) : « Correction de l'affichage des
-     groupes d'accès »
+4. Quatre champs apparaissent :
+   - **version** : écrire `OUI` — le numéro est lu dans `__version__.py`.
+     ⚠️ Champ VIDE = compilation d'essai, rien n'est publié.
+   - **notes** (facultatif) : la phrase du bandeau, par exemple
+     « Correction de l'affichage des groupes d'accès »
+   - **obligatoire** : laisser **décoché** pour une publication normale
+   - **version_minimale** : laisser **vide** pour une publication normale
 5. **Run workflow**
 
 C'est tout. La compilation produit les exécutables, crée la Release **sur le
@@ -89,7 +92,7 @@ prochain démarrage.
 
 ## Compiler sans publier (essai)
 
-**Laisser le champ « Numéro de version » VIDE.** La compilation se déroule
+**Laisser le champ « version » VIDE.** La compilation se déroule
 normalement et vous récupérez les exécutables dans les artefacts du run, mais
 aucune Release n'est créée et personne n'est prévenu.
 
@@ -110,23 +113,38 @@ collègues de les télécharger sans avoir accès au dépôt de code, qui reste 
 Sans ce jeton, l'écriture sur le dépôt public est impossible et la publication
 échoue.
 
-En revanche, une **compilation d'essai** (champ « Numéro de version » laissé
+En revanche, une **compilation d'essai** (champ « version » laissé
 vide) fonctionne sans jeton : elle produit les exécutables en artefacts, sans
 rien publier.
 
-**Comment forcer une mise à jour vraiment importante ?**
-Par exemple après une rotation du mot de passe du compte véhicule, qui rend les
-anciennes versions incapables de téléverser les gros fichiers : éditer une fois
-`version.json` sur le dépôt public et renseigner `version_minimale` avec la
-version en dessous de laquelle le bandeau devient orange et insistant.
-L'application reste utilisable — le bandeau insiste, il n'interdit pas.
+**Comment rendre une mise à jour OBLIGATOIRE ?**
+Au « Run workflow », cocher **obligatoire**. Les postes en version antérieure
+affichent alors une fenêtre bloquante — message neutre, sans raison — avec
+deux seules issues : « Télécharger la mise à jour » ou « Quitter » (la croix,
+Échap et Alt+F4 quittent aussi).
+
+- **version_minimale** vide : la version publiée sert de seuil, TOUT poste non
+  à jour est bloqué. Sinon, seuls les postes sous ce seuil le sont ; les autres
+  reçoivent le bandeau habituel.
+- Une fois confirmé par le serveur, le blocage est **mémorisé sur le poste**
+  (`~/.podadmin.json`) : il reste actif même sans réseau, pour qu'on ne puisse
+  pas le contourner en coupant la connexion. Un réseau absent ne peut en
+  revanche jamais DÉCLENCHER un blocage. Le verrou se lève dès qu'une version
+  plus récente est installée.
+- Vérifier après publication que `version.json` contient bien
+  `"obligatoire": true`.
+- Pour tester, il faut une version **antérieure** installée : une version ne se
+  bloque jamais face à sa propre publication.
+
+Sans cocher « obligatoire », `version_minimale` rend seulement le bandeau
+orange et insistant.
 
 **Comment désactiver complètement la vérification ?**
 Mettre `UPDATE_URL = ""` dans `config.py`.
 
 **Le dépôt public expose-t-il quelque chose de sensible ?**
-Non pour PodAdmin : il ne contient aucun secret et ne fait rien sans un jeton
-d'administration valide.
-⚠️ **En revanche, ne jamais y publier le Pod Téléverseur** : son exécutable
-contient le mot de passe du compte véhicule. Il lui faudra son propre dépôt, ou
-un hébergement universitaire.
+Les exécutables de PodAdmin et du Pod Téléverseur contiennent les identifiants
+du compte véhicule `DEPOT`, lisibles par qui décompresse l'exécutable. C'est
+un choix assumé : ce compte n'a aucun droit particulier. PodAdmin ne fait rien
+sans un jeton d'administration valide. Si un jour ce compte recevait des
+droits, cette question serait à reprendre avant toute publication.

@@ -1,6 +1,7 @@
 {
-  "version": "1.6.9",
+  "version": "1.8.0",
   "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
-  "notes": "Comptes : bouton Ecrire a l'equipe. Messages d'erreur restants traduits.",
-  "version_minimale": ""
+  "notes": "Mise a jour obligatoire possible. Themes et disciplines dans l'onglet Videos.",
+  "version_minimale": "",
+  "obligatoire": false
 }

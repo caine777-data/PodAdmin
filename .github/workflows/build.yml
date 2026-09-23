@@ -27,6 +27,24 @@ on:
         description: "Phrase affichée dans le bandeau de mise à jour (facultatif)"
         required: false
         default: ""
+      obligatoire:
+        description: >-
+          Rendre cette mise à jour OBLIGATOIRE : les postes en version
+          antérieure afficheront une fenêtre bloquante (aucun bandeau) tant
+          qu'ils n'ont pas mis à jour. La fenêtre affiche un message neutre,
+          sans en donner la raison. Laisser décoché pour une publication
+          normale.
+        required: false
+        type: boolean
+        default: false
+      version_minimale:
+        description: >-
+          Version en dessous de laquelle l'application est considérée
+          périmée (ex. 1.7.0). Si "obligatoire" est coché et ce champ laissé
+          vide, la version publiée elle-même sert de seuil : TOUT poste non à
+          jour sera alors bloqué.
+        required: false
+        default: ""
 
 jobs:
   # ─────────────────────────────── WINDOWS ───────────────────────────────
@@ -125,7 +143,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.6.9
+          AppVersion=1.8.0
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
@@ -362,12 +380,26 @@ jobs:
           NOTES="${{ inputs.notes }}"
           [ -z "$NOTES" ] && NOTES="Nouvelle version disponible."
 
+          # ⚠️ Les champs du formulaire DOIVENT être transmis ici : sur le
+          # Téléverseur, ils avaient été ajoutés au formulaire mais jamais
+          # écrits dans version.json — cocher « obligatoire » publiait une
+          # mise à jour parfaitement normale, sans que rien ne le signale.
+          OBLIGATOIRE="${{ inputs.obligatoire }}"
+          [ -z "$OBLIGATOIRE" ] && OBLIGATOIRE="false"
+
+          MINIMALE="${{ inputs.version_minimale }}"
+          # Obligatoire sans seuil précisé : la version publiée sert de seuil.
+          if [ "$OBLIGATOIRE" = "true" ] && [ -z "$MINIMALE" ]; then
+            MINIMALE="$VERSION"
+          fi
+
           cat > version.json <<EOF
           {
             "version": "$VERSION",
             "url": "https://github.com/$DEPOT/releases/latest",
             "notes": "$NOTES",
-            "version_minimale": ""
+            "version_minimale": "$MINIMALE",
+            "obligatoire": $OBLIGATOIRE
           }
           EOF
           echo "Contenu publié :" && cat version.json

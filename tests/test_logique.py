@@ -939,24 +939,93 @@ class TestMessagesDErreur:
         assert "quelque chose d'inattendu" in texte
 
     def test_aucun_message_brut_ne_subsiste(self):
-        """Garde-fou sur la source : aucune exception insérée telle quelle
-        dans un texte affiché.
+        """Aucune exception insérée telle quelle dans un texte AFFICHÉ.
 
-        ⚠️ Une première version ne cherchait que la forme EXACTE
-        `text=f"❌  {e}"`. Elle passait alors que neuf messages bruts
-        subsistaient sous d'autres formes (« Renommage refusé : {e} »,
-        « Échec : {e} », « ❌ {err} »…), dont celui de la CONNEXION. La
-        recherche porte désormais sur toute variable d'exception (e, exc, err)
-        insérée dans un `text=f"…"`."""
+        ⚠️ Quatre versions successives de ce test ont laissé passer des cas.
+        Les trois premières cherchaient des motifs textuels (« text=f… »,
+        « ❌ … », puis une fenêtre de lignes autour de la chaîne) : chacune
+        ratait une forme, la dernière parce qu'un appel au Journal situé
+        juste au-dessus « couvrait » l'affichage qui le suivait.
+
+        On analyse donc l'ARBRE SYNTAXIQUE : pour chaque chaîne formatée
+        contenant une exception (e, exc, err), on remonte à l'instruction qui
+        la contient réellement. Seules sont autorisées les destinations non
+        affichées : le Journal (`_log`), un attribut `.error` gardé en
+        mémoire, une variable de travail, ou une exception relancée."""
+        import ast
+
+        import app as module_app
+        source = open(module_app.__file__.replace(".pyc", ".py"),
+                      encoding="utf-8").read()
+        arbre = ast.parse(source)
+        parents = {}
+        for noeud in ast.walk(arbre):
+            for enfant in ast.iter_child_nodes(noeud):
+                parents[enfant] = noeud
+
+        def contient_exception(js):
+            for v in ast.walk(js):
+                if isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name) \
+                        and v.value.id in ("e", "exc", "err"):
+                    return True
+            return False
+
+        def destination_autorisee(noeud):
+            courant = noeud
+            while courant in parents:
+                precedent, courant = courant, parents[courant]
+                # f"…".lower() : la chaîne est l'OBJET de la méthode, pas un
+                # argument — on remonte jusqu'à ce qu'on en fait vraiment.
+                if isinstance(courant, ast.Attribute) and courant.value is precedent:
+                    continue
+                if isinstance(courant, ast.Call) and courant.func is precedent:
+                    continue
+                if isinstance(courant, ast.Raise):
+                    return True
+                if isinstance(courant, (ast.Assign, ast.AugAssign)):
+                    cibles = courant.targets if isinstance(courant, ast.Assign) \
+                        else [courant.target]
+                    for c in cibles:
+                        if isinstance(c, ast.Attribute) and c.attr == "error":
+                            return True
+                        if isinstance(c, ast.Name) and c.id in ("texte", "detail"):
+                            return True
+                    return False
+                if isinstance(courant, ast.Call):
+                    f = courant.func
+                    nom = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+                    if nom in ("_log", "journal", "tracer"):
+                        return True
+                    # self._ui(self._log, f"…") : le Journal est le 1er argument
+                    if nom == "_ui" and courant.args:
+                        cible = courant.args[0]
+                        if isinstance(cible, ast.Attribute) and cible.attr == "_log":
+                            return True
+                    return False
+                if isinstance(courant, (ast.FunctionDef, ast.Module)):
+                    return False
+            return False
+
+        fautifs = [(n.lineno, ast.get_source_segment(source, n)[:60])
+                   for n in ast.walk(arbre)
+                   if isinstance(n, ast.JoinedStr) and contient_exception(n)
+                   and not destination_autorisee(n)]
+        assert not fautifs, (
+            f"exception(s) affichée(s) telles quelles (ligne, extrait) : {fautifs}")
+
+    def test_aucune_teinte_seule_dans_les_messages_d_etat(self):
+        """Les couleurs passées aux messages d'état doivent venir de la
+        palette : une teinte seule (« #22c55e », « gray ») s'applique aux deux
+        modes, et plusieurs tombaient sous le seuil de lisibilité en clair."""
         import re
 
         import app as module_app
         source = open(module_app.__file__.replace(".pyc", ".py"),
                       encoding="utf-8").read()
-        fautifs = [(source[:m.start()].count("\n") + 1, m.group(0)[:60])
-                   for m in re.finditer(r'text=f"[^"]*\{(?:e|exc|err)\}', source)]
-        assert not fautifs, (
-            f"exception(s) affichée(s) telles quelles (ligne, extrait) : {fautifs}")
+        fautifs = re.findall(
+            r'(?:_browse_set_msg|_set_item_status)\([^\n]*, "(?:gray\d*|#[0-9a-fA-F]{6})"\)',
+            source)
+        assert not fautifs, f"teintes seules : {fautifs[:5]}"
 
     def test_signaler_journalise_le_detail(self):
         """Le détail technique doit rester disponible pour le support."""
@@ -1270,3 +1339,56 @@ class TestAdressesEquipe:
             for ligne in inspect.getsource(methode).splitlines():
                 if "self._log(" in ligne:
                     assert "join(adresses)" not in ligne and "{adresses}" not in ligne
+
+
+class TestChainesEtThemesEnLot:
+    """Étape 3 : l'affectation en lot choisit aussi les thèmes, et le mode
+    « Remplacer » ne laisse plus de thèmes orphelins."""
+
+    B = "https://exemple.invalid/rest"
+
+    def _f(self, *args, **kw):
+        import app as module_app
+        return module_app.calculer_chaines_themes(*args, **kw)
+
+    def test_ajouter_une_chaine_ne_touche_pas_aux_themes(self):
+        c, t = self._f([f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"],
+                       [f"{self.B}/channels/2/"], [], "ajouter")
+        assert c == [f"{self.B}/channels/1/", f"{self.B}/channels/2/"]
+        assert t is None, "le champ theme ne doit pas être envoyé"
+
+    def test_ajouter_cumule_les_themes(self):
+        c, t = self._f([f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"],
+                       [f"{self.B}/channels/2/"], [f"{self.B}/themes/20/"], "ajouter")
+        assert t == [f"{self.B}/themes/10/", f"{self.B}/themes/20/"]
+
+    def test_remplacer_purge_les_themes_orphelins(self):
+        """⚠️ Défaut d'origine : seules les chaînes étaient remplacées, et une
+        vidéo sortie d'une chaîne gardait un thème de cette chaîne."""
+        c, t = self._f([f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"],
+                       [f"{self.B}/channels/2/"], [], "remplacer")
+        assert c == [f"{self.B}/channels/2/"]
+        assert t == [], "un thème de la chaîne retirée est resté sur la vidéo"
+
+    def test_remplacer_sans_themes_charges_ne_les_efface_pas(self):
+        """Si les thèmes n'ont pas pu être chargés, personne n'a pu en choisir :
+        les effacer tous serait une destruction invisible."""
+        c, t = self._f([f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"],
+                       [f"{self.B}/channels/2/"], [], "remplacer",
+                       themes_disponibles=False)
+        assert t is None
+
+    def test_doublons_avec_ou_sans_barre_finale(self):
+        """« …/1 » et « …/1/ » désignent la même chaîne : l'ancien calcul les
+        aurait envoyées toutes les deux."""
+        c, _ = self._f([f"{self.B}/channels/1/"], [], [f"{self.B}/channels/1"], [],
+                       "ajouter")
+        assert c == [f"{self.B}/channels/1/"]
+
+    def test_le_lot_utilise_le_selecteur_chaines_et_themes(self):
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._browse_multi_action)
+        assert "ChainesThemesPicker(" in source
+        assert "ChannelPicker(" not in source

@@ -64,6 +64,11 @@ except Exception:
 APP_TITLE = "PodAdmin — Université de Toulouse"
 APP_VERSION = __version__      # affichée dans la barre latérale et « À propos »
 
+# Texte de la fenêtre de mise à jour OBLIGATOIRE. Volontairement neutre : il
+# ne donne jamais la raison du blocage (voir `_bloquer_demarrage`).
+MESSAGE_BLOCAGE = ("Une nouvelle version de PodAdmin est nécessaire pour "
+                   "continuer. Téléchargez-la et installez-la.")
+
 # Délai (ms) d'attente après la dernière frappe avant de reconstruire une liste
 # filtrée. Assez court pour rester réactif, assez long pour éviter de refaire
 # tout l'affichage à chaque caractère saisi.
@@ -770,6 +775,22 @@ class App(_AppBase):
 
         self._build_ui()
         self._show_tab("upload")
+
+        # ⚠️ CONTRÔLE LOCAL DU BLOCAGE, EN TOUT PREMIER — avant l'auto-connexion :
+        # un blocage déjà confirmé par le serveur doit s'appliquer SANS
+        # ATTENDRE le réseau, sinon on pourrait utiliser l'application pendant
+        # la vérification.
+        blocage_local = cfg.blocage_local_actif(APP_VERSION)
+        if blocage_local:
+            self._bloquer_demarrage({
+                "version": blocage_local["version"],
+                "url": blocage_local["url"],
+                "notes": blocage_local["notes"],
+                "urgent": True,
+                "obligatoire": True,
+            })
+            self.after(2000, self._verifier_maj)
+            return
 
         # Connexion auto si token déjà présent
         if self.config_data.get("url") and self.token:
@@ -1900,7 +1921,7 @@ class App(_AppBase):
             self.api.patch_video(video, patch)
         except Exception as e:
             it.error = f"réattribution échouée : {e}"
-            self._ui(self._set_item_status, it, "⚠️ NON réattribuée", "#ef4444")
+            self._ui(self._set_item_status, it, "⚠️ NON réattribuée", T_ERREUR)
             self._ui(self._log,
                      f"⚠️⚠️ {it.title} : vidéo créée (slug={slug}) mais NON réattribuée "
                      f"à {owner_url} — RESTE au nom du véhicule ! Réattribuez-la à la "
@@ -1930,7 +1951,7 @@ class App(_AppBase):
                 self._ui(self.batch_progress.set, idx / total)
                 continue
 
-            self._ui(self._set_item_status, it, "en cours", "#3b82f6")
+            self._ui(self._set_item_status, it, "en cours", T_SECONDAIRE)
             self._ui(self.file_progress.set, 0)
             self._ui(self.global_msg.configure,
                      text=f"Téléversement {idx}/{total} : {it.title}", text_color=T_SECONDAIRE)
@@ -1947,7 +1968,7 @@ class App(_AppBase):
                 self._ui(self._log,
                          f"⟳ Nouvelle tentative {attempt}/{total_try} pour {item.title} "
                          f"(coupure réseau)…")
-                self._ui(self._set_item_status, item, f"⟳ essai {attempt+1}", "#f59e0b")
+                self._ui(self._set_item_status, item, f"⟳ essai {attempt+1}", T_ALERTE)
 
             big = self._file_size(it.path) > cfg.CHUNK_THRESHOLD_BYTES
             try:
@@ -1980,7 +2001,7 @@ class App(_AppBase):
                             self._ui(self._log,
                                      f"⏳ Finalisation coupée par la passerelle (HTTP {ce.status}) "
                                      "— Pod termine côté serveur, vérification en cours…")
-                            self._ui(self._set_item_status, it, "⏳ finalisation serveur", "#f59e0b")
+                            self._ui(self._set_item_status, it, "⏳ finalisation serveur", T_ALERTE)
                             video = self._verify_chunked_creation(
                                 search_term, pre_ids, self.vehicle_owner_url)
                             if not video:
@@ -2056,7 +2077,7 @@ class App(_AppBase):
                         self._ui(self._log,
                                  f"⚠️ {it.title} : envoi direct coupé par le serveur. "
                                  "Bascule automatique sur l'envoi par morceaux…")
-                        self._ui(self._set_item_status, it, "⟳ envoi par morceaux", "#f59e0b")
+                        self._ui(self._set_item_status, it, "⟳ envoi par morceaux", T_ALERTE)
                         video = self._replier_sur_chunked(
                             it, owner_url, type_url, is_draft, progress, on_retry)
                     it.slug = video.get("slug", "") if isinstance(video, dict) else ""
@@ -2088,21 +2109,21 @@ class App(_AppBase):
 
                 ok += 1
                 it.done = True            # marque le succès : ne sera pas relancé
-                self._ui(self._set_item_status, it, "✅ terminé", "#22c55e")
+                self._ui(self._set_item_status, it, "✅ terminé", T_SUCCES)
                 self._ui(self._log,
                          f"Téléversé{' (chunké)' if big else ''} : {it.title}  (slug={it.slug})")
 
             except PodChunkedError as e:
                 it.error = f"{e} — {e.body}"
-                self._ui(self._set_item_status, it, "❌ échec", "#ef4444")
+                self._ui(self._set_item_status, it, "❌ échec", T_ERREUR)
                 self._ui(self._log, f"ÉCHEC chunké {it.title} : {e} | {e.body[:200]}")
             except PodAPIError as e:
                 it.error = f"{e} — {e.body}"
-                self._ui(self._set_item_status, it, "❌ échec", "#ef4444")
+                self._ui(self._set_item_status, it, "❌ échec", T_ERREUR)
                 self._ui(self._log, f"ÉCHEC {it.title} : {e} | {e.body[:200]}")
             except Exception as e:
                 it.error = str(e)
-                self._ui(self._set_item_status, it, "❌ échec", "#ef4444")
+                self._ui(self._set_item_status, it, "❌ échec", T_ERREUR)
                 self._ui(self._log, f"ÉCHEC {it.title} : {e}")
 
             self._ui(self.batch_progress.set, idx / total)
@@ -3282,23 +3303,183 @@ class App(_AppBase):
                 de bandeau, sans pouvoir en connaître la raison."""
                 self._ui(self._log, f"ℹ Mise à jour — {message}")
 
+            # Un SEUL appel réseau, réutilisé pour les deux besoins : comparer
+            # les versions, et distinguer "vérification impossible" de "à jour
+            # confirmé" (voir plus bas) — sans quoi il aurait fallu interroger
+            # le serveur deux fois à chaque démarrage.
+            try:
+                donnees = maj.recuperer_info(
+                    getattr(cfg, "UPDATE_URL", ""),
+                    getattr(cfg, "UPDATE_TIMEOUT_S", 5),
+                    journal=tracer)
+            except Exception as e:
+                donnees = None
+                self._ui(self._log, f"ℹ Mise à jour — vérification interrompue : {e}")
+
             try:
                 info = maj.etat_mise_a_jour(
                     APP_VERSION,
                     getattr(cfg, "UPDATE_URL", ""),
                     getattr(cfg, "UPDATE_TIMEOUT_S", 5),
-                    journal=tracer)
+                    journal=tracer, infos=donnees)
             except Exception as e:
                 info = None              # jamais bloquant
                 self._ui(self._log, f"ℹ Mise à jour — vérification interrompue : {e}")
-            if info:
+
+            if info and info.get("obligatoire"):
+                # Blocage : PAS de bandeau, une fenêtre modale à la place.
+                # Réservé aux cas où continuer serait dangereux — voir maj.py.
+                #
+                # ⚠️ On MÉMORISE ce blocage localement (voir config.py) : le
+                # serveur vient de répondre, en direct, que cette version est
+                # bloquée. Ce fait doit désormais tenir MÊME SANS RÉSEAU, pour
+                # empêcher qu'une personne notifiée une fois contourne le
+                # blocage en coupant simplement sa connexion ensuite.
+                cfg.enregistrer_blocage_confirme(
+                    APP_VERSION, info.get("version", ""),
+                    info.get("url", ""), info.get("notes", ""))
+                self._ui(self._bloquer_demarrage, info)
+            elif info:
                 self._ui(self._afficher_bandeau_maj, info)
             else:
-                # Cas normal le plus fréquent : on est à jour. On le note
-                # discrètement pour confirmer que la vérification a bien eu lieu.
-                self._ui(self._log,
-                         f"ℹ Mise à jour — version {APP_VERSION} : aucune plus récente.")
+                # `info` est None ici pour DEUX raisons possibles : vérification
+                # impossible (réseau coupé, `donnees` est None) OU version
+                # confirmée à jour (`donnees` contient une réponse valide). On
+                # ne lève le verrou local QUE dans le second cas : lever un
+                # verrou parce que le réseau était simplement absent romprait
+                # tout le principe du blocage local.
+                if donnees and donnees.get("version"):
+                    cfg.lever_blocage_local()
+                    self._ui(self._log,
+                             f"ℹ Mise à jour — version {APP_VERSION} : aucune "
+                             f"plus récente.")
+                else:
+                    self._ui(self._log,
+                             "ℹ Mise à jour — vérification impossible "
+                             "(réseau indisponible) ; le verrou local, s'il "
+                             "existe, n'est pas modifié.")
         self._run(travail)
+
+    def _bloquer_demarrage(self, info: dict):
+        """Fenêtre modale, SANS échappatoire, en cas de mise à jour obligatoire.
+
+        ⚠️ Différence fondamentale avec `_afficher_bandeau_maj` : ici on ne
+        propose pas, on empêche. Réservé aux cas où continuer présenterait un
+        vrai risque technique (ex. le mot de passe du compte véhicule a changé
+        et un dépôt échouerait en abîmant des fichiers à moitié envoyés) —
+        jamais un usage de contrôle d'accès ou de licence : ce n'est ni prévu
+        ni fiable pour ça (l'utilisateur garde la main sur son poste et sur le
+        fichier `config.json`).
+
+        La fenêtre n'a PAS de bouton "Annuler" qui permettrait de revenir à
+        l'application normalement : le seul geste possible est de télécharger
+        la mise à jour, ou de QUITTER complètement l'application (bouton
+        dédié, et fermeture système normale — voir ⚠️ ci-dessous).
+
+        ⚠️ LEÇON D'UN INCIDENT RÉEL (à ne jamais reproduire) : une première
+        version de cette fenêtre appelait `win.focus_force()` en boucle
+        toutes les 400 ms, dans l'intention d'empêcher un simple Alt+Tab de
+        rendre la fenêtre principale utilisable en tâche de fond. En usage
+        réel sur Windows, cette boucle a empêché jusqu'à ALT+F4 de fonctionner
+        : la seule issue restante était de tuer le processus depuis le
+        gestionnaire de tâches. `grab_set()` SEUL suffit à empêcher toute
+        interaction avec le contenu de l'application pendant que la modale
+        est affichée — c'est son rôle documenté en Tkinter — sans jamais
+        interférer avec les raccourcis et contrôles du système
+        d'exploitation lui-même. Un blocage qui empêche même de FERMER
+        l'application est un risque plus grave que celui qu'il cherchait à
+        éviter : quelqu'un dans une situation urgente doit TOUJOURS pouvoir
+        au moins quitter proprement."""
+        try:
+            win = ctk.CTkToplevel(self)
+            win.title("Mise à jour requise")
+            # Centrée sur la fenêtre principale : ouverte en (0,0), elle
+            # passait inaperçue sur un grand écran, et l'appli semblait
+            # simplement figée. 260 px suffisent (mesuré : le bouton
+            # « Quitter » finit à 218 px).
+            largeur, hauteur = 440, 260
+            try:
+                self.update_idletasks()
+                x = self.winfo_rootx() + max(0, (self.winfo_width() - largeur) // 2)
+                y = self.winfo_rooty() + max(0, (self.winfo_height() - hauteur) // 2)
+                win.geometry(f"{largeur}x{hauteur}+{x}+{y}")
+            except Exception:
+                win.geometry(f"{largeur}x{hauteur}")
+            win.resizable(False, False)
+
+            # La croix de CETTE fenêtre modale ferme l'application ENTIÈRE
+            # (comme le bouton "Quitter" ci-dessous), plutôt que de ne rien
+            # faire : ne rien faire du tout laisserait quelqu'un sans AUCUNE
+            # réaction visible à son clic, ce qui est déroutant et n'apporte
+            # rien — le blocage empêche déjà toute utilisation normale.
+            win.protocol("WM_DELETE_WINDOW", self._quitter_depuis_blocage)
+            # Échap, comme dans toutes les fenêtres de PodAdmin : ici, fermer
+            # revient à quitter, exactement comme la croix.
+            win.bind("<Escape>", lambda e: self._quitter_depuis_blocage())
+
+            ctk.CTkLabel(win, text="⚠️  Mise à jour requise",
+                         font=ctk.CTkFont(size=17, weight="bold"),
+                         text_color=T_ERREUR).pack(pady=(24, 8))
+            # Message FIXE et NEUTRE : la fenêtre de blocage ne donne jamais
+            # la raison de la mise à jour obligatoire. Le champ `notes` de
+            # version.json (saisi dans le formulaire de publication) n'est
+            # volontairement PAS affiché ici — il reste réservé au bandeau
+            # de mise à jour ordinaire.
+            ctk.CTkLabel(win, text=MESSAGE_BLOCAGE, wraplength=380, justify="center",
+                         font=ctk.CTkFont(size=13)).pack(padx=24, pady=(0, 6))
+            ctk.CTkLabel(
+                win,
+                text=f"Version installée : {APP_VERSION}\n"
+                     f"Version requise : {info.get('version', '?')}",
+                text_color=T_SECONDAIRE, justify="center",
+                font=ctk.CTkFont(size=11)).pack(pady=(0, 16))
+
+            # ⚠️ Le bouton est TOUJOURS présent, jamais conditionnel à
+            # `info.get("url")`. Dans le circuit normal, le workflow renseigne
+            # toujours l'URL — mais un `version.json` corrompu, modifié à la
+            # main, ou un ancien verrou local sans URL enregistrée ne doivent
+            # JAMAIS produire une fenêtre bloquante sans la moindre issue :
+            # ce serait un blocage total, sans moyen d'agir. On retombe alors
+            # sur la page générique des Releases (config.UPDATE_FALLBACK_URL).
+            lien = info.get("url") or getattr(
+                cfg, "UPDATE_FALLBACK_URL",
+                "https://github.com/caine777-data/podteleverseur-releases/releases/latest")
+            ctk.CTkButton(
+                win, text="Télécharger la mise à jour", height=H_PRINCIPAL,
+                fg_color=C_ACTION, hover_color=C_ACTION_SURV,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                command=lambda u=lien: self._ouvrir_lien_maj(u)
+                ).pack(fill="x", padx=32, pady=(0, 8))
+
+            # Issue TOUJOURS disponible : quitter proprement. Un blocage qui
+            # empêcherait même de fermer l'application serait plus dangereux
+            # que le risque qu'il cherche à prévenir (voir la note ⚠️ plus haut).
+            ctk.CTkButton(
+                win, text="Quitter", height=H_NORMAL,
+                fg_color="transparent", text_color=T_SECONDAIRE,
+                hover_color=("gray85", "gray25"),
+                font=ctk.CTkFont(size=12),
+                command=self._quitter_depuis_blocage
+                ).pack(fill="x", padx=32, pady=(0, 4))
+
+            # Mise au premier plan UNE SEULE FOIS, via le helper commun à
+            # toutes les fenêtres secondaires de l'appli : `-topmost` retiré
+            # après 150 ms, focus donné une fois, puis `grab_set` (qui empêche
+            # d'utiliser le contenu de l'application). Sans cette mise au
+            # premier plan, la fenêtre pouvait s'ouvrir DERRIÈRE la fenêtre
+            # principale : l'appli paraissait figée, sans message visible.
+            # ⚠️ Jamais de boucle qui reprend le focus : voir la leçon
+            # documentée ci-dessus (ALT+F4 rendu inopérant).
+            _focus_toplevel(win, self)
+
+            self._log(f"⚠️ Mise à jour obligatoire : version {APP_VERSION} "
+                      f"bloquée (minimum requis : {info.get('version', '?')}).")
+        except Exception as e:
+            # Un échec de CONSTRUCTION de la fenêtre ne doit jamais planter
+            # l'application ni, à l'inverse, la laisser silencieusement
+            # utilisable sans que personne ne le sache : on trace fort.
+            self._log(f"❌ Impossible d'afficher le blocage de mise à jour "
+                      f"obligatoire : {e}")
 
     def _afficher_bandeau_maj(self, info: dict):
         """Affiche le bandeau annonçant une nouvelle version.
@@ -3366,6 +3547,25 @@ class App(_AppBase):
             self._log("Page de téléchargement ouverte.")
         except Exception as e:
             self._log(f"❌ Ouverture du lien de mise à jour : {e}")
+
+    def _quitter_depuis_blocage(self):
+        """Ferme l'application ENTIÈRE depuis la fenêtre de blocage obligatoire.
+
+        Le blocage empêche d'UTILISER l'application, jamais de la FERMER :
+        c'est le seul geste toujours garanti, quoi qu'il arrive par ailleurs
+        (réseau, serveur, formulaire de publication mal rempli). Voir la note
+        d'incident dans `_bloquer_demarrage`.
+
+        `self.destroy()` sur la fenêtre RACINE ferme aussi ses enfants
+        (dont cette modale) — pas besoin de les détruire un par un."""
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        try:
+            self.quit()          # ceinture et bretelles : sort de mainloop()
+        except Exception:
+            pass
 
     def _auto_connect(self):
         """(Thread) Reconnexion automatique au démarrage si un token est déjà enregistré."""
@@ -4435,6 +4635,7 @@ class App(_AppBase):
         # de la migration pour ne rien casser si un code résiduel y accède.
         self.browse_videos = self.videos
         self.browse_channels = []       # chaînes (pour filtre + sélecteur)
+        self.browse_themes = []         # thèmes (sélecteur chaînes & thèmes)
         self.browse_chan_by_url = {}    # URL chaîne → titre
         self.browse_filtered = []       # sous-ensemble affiché
         self.browse_selected = None     # vidéo en cours d'édition
@@ -4486,6 +4687,14 @@ class App(_AppBase):
             self.browse_channels = channels
             self.browse_chan_by_url = {str(c.get("url", "")).rstrip("/"): c.get("title", "?")
                                        for c in channels}
+            # Thèmes : chargés au même moment, pour le sélecteur « chaînes et
+            # thèmes ». Un échec n'empêche rien : la fenêtre montre alors les
+            # chaînes seules.
+            try:
+                self.browse_themes = self.api.get_themes()
+            except Exception as e:
+                self.browse_themes = []
+                self._ui(self._log, f"Thèmes non chargés : {e}")
             self._ui(self._browse_refresh_channel_menu)
             # Demande au magasin partagé : `force` reflète le clic sur
             # « Rafraîchir » (voir _browse_load).
@@ -5057,10 +5266,13 @@ class App(_AppBase):
                 return
             # Le sélecteur de chaînes rend la main par CALLBACK : la suite du
             # traitement se poursuit donc dans _browse_multi_channels.
-            ChannelPicker(self, self.browse_channels,
-                          on_done=lambda urls, labels: self._browse_multi_channels(
-                              videos, list(urls)),
-                          title=f"Chaînes pour {len(videos)} vidéo(s)")
+            ChainesThemesPicker(
+                self, self.browse_channels, getattr(self, "browse_themes", []),
+                on_done=lambda urls, themes: self._browse_multi_channels(
+                    videos, list(urls), list(themes)),
+                title=f"Chaînes et thèmes pour {len(videos)} vidéo(s)",
+                consigne="Cochez les chaînes et, si besoin, les thèmes à appliquer "
+                         "aux vidéos sélectionnées. Cocher un thème coche sa chaîne.")
             return
 
         if not messagebox.askyesno(
@@ -5073,7 +5285,8 @@ class App(_AppBase):
         self._run(self._do_browse_multi_action, videos, payload, groupes,
                   chaines, libelle)
 
-    def _demander_mode_chaines(self, nb_videos: int, nb_chaines: int):
+    def _demander_mode_chaines(self, nb_videos: int, nb_chaines: int,
+                               nb_themes: int = 0):
         """Demande s'il faut AJOUTER aux chaînes existantes ou les REMPLACER.
 
         Une vidéo peut légitimement appartenir à plusieurs chaînes : remplacer
@@ -5094,7 +5307,9 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=15, weight="bold")).pack(
             anchor="w", padx=20, pady=(18, 4))
         ctk.CTkLabel(fen,
-                     text=f"{nb_chaines} chaîne(s) choisie(s) pour {nb_videos} vidéo(s).",
+                     text=(f"{nb_chaines} chaîne(s)"
+                           + (f" et {nb_themes} thème(s)" if nb_themes else "")
+                           + f" choisi(s) pour {nb_videos} vidéo(s)."),
                      text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(
             anchor="w", padx=20, pady=(0, 12))
 
@@ -5117,8 +5332,8 @@ class App(_AppBase):
                       command=lambda: retenir("remplacer")).pack(fill="x", padx=20,
                                                                  pady=(12, 4))
         ctk.CTkLabel(fen,
-                     text="Les affectations existantes seront PERDUES et remplacées "
-                          "par la nouvelle sélection.",
+                     text="Les chaînes ET les thèmes existants seront PERDUS et "
+                          "remplacés par la nouvelle sélection.",
                      font=ctk.CTkFont(size=11), text_color=T_DISCRET,
                      wraplength=420, justify="left").pack(anchor="w", padx=24)
 
@@ -5128,16 +5343,20 @@ class App(_AppBase):
         self.wait_window(fen)
         return choix["mode"]
 
-    def _browse_multi_channels(self, videos, chaines):
-        """Suite du traitement après le choix des chaînes (appelé en callback)."""
-        mode = self._demander_mode_chaines(len(videos), len(chaines))
+    def _browse_multi_channels(self, videos, chaines, themes=None):
+        """Suite du traitement après le choix des chaînes et thèmes."""
+        themes = list(themes or [])
+        mode = self._demander_mode_chaines(len(videos), len(chaines), len(themes))
         if mode is None:
             return                                   # annulé
         libelle = ("ajout à" if mode == "ajouter" else "remplacement par")
+        libelle += f" {len(chaines)} chaîne(s)"
+        if themes:
+            libelle += f" et {len(themes)} thème(s)"
         self.browse_multi_msg.configure(text="⏳ Application en cours…",
                                         text_color=T_SECONDAIRE)
         self._run(self._do_browse_multi_action, videos, None, None,
-                  (chaines, mode), f"{libelle} {len(chaines)} chaîne(s)")
+                  (chaines, themes, mode), libelle)
 
     def _do_browse_multi_action(self, videos, payload, groupes, chaines, libelle):
         """(Thread) Applique l'action à chaque vidéo, une par une.
@@ -5169,16 +5388,21 @@ class App(_AppBase):
                     # conserve les chaînes actuelles de CHAQUE vidéo — elles
                     # diffèrent d'une vidéo à l'autre — tandis que « remplacer »
                     # impose la même liste à toutes.
-                    urls, mode = chaines
-                    if mode == "ajouter":
-                        # `_rel_urls` : le champ `channel` peut contenir des URLs
-                        # ou des objets imbriqués selon le sérialiseur.
-                        actuelles = self._rel_urls(v.get("channel"), normalise=False)
-                        finales = list(dict.fromkeys(list(actuelles) + list(urls)))
-                    else:
-                        finales = list(urls)
-                    self.api.assign_video_to_channels(v, finales)
-                    self._sync_video_caches(slug, {"channel": finales})
+                    # `chaines` = (chaînes, thèmes, mode) ; le calcul est dans
+                    # `calculer_chaines_themes`, testable sans réseau.
+                    urls, themes_choisis, mode = chaines
+                    finales, themes_finaux = calculer_chaines_themes(
+                        self._rel_urls(v.get("channel"), normalise=False),
+                        self._rel_urls(v.get("theme"), normalise=False),
+                        urls, themes_choisis, mode,
+                        themes_disponibles=bool(getattr(self, "browse_themes", [])))
+                    # Chaînes et thèmes dans le MÊME PATCH (voir
+                    # _browse_apply_channels).
+                    self.api.assign_video_to_channels(v, finales, theme_urls=themes_finaux)
+                    maj = {"channel": finales}
+                    if themes_finaux is not None:
+                        maj["theme"] = themes_finaux
+                    self._sync_video_caches(slug, maj)
                 ok += 1
             except Exception as e:
                 fail += 1
@@ -5270,6 +5494,15 @@ class App(_AppBase):
                 f"durée : {v.get('duration_in_time', '—')}     "
                 f"encodée : {'oui' if v.get('encoded') else 'non'}\n"
                 f"chaînes : {chan_names}")
+        # Thèmes : affichés seulement s'il y en a, pour ne pas alourdir le
+        # cas courant. Sans cette ligne, vérifier l'effet de « Chaînes… »
+        # obligeait à rouvrir la fenêtre.
+        titres_themes = {_norm_url(t.get("url")): t.get("title", "?")
+                         for t in getattr(self, "browse_themes", []) or []}
+        noms_themes = [titres_themes.get(_norm_url(t), "?")
+                       for t in self._rel_urls(v.get("theme"), normalise=False)]
+        if noms_themes:
+            info += f"\nthèmes : {', '.join(noms_themes)}"
         ctk.CTkLabel(self.browse_detail, text=info, justify="left", anchor="w",
                      text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(
             anchor="w", padx=4, pady=(2, 4))
@@ -5391,17 +5624,31 @@ class App(_AppBase):
                           height=26, fg_color=C_ACTION, hover_color=C_ACTION_SURV, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
 
 
-        ctk.CTkLabel(self.browse_detail, text="Type", anchor="w",
+        # — Classement : type ET disciplines, les deux nomenclatures de la
+        #   vidéo, côte à côte. Le bouton Disciplines était d'abord rangé dans
+        #   « Relations » avec les chaînes ; il est plus naturel ici.
+        ctk.CTkLabel(self.browse_detail, text="Classement", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        ligne_classement = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        ligne_classement.pack(fill="x", padx=4)
         # Titre du type courant de la vidéo (résolu depuis son URL)
         cur_url = v.get("type")
         cur_url = cur_url.get("url") if isinstance(cur_url, dict) else cur_url
         url_to_title = {str(u).rstrip("/"): t for t, u in (self.type_map or {}).items()}
         cur_title = url_to_title.get(str(cur_url).rstrip("/"), "(non défini)")
         titles = sorted((self.type_map or {}).keys(), key=str.lower) or ["(aucun type)"]
-        type_menu = ctk.CTkOptionMenu(self.browse_detail, width=220, values=titles, **STYLE_CHAMP)
+        type_menu = ctk.CTkOptionMenu(ligne_classement, width=200, values=titles, **STYLE_CHAMP)
         type_menu.set(cur_title if cur_title in titles else titles[0])
-        type_menu.pack(anchor="w", padx=4)
+        type_menu.pack(side="left")
+        ctk.CTkButton(ligne_classement, text="🏷️  Disciplines…", fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=lambda: self._browse_edit_disciplines(v)).pack(side="left", padx=(6, 0))
+        # Disciplines actuelles, lisibles sans ouvrir la fenêtre.
+        noms_disc = self._noms_disciplines(v)
+        ctk.CTkLabel(self.browse_detail,
+                     text="Disciplines : " + (", ".join(noms_disc) if noms_disc else "aucune"),
+                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
+                     anchor="w", justify="left", wraplength=360).pack(anchor="w", padx=4, pady=(4, 0))
         def _apply_type(choice):
             # Change le type de la vidéo (PATCH valeur unique = URL du type)
             new_url = (self.type_map or {}).get(choice)
@@ -5583,11 +5830,11 @@ class App(_AppBase):
         try:
             self.api.add_subtitle(v, lang, kind, path)   # conversion .srt incluse
             self._ui(self._log, f"➕ Sous-titre ajouté ({lang}/{kind}) à {v.get('slug')}")
-            self._ui(self._browse_set_msg, "✅  Sous-titre ajouté.", "#22c55e")
+            self._ui(self._browse_set_msg, "✅  Sous-titre ajouté.", T_SUCCES)
             self._run(self._sub_load, v)                 # recharge la liste
         except Exception as e:
             self._ui(self._log, f"❌ Ajout sous-titre {v.get('slug')} : {e}")
-            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
 
     def _sub_delete(self, v, track):
         """Supprime une piste après confirmation."""
@@ -5607,7 +5854,7 @@ class App(_AppBase):
             self._run(self._sub_load, v)
         except Exception as e:
             self._ui(self._log, f"❌ Suppression sous-titre : {e}")
-            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
 
     def _maj_bouton_masse(self):
         """Inscrit le nombre de vidéos concernées dans le bouton de masse.
@@ -5736,6 +5983,47 @@ class App(_AppBase):
         if new and new != v.get("title"):
             self._browse_patch(v, {"title": new}, f"titre → {new}")
 
+    def _noms_disciplines(self, v: dict) -> list:
+        """Titres des disciplines d'une vidéo (champ LISTE d'URLs)."""
+        par_url = {str(u).rstrip("/"): t
+                   for t, u in (getattr(self, "discipline_map", {}) or {}).items()}
+        noms = []
+        for u in self._rel_urls(v.get("discipline"), normalise=False):
+            noms.append(par_url.get(str(u).rstrip("/"), "?"))
+        return noms
+
+    def _browse_edit_disciplines(self, v: dict):
+        """Choisit les disciplines d'UNE vidéo.
+
+        Relation MULTIPLE : une vidéo peut porter plusieurs disciplines, d'où
+        des cases à cocher et non un menu. La sélection REMPLACE l'ensemble
+        des disciplines de la vidéo — ce qui est coché est exactement ce qui
+        restera."""
+        disciplines = [{"url": u, "title": t}
+                       for t, u in sorted((getattr(self, "discipline_map", {}) or {}).items(),
+                                          key=lambda x: x[0].lower())]
+        if not disciplines:
+            self._browse_set_msg(
+                "Aucune discipline définie : créez-en dans l'onglet "
+                "« Types & disciplines ».", T_ALERTE)
+            return
+        actuelles = {str(u).rstrip("/") for u in
+                     self._rel_urls(v.get("discipline"), normalise=False)}
+        preselection = {d["url"]: d["title"] for d in disciplines
+                        if str(d["url"]).rstrip("/") in actuelles}
+
+        def appliquer(urls, libelles):
+            urls = list(urls)
+            texte = ", ".join(libelles) if libelles else "aucune"
+            self._browse_patch(v, {"discipline": urls}, f"disciplines → {texte}")
+
+        ChannelPicker(self, disciplines, on_done=appliquer,
+                      title=f"Disciplines — {v.get('title', v.get('slug', ''))}",
+                      preselected=preselection,
+                      consigne="Cochez les disciplines de cette vidéo. Une vidéo "
+                               "peut en porter plusieurs ; décocher les retire.",
+                      vide="Aucune discipline.")
+
     def _browse_patch(self, v, payload, msg):
         """Applique un PATCH sur la vidéo puis met à jour l'affichage."""
         self._run(self._do_browse_patch, v, payload, msg)
@@ -5748,12 +6036,12 @@ class App(_AppBase):
             v.update(payload)               # met à jour le cache local
             self._sync_video_caches(v.get("slug"), payload)   # … et les autres onglets
             self._ui(self._log, f"✏ {slug} : {msg}")
-            self._ui(self._browse_set_msg, f"✅  {msg}", "#22c55e")
+            self._ui(self._browse_set_msg, f"✅  {msg}", T_SUCCES)
             self._ui(self._browse_render_detail)
             self._ui(self._render_browse_list)
         except Exception as e:
             self._ui(self._log, f"❌ {slug} : {e}")
-            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
             self._ui(self._browse_render_detail)
 
     def _debounce(self, cle: str, fonction):
@@ -6136,19 +6424,26 @@ class App(_AppBase):
                   f"{len(urls)} co-propriétaire(s)")
 
     def _browse_edit_channels(self, v):
-        """Ouvre le sélecteur de chaînes pour cette vidéo."""
-        cur = v.get("channel") or []
-        if isinstance(cur, str):
-            cur = [cur]
-        pre = {c: self.browse_chan_by_url.get(str(c).rstrip("/"), str(c)) for c in cur}
-        ChannelPicker(self, self.browse_channels,
-                      on_done=lambda urls, labels: self._browse_apply_channels(v, urls),
-                      title="Chaînes de la vidéo", preselected=pre)
+        """Choisit les chaînes ET les thèmes de cette vidéo."""
+        ChainesThemesPicker(
+            self, self.browse_channels, getattr(self, "browse_themes", []),
+            on_done=lambda chaines, themes: self._browse_apply_channels(v, chaines, themes),
+            title=f"Chaînes et thèmes — {v.get('title', v.get('slug', ''))}",
+            chaines_pre=self._rel_urls(v.get("channel"), normalise=False),
+            themes_pre=self._rel_urls(v.get("theme"), normalise=False))
 
-    def _browse_apply_channels(self, v, urls):
-        """Affecte la vidéo aux chaînes choisies."""
-        self._run(self._do_browse_patch, v, {"channel": list(urls)},
-                  f"{len(urls)} chaîne(s)")
+    def _browse_apply_channels(self, v, urls, themes=None):
+        """Affecte la vidéo aux chaînes (et thèmes) choisis.
+
+        Chaînes et thèmes partent dans le MÊME PATCH : envoyés séparément, un
+        échec entre les deux laisserait des thèmes pointant vers une chaîne
+        que la vidéo n'a plus."""
+        payload = {"channel": list(urls)}
+        texte = f"{len(urls)} chaîne(s)"
+        if themes is not None:
+            payload["theme"] = list(themes)
+            texte += f", {len(themes)} thème(s)"
+        self._run(self._do_browse_patch, v, payload, texte)
 
     def _open_video_in_browser(self, slug):
         """Ouvre la page publique Pod de la vidéo dans le navigateur par défaut.
@@ -6160,15 +6455,15 @@ class App(_AppBase):
         url = f"{base}/video/{slug}/"
         try:
             webbrowser.open(url)
-            self._browse_set_msg(f"Ouverture de {slug} dans le navigateur…", "gray")
+            self._browse_set_msg(f"Ouverture de {slug} dans le navigateur…", T_SECONDAIRE)
         except Exception as e:
-            self._browse_set_msg(f"Impossible d'ouvrir le navigateur : {e}", "#f59e0b")
+            self._browse_set_msg(f"Impossible d'ouvrir le navigateur : {message_utilisateur(e)}", T_ALERTE)
 
     def _browse_replace_source(self, v):
         """Remplace le fichier source d'une vidéo puis relance l'encodage.
         Demande le fichier + double confirmation (opération destructive)."""
         if not self.api:
-            self._browse_set_msg("Connectez-vous d'abord.", "#f59e0b")
+            self._browse_set_msg("Connectez-vous d'abord.", T_ALERTE)
             return
         path = filedialog.askopenfilename(
             title="Choisir le nouveau fichier vidéo",
@@ -6190,7 +6485,7 @@ class App(_AppBase):
                 "Le titre, les chaînes et les droits sont conservés.\n\n"
                 "Cette action ne peut pas être annulée. Continuer ?"):
             return
-        self._browse_set_msg("⏳  Envoi du nouveau fichier…", "gray")
+        self._browse_set_msg("⏳  Envoi du nouveau fichier…", T_SECONDAIRE)
         # Fenêtre MODALE de progression : elle bloque toute autre manipulation
         # pendant l'envoi (une action concurrente couperait le téléversement)
         # et montre l'avancement.
@@ -6304,17 +6599,18 @@ class App(_AppBase):
                              "disponible à la fin de l'encodage.")
             except Exception as e:
                 self._ui(self._browse_set_msg,
-                         f"Fichier remplacé, mais encodage non lancé : {e}", "#f59e0b")
+                         f"Fichier remplacé, mais encodage non lancé : {message_utilisateur(e)}", T_ALERTE)
                 self._ui(self._log, f"❌ Encodage non lancé ({slug}) : {e}")
                 if modal:
                     self._ui(modal.finish, False,
-                             f"Fichier remplacé, mais le ré-encodage n'a pas pu être lancé : {e}")
+                             f"Fichier remplacé, mais le ré-encodage n'a pas pu être lancé : "
+                             f"{message_utilisateur(e)}")
             self._ui(self._browse_render_detail)
         except Exception as e:
-            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
             self._ui(self._log, f"❌ Remplacement {slug} : {e}")
             if modal:
-                self._ui(modal.finish, False, f"Le remplacement a échoué : {e}")
+                self._ui(modal.finish, False, f"Le remplacement a échoué : {message_utilisateur(e)}")
         finally:
             # Quoi qu'il arrive, la modale doit être déverrouillée : une fenêtre
             # modale restée bloquée rendrait l'application inutilisable.
@@ -6351,7 +6647,7 @@ class App(_AppBase):
             self._ui(self._browse_render_detail)
         except Exception as e:
             self._ui(self._log, f"❌ Suppression {slug} : {e}")
-            self._ui(self._browse_set_msg, f"❌  {e}", "#ef4444")
+            self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
 
     # ═════════════════════════════════════════════════════════════════════
     #  ONGLET RÉAFFECTATION — changer le propriétaire de vidéos par lot
@@ -9863,14 +10159,240 @@ class BannerPicker(ctk.CTkToplevel):
         self.destroy()
 
 
+def _norm_url(u) -> str:
+    """URL d'une relation, sans barre finale ; accepte un dict {url: …}."""
+    if isinstance(u, dict):
+        u = u.get("url", "")
+    return str(u or "").rstrip("/")
+
+
+def calculer_chaines_themes(actuelles, actuels_themes, chaines, themes, mode,
+                            themes_disponibles: bool = True):
+    """Chaînes et thèmes FINAUX d'une vidéo lors d'une affectation en lot.
+
+    Renvoie (chaines_finales, themes_finaux) ; `themes_finaux` vaut None quand
+    le champ `theme` ne doit pas être modifié.
+
+      • « ajouter » : ajout aux chaînes et thèmes de CHAQUE vidéo (ils
+        diffèrent d'une vidéo à l'autre). Sans thème choisi, les thèmes
+        existants ne sont pas touchés.
+      • « remplacer » : la vidéo reçoit EXACTEMENT la sélection. Cela purge
+        aussi les thèmes des chaînes retirées — auparavant, seules les chaînes
+        étaient remplacées, et une vidéo sortie d'une chaîne gardait un thème
+        pointant vers une chaîne qu'elle n'avait plus.
+
+    ⚠️ Si les thèmes n'ont pas pu être chargés (`themes_disponibles` faux),
+    personne n'a pu en choisir : « remplacer » ne touche alors PAS au champ
+    `theme`, au lieu de tous les effacer sans qu'on ait pu les voir.
+
+    Dédoublonnage sur l'URL sans barre finale, en gardant la première forme
+    rencontrée : « …/1 » et « …/1/ » désignent la même chaîne."""
+    def fusion(*listes):
+        vues, sortie = set(), []
+        for liste in listes:
+            for u in liste or []:
+                n = _norm_url(u)
+                if n and n not in vues:
+                    vues.add(n)
+                    sortie.append(u)
+        return sortie
+
+    if mode == "ajouter":
+        finales = fusion(actuelles, chaines)
+        themes_finaux = fusion(actuels_themes, themes) if themes else None
+    else:
+        finales = fusion(chaines)
+        themes_finaux = fusion(themes) if themes_disponibles else None
+    return finales, themes_finaux
+
+
+class ChainesThemesPicker(ctk.CTkToplevel):
+    """Chaînes ET thèmes d'une vidéo, dans une seule fenêtre.
+
+    Chaque chaîne est suivie de ses thèmes, en retrait. Deux règles de
+    cohérence — les mêmes que l'onglet Chaînes & thèmes :
+      • cocher un thème coche aussi sa chaîne : un thème n'a de sens que si la
+        vidéo figure dans la chaîne qui le porte ;
+      • décocher une chaîne retire ses thèmes.
+
+    `on_done(urls_chaines, urls_themes)` au Valider. La sélection REMPLACE les
+    chaînes et thèmes de la vidéo.
+
+    ⚠️ Une chaîne ou un thème déjà présents sur la vidéo mais ABSENTS des
+    listes chargées (chaîne invisible, liste incomplète) sont conservés tels
+    quels : les perdre en silence au premier Valider serait une destruction
+    que rien à l'écran ne laisse deviner."""
+
+    def __init__(self, master, channels, themes, on_done,
+                 title="Chaînes et thèmes", chaines_pre=None, themes_pre=None,
+                 consigne="Cochez les chaînes où la vidéo doit apparaître, et "
+                          "si besoin ses thèmes. Cocher un thème coche sa chaîne."):
+        super().__init__(master)
+        self.on_done = on_done
+        self.channels = sorted(channels or [], key=lambda c: str(c.get("title", "")).lower())
+        self._url_chaine = {_norm_url(c.get("url")): c.get("url", "") for c in self.channels}
+        self._titre_chaine = {_norm_url(c.get("url")): c.get("title", "?") for c in self.channels}
+        self.themes_par_chaine: dict[str, list] = {}
+        self._url_theme, self._chaine_du_theme = {}, {}
+        for t in themes or []:
+            n_t, n_c = _norm_url(t.get("url")), _norm_url(t.get("channel"))
+            if not n_t:
+                continue
+            self._url_theme[n_t] = t.get("url", "")
+            self._chaine_du_theme[n_t] = n_c
+            self.themes_par_chaine.setdefault(n_c, []).append(t)
+        for liste in self.themes_par_chaine.values():
+            liste.sort(key=lambda t: str(t.get("title", "")).lower())
+
+        self.chaines = set()
+        for u in chaines_pre or []:
+            n = _norm_url(u)
+            self._url_chaine.setdefault(n, u if isinstance(u, str) else n)
+            self.chaines.add(n)
+        self.themes = set()
+        for u in themes_pre or []:
+            n = _norm_url(u)
+            self._url_theme.setdefault(n, u if isinstance(u, str) else n)
+            self.themes.add(n)
+
+        self.title(title)
+        self.geometry("500x580")
+        _focus_toplevel(self, master)
+        ctk.CTkLabel(self, text=consigne, justify="left",
+                     wraplength=460).pack(padx=14, pady=(14, 8), anchor="w")
+        self.filter = ctk.CTkEntry(self, placeholder_text="🔍 chaîne ou thème…")
+        self.filter.pack(fill="x", padx=14)
+        self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
+        self.listbox = ctk.CTkScrollableFrame(self, height=360, fg_color=S_CARTE)
+        self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
+        self.chosen_lbl = ctk.CTkLabel(self, text="", text_color=T_SECONDAIRE,
+                                       wraplength=460, justify="left")
+        self.chosen_lbl.pack(padx=14, anchor="w")
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=14, pady=10)
+        self.bouton_defaut = ctk.CTkButton(
+            btns, text="Valider", fg_color=C_SUCCES, hover_color=C_SUCCES_SURV,
+            command=self._validate)
+        self.bouton_defaut.pack(side="right")
+        ctk.CTkButton(btns, text="Annuler", fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      command=self.destroy, text_color=T_SUR_NEUTRE).pack(side="right", padx=8)
+        self._render()
+        self._update_chosen()
+
+    def _render_differe(self):
+        job = getattr(self, "_render_job", None)
+        if job:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._render_job = self.after(FILTER_DELAY_MS, self._render)
+
+    def _render(self):
+        """Chaînes filtrées, chacune suivie de ses thèmes en retrait.
+
+        Une chaîne s'affiche si son titre OU l'un de ses thèmes correspond au
+        filtre ; dans le second cas, seuls les thèmes correspondants sont
+        montrés, pour qu'on retrouve un thème sans connaître sa chaîne."""
+        flt = self.filter.get().strip().lower()
+        for w in self.listbox.winfo_children():
+            w.destroy()
+        affiches = 0
+        for c in self.channels:
+            n_c = _norm_url(c.get("url"))
+            titre = str(c.get("title", "?"))
+            themes = self.themes_par_chaine.get(n_c, [])
+            chaine_ok = not flt or flt in titre.lower()
+            themes_vus = themes if chaine_ok else [
+                t for t in themes if flt in str(t.get("title", "")).lower()]
+            if not chaine_ok and not themes_vus:
+                continue
+            affiches += 1
+            sel = n_c in self.chaines
+            ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + titre,
+                          anchor="w", height=H_NORMAL,
+                          fg_color=S_SELECTION if sel else "transparent",
+                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
+                          font=ctk.CTkFont(size=12, weight="bold"),
+                          command=lambda n=n_c: self._toggle_chaine(n)).pack(fill="x", pady=1)
+            for t in themes_vus:
+                n_t = _norm_url(t.get("url"))
+                sel_t = n_t in self.themes
+                ctk.CTkButton(self.listbox,
+                              text=("☑  " if sel_t else "☐  ") + "↳ " + str(t.get("title", "?")),
+                              anchor="w", height=H_COMPACT,
+                              fg_color=S_SELECTION if sel_t else "transparent",
+                              text_color=T_SECONDAIRE, hover_color=("gray75", "gray28"),
+                              font=ctk.CTkFont(size=11),
+                              command=lambda nt=n_t: self._toggle_theme(nt)
+                              ).pack(fill="x", padx=(28, 0), pady=0)
+        if not affiches:
+            ctk.CTkLabel(self.listbox, text="Aucune chaîne.",
+                         text_color=T_SECONDAIRE).pack(pady=8)
+
+    def _toggle_chaine(self, n_c: str):
+        if n_c in self.chaines:
+            self.chaines.discard(n_c)
+            # Décocher une chaîne retire ses thèmes.
+            self.themes = {t for t in self.themes if self._chaine_du_theme.get(t) != n_c}
+        else:
+            self.chaines.add(n_c)
+        self._render()
+        self._update_chosen()
+
+    def _toggle_theme(self, n_t: str):
+        if n_t in self.themes:
+            self.themes.discard(n_t)
+        else:
+            self.themes.add(n_t)
+            n_c = self._chaine_du_theme.get(n_t)
+            if n_c:
+                self.chaines.add(n_c)       # cocher un thème coche sa chaîne
+        self._render()
+        self._update_chosen()
+
+    def _update_chosen(self):
+        nc, nt = len(self.chaines), len(self.themes)
+        if not nc:
+            texte = "Sélection : aucune chaîne"
+        else:
+            noms = sorted(self._titre_chaine.get(n, "(chaîne non listée)") for n in self.chaines)
+            texte = f"Sélection : {nc} chaîne(s), {nt} thème(s) — " + ", ".join(noms[:4])
+            if nc > 4:
+                texte += "…"
+        self.chosen_lbl.configure(text=texte)
+
+    def _validate(self):
+        """Renvoie les URLs d'origine. Un thème dont la chaîne n'est plus
+        cochée est écarté ; un thème dont la chaîne est INCONNUE (hors des
+        listes chargées) est conservé, faute de pouvoir juger."""
+        chaines = [self._url_chaine.get(n, n) for n in sorted(self.chaines)]
+        themes = [self._url_theme.get(n, n) for n in sorted(self.themes)
+                  if self._chaine_du_theme.get(n) is None
+                  or self._chaine_du_theme.get(n) in self.chaines]
+        try:
+            self.on_done(chaines, themes)
+        finally:
+            self.destroy()
+
+
 class ChannelPicker(ctk.CTkToplevel):
     """Sélecteur multi-chaînes (sur le modèle d'OwnerPicker).
     `channels` : liste de dicts {url, title}. `on_done(urls, labels)` au Valider."""
 
     def __init__(self, master, channels, on_done, title="Chaînes",
-                 preselected: dict | None = None):
-        """Construit la fenêtre de sélection de chaînes (liste + filtre)."""
+                 preselected: dict | None = None,
+                 consigne: str = "Cochez les chaînes où la vidéo doit apparaître.",
+                 vide: str = "Aucune chaîne."):
+        """Construit la fenêtre de sélection (liste à cocher + filtre).
+
+        Générique malgré son nom : elle coche n'importe quels éléments
+        `{url, title}`. Elle sert aussi aux DISCIPLINES, qui ont la même forme
+        et qu'une vidéo peut porter en plusieurs exemplaires — d'où les
+        paramètres `consigne` et `vide`, plutôt qu'une seconde fenêtre
+        quasi identique à maintenir."""
         super().__init__(master)
+        self._vide = vide
         self.on_done = on_done
         self.channels = channels or []
         self.selected: dict[str, str] = dict(preselected or {})   # url → titre
@@ -9878,8 +10400,8 @@ class ChannelPicker(ctk.CTkToplevel):
         self.geometry("460x520")
         _focus_toplevel(self, master)
 
-        ctk.CTkLabel(self, text="Cochez les chaînes où la vidéo doit apparaître.",
-                     justify="left").pack(padx=14, pady=(14, 8), anchor="w")
+        ctk.CTkLabel(self, text=consigne, justify="left",
+                     wraplength=420).pack(padx=14, pady=(14, 8), anchor="w")
 
         self.filter = ctk.CTkEntry(self, placeholder_text="🔍 titre…")
         self.filter.pack(fill="x", padx=14)
@@ -9934,7 +10456,7 @@ class ChannelPicker(ctk.CTkToplevel):
                           font=ctk.CTkFont(size=12),
                           command=lambda cc=c: self._toggle(cc)).pack(fill="x", pady=1)
         if not matches:
-            ctk.CTkLabel(self.listbox, text="Aucune chaîne.", text_color=T_SECONDAIRE).pack(pady=8)
+            ctk.CTkLabel(self.listbox, text=self._vide, text_color=T_SECONDAIRE).pack(pady=8)
 
     def _toggle(self, c: dict):
         """Coche/décoche une chaîne dans la sélection."""

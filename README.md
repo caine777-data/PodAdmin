@@ -223,6 +223,23 @@ onglet ayant un chargement automatique doit figurer au contrat.
 
 ---
 
+## Mise à jour obligatoire
+
+Même dispositif que le Pod Téléverseur : case « obligatoire » dans le
+formulaire de publication, fenêtre bloquante au message neutre
+(`MESSAGE_BLOCAGE`), deux issues (télécharger ou quitter — croix, Échap et
+Alt+F4 quittent aussi), verrou local qui résiste à l'absence de réseau.
+Procédure dans **`MISE_A_JOUR.md`** ; tests dans `tests/test_mise_a_jour.py`.
+
+⚠️ Jamais de boucle qui reprend le focus : sur le Téléverseur, elle avait rendu
+Alt+F4 inopérant et obligé à tuer le processus.
+
+⚠️ Les champs du formulaire doivent être TRANSMIS au `version.json` : sur le
+Téléverseur, ils avaient été ajoutés au formulaire sans jamais être écrits
+dans le fichier — cocher « obligatoire » ne bloquait rien.
+
+---
+
 ## Écrire à l'équipe (onglet Comptes)
 
 « ✉ Écrire à l'équipe » ouvre un message vers tous les comptes au statut
@@ -265,9 +282,52 @@ avertissement de sécurité.
 
 ---
 
+## Chaînes et thèmes d'une vidéo
+
+Le bouton « 🗂 Chaînes… » du panneau de détail choisit les chaînes **et** les
+thèmes (`ChainesThemesPicker`) : chaque chaîne est suivie de ses thèmes, en
+retrait. Le filtre cherche dans les deux — on retrouve un thème sans
+connaître sa chaîne. Les thèmes de la vidéo s'affichent sous ses chaînes.
+
+Deux règles de cohérence, les mêmes que l'onglet Chaînes & thèmes :
+cocher un thème **coche sa chaîne** ; décocher une chaîne **retire ses
+thèmes**.
+
+⚠️ Chaînes et thèmes partent dans **un seul PATCH** : envoyés séparément, un
+échec entre les deux laisserait des thèmes pointant vers une chaîne que la
+vidéo n'a plus.
+
+**En lot** (sélection multiple → « Chaînes ») : même sélecteur, puis le choix
+« Ajouter » ou « Remplacer ». Le calcul est dans `calculer_chaines_themes`,
+testable sans réseau :
+
+- **Ajouter** : chaînes et thèmes s'ajoutent à ceux de chaque vidéo ; sans
+  thème choisi, les thèmes existants ne sont pas touchés.
+- **Remplacer** : la vidéo reçoit exactement la sélection, thèmes compris.
+  ⚠️ Auparavant, seules les chaînes étaient remplacées : une vidéo sortie
+  d'une chaîne gardait un thème de cette chaîne.
+- ⚠️ Si les thèmes n'ont pas pu être chargés, « Remplacer » ne touche pas au
+  champ `theme` : personne n'a pu en choisir, les effacer tous serait une
+  destruction invisible.
+
+⚠️ Une chaîne ou un thème déjà présents sur la vidéo mais **absents des listes
+chargées** sont conservés tels quels : les perdre en silence au premier
+« Valider » serait une destruction que rien à l'écran ne laisse deviner.
+
+---
+
 ## Discipline
 
-Trois points, indissociables — le champ au dépôt ne sert à rien sans moyen de
+**Sur une vidéo** : bouton « 🏷️ Disciplines… » dans le panneau de détail,
+section « Classement », à côté du menu Type — les deux nomenclatures de la
+vidéo, côte à côte. Cases à cocher — une vidéo peut
+en porter plusieurs — et la sélection **remplace** l'ensemble : tout décocher
+les retire toutes. Les disciplines actuelles sont affichées sous les boutons.
+
+Le sélecteur est `ChannelPicker`, rendu générique (paramètres `consigne` et
+`vide`) plutôt que dupliqué.
+
+**En lot**, trois points indissociables — le champ au dépôt ne sert à rien sans moyen de
 rattraper ensuite :
 
 | Où | Quoi |
@@ -532,7 +592,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.6.9**
+Version : **1.8.0**
 
 ---
 

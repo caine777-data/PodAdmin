@@ -2442,3 +2442,222 @@ class TestAucuneSuperposition:
             app.update_idletasks()
             parcourir(app.tabs[cle], cle)
         assert not fautifs, "widgets superposés :\n  " + "\n  ".join(fautifs)
+
+
+class TestDisciplineDUneVideo:
+    """Étape 1 : choisir les disciplines d'une vidéo depuis le panneau de
+    détail de l'onglet Vidéos (avant, seule l'action de masse le permettait)."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    class _API:
+        def __init__(self):
+            self.patches = []
+
+        def patch_video(self, v, payload):
+            self.patches.append(dict(payload))
+            return {}
+
+        def get_tracks(self, *a, **k):
+            return []
+
+    def _preparer(self, app, disciplines_video):
+        import app as module_app
+        app.api = self._API()
+        app.discipline_map = {"Odontologie": f"{self.BASE}/discipline/1/",
+                              "Physique": f"{self.BASE}/discipline/2/"}
+        v = {"slug": "v1", "title": "Cours", "is_draft": False, "encoded": True,
+             "channel": [], "type": "", "owner": "u", "date_added": "2026-01-01",
+             "url": f"{self.BASE}/videos/v1/", "discipline": disciplines_video}
+        app.videos = [v]
+        app.browse_chan_by_url, app.type_map = {}, {}
+        app.browse_multi.clear()          # voir TestClassementTypeEtDisciplines
+        app.browse_selected = None
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app._browse_select(v)
+        app.update()
+        return v, module_app
+
+    def _picker(self, app, module_app):
+        return [w for w in app.winfo_children()
+                if isinstance(w, module_app.ChannelPicker)][-1]
+
+    def test_les_disciplines_actuelles_sont_precochees(self, app):
+        v, m = self._preparer(app, [f"{self.BASE}/discipline/1/"])
+        app._browse_edit_disciplines(v)
+        app.update()
+        pk = self._picker(app, m)
+        try:
+            assert list(pk.selected.values()) == ["Odontologie"]
+        finally:
+            pk.destroy()
+
+    def test_le_patch_envoie_une_liste(self, app):
+        """⚠️ Relation MULTIPLE : l'API refuse une URL nue (HTTP 400)."""
+        import time
+        v, m = self._preparer(app, [])
+        app._browse_edit_disciplines(v)
+        app.update()
+        pk = self._picker(app, m)
+        pk._toggle({"url": f"{self.BASE}/discipline/2/", "title": "Physique"})
+        pk._validate()
+        debut = time.time()
+        while not app.api.patches and time.time() - debut < 2:
+            app.update()
+            time.sleep(0.05)
+        assert app.api.patches == [{"discipline": [f"{self.BASE}/discipline/2/"]}]
+
+    def test_decocher_tout_retire_toutes_les_disciplines(self, app):
+        """La sélection REMPLACE l'ensemble : ce qui est coché est exactement
+        ce qui reste. Tout décocher doit envoyer une liste vide."""
+        import time
+        v, m = self._preparer(app, [f"{self.BASE}/discipline/1/"])
+        app._browse_edit_disciplines(v)
+        app.update()
+        pk = self._picker(app, m)
+        pk._toggle({"url": f"{self.BASE}/discipline/1/", "title": "Odontologie"})
+        pk._validate()
+        debut = time.time()
+        while not app.api.patches and time.time() - debut < 2:
+            app.update()
+            time.sleep(0.05)
+        assert app.api.patches == [{"discipline": []}]
+
+    def test_sans_nomenclature_on_explique_au_lieu_d_ouvrir_une_liste_vide(self, app):
+        v, m = self._preparer(app, [])
+        app.discipline_map = {}
+        avant = len([w for w in app.winfo_children()
+                     if isinstance(w, m.ChannelPicker)])
+        app._browse_edit_disciplines(v)
+        app.update()
+        apres = len([w for w in app.winfo_children()
+                     if isinstance(w, m.ChannelPicker)])
+        assert apres == avant, "une fenêtre vide a été ouverte"
+
+    def test_le_selecteur_generique_garde_son_texte_pour_les_chaines(self, app):
+        """Rendre ChannelPicker générique ne doit pas changer la consigne
+        des chaînes, qui l'utilisent toujours."""
+        import inspect
+
+        import app as module_app
+        sig = inspect.signature(module_app.ChannelPicker.__init__)
+        assert "chaînes" in sig.parameters["consigne"].default
+
+
+class TestClassementTypeEtDisciplines:
+    """Le bouton Disciplines est à côté du menu Type (section « Classement »),
+    et non dans « Relations » avec les chaînes : type et disciplines sont les
+    deux nomenclatures de la vidéo."""
+
+    def test_disciplines_sur_la_meme_ligne_que_le_type(self, app):
+        import customtkinter as ctk
+
+        class _API:
+            def get_tracks(self, *a, **k):
+                return []
+        app.api = _API()
+        app.discipline_map = {"Odontologie": "u1"}
+        v = {"slug": "v1", "title": "Cours", "is_draft": False, "encoded": True,
+             "channel": [], "type": "", "owner": "u", "date_added": "2026-01-01",
+             "url": "x", "discipline": []}
+        app.videos = [v]
+        app.browse_chan_by_url, app.type_map = {}, {"Cours": "t1"}
+        # Instance partagée : une sélection multiple laissée par un test
+        # précédent remplacerait le panneau de détail par le panneau de lot.
+        app.browse_multi.clear()
+        app.browse_selected = None
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app._browse_select(v)
+        app.update()
+        lignes = [w for w in app.browse_detail.winfo_children()
+                  if any(isinstance(k, ctk.CTkButton) and "Disciplines" in str(k.cget("text"))
+                         for k in w.winfo_children())]
+        assert len(lignes) == 1, "bouton Disciplines absent ou en double"
+        voisins = lignes[0].winfo_children()
+        assert any(isinstance(k, ctk.CTkOptionMenu) for k in voisins), (
+            "le bouton Disciplines n'est pas sur la ligne du menu Type")
+        assert not any(isinstance(k, ctk.CTkButton) and "Chaînes" in str(k.cget("text"))
+                       for k in voisins), "Disciplines est encore rangé avec les chaînes"
+
+
+class TestChainesEtThemesDUneVideo:
+    """Étape 2 : le bouton « Chaînes… » d'une vidéo choisit aussi ses thèmes."""
+
+    B = "https://exemple.invalid/rest"
+
+    def _picker(self, app, chaines_pre, themes_pre):
+        import app as module_app
+        chaines = [{"url": f"{self.B}/channels/1/", "title": "PAPP"},
+                   {"url": f"{self.B}/channels/2/", "title": "Odontologie"}]
+        themes = [
+            {"url": f"{self.B}/themes/10/", "title": "Nutrition", "channel": f"{self.B}/channels/1/"},
+            {"url": f"{self.B}/themes/11/", "title": "Sommeil", "channel": f"{self.B}/channels/1/"},
+            {"url": f"{self.B}/themes/20/", "title": "Parodontie", "channel": f"{self.B}/channels/2/"}]
+        self.resultat = None
+
+        def fin(c, t):
+            self.resultat = (c, t)
+        pk = module_app.ChainesThemesPicker(app, chaines, themes, on_done=fin,
+                                            chaines_pre=chaines_pre, themes_pre=themes_pre)
+        app.update()
+        return pk
+
+    def test_cocher_un_theme_coche_sa_chaine(self, app):
+        pk = self._picker(app, [], [])
+        pk._toggle_theme(f"{self.B}/themes/20")
+        pk._validate()
+        chaines, themes = self.resultat
+        assert f"{self.B}/channels/2/" in chaines, "la chaîne du thème n'a pas été cochée"
+        assert themes == [f"{self.B}/themes/20/"]
+
+    def test_decocher_une_chaine_retire_ses_themes(self, app):
+        pk = self._picker(app, [f"{self.B}/channels/1/"],
+                          [f"{self.B}/themes/10/", f"{self.B}/themes/11/"])
+        pk._toggle_chaine(f"{self.B}/channels/1")
+        # L'ÉTAT AFFICHÉ d'abord : la validation écarte de toute façon les
+        # thèmes orphelins, donc vérifier seulement le résultat final laissait
+        # passer des thèmes encore cochés à l'écran sous une chaîne décochée
+        # (vérifié par mutation).
+        assert not pk.themes, "des thèmes restent cochés sous une chaîne décochée"
+        pk._validate()
+        assert self.resultat == ([], []), (
+            "des thèmes restent attachés à une chaîne décochée")
+
+    def test_une_chaine_non_listee_est_conservee(self, app):
+        """⚠️ La perdre en silence au premier Valider serait une destruction
+        que rien à l'écran ne laisse deviner."""
+        pk = self._picker(app, [f"{self.B}/channels/99/"], [])
+        pk._validate()
+        assert f"{self.B}/channels/99/" in self.resultat[0]
+
+    def test_les_urls_repartent_dans_leur_forme_d_origine(self, app):
+        pk = self._picker(app, [f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"])
+        pk._validate()
+        assert self.resultat == ([f"{self.B}/channels/1/"], [f"{self.B}/themes/10/"])
+
+    def test_filtrer_sur_un_theme_montre_sa_chaine(self, app):
+        """On doit retrouver un thème sans connaître sa chaîne."""
+        import customtkinter as ctk
+        pk = self._picker(app, [], [])
+        pk.filter.insert(0, "parodon")
+        pk._render()
+        app.update()
+        textes = [str(w.cget("text")) for w in pk.listbox.winfo_children()
+                  if isinstance(w, ctk.CTkButton)]
+        try:
+            assert any("Odontologie" in t for t in textes)
+            assert any("Parodontie" in t for t in textes)
+            assert not any("PAPP" in t for t in textes)
+        finally:
+            pk.destroy()
+
+    def test_chaines_et_themes_partent_dans_le_meme_patch(self):
+        """Envoyés séparément, un échec entre les deux laisserait des thèmes
+        pointant vers une chaîne que la vidéo n'a plus."""
+        import inspect
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._browse_apply_channels)
+        assert 'payload["theme"]' in source and '{"channel": list(urls)}' in source

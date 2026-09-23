@@ -7,33 +7,52 @@ bandeau discret avec un lien de téléchargement.
 
 PRINCIPES
 ---------
-• **Jamais bloquant.** Pas de réseau, fichier absent, serveur injoignable,
-  contenu illisible : la vérification échoue en silence et l'application démarre
-  normalement. Une vérification qui empêche de travailler serait pire que pas de
-  vérification du tout.
+• **Jamais bloquant PAR DÉFAUT.** Pas de réseau, fichier absent, serveur
+  injoignable, contenu illisible : la vérification échoue en silence et
+  l'application démarre normalement. Une vérification qui empêche de
+  travailler PAR ACCIDENT serait pire que pas de vérification du tout.
+  Ce principe connaît UNE exception volontaire et choisie au cas par cas :
+  le champ `obligatoire`, décrit plus bas — réservé aux cas où continuer
+  présenterait un vrai risque technique.
 • **Aucun secret.** Le dépôt interrogé est public et ne contient que le fichier
   de version et les exécutables. Le dépôt de code, lui, reste privé (il contient
   le mot de passe du compte véhicule).
-• **Informer, pas contraindre.** Même une version très ancienne n'empêche pas
-  d'utiliser l'application : le ton du message se durcit, mais rien n'est jamais
-  bloqué. Un utilisateur empêché de travailler à un mauvais moment appellerait
-  le support — à juste titre.
+• **Informer, pas contraindre — sauf décision explicite et publiée.** Par
+  défaut, même une version très ancienne n'empêche pas d'utiliser
+  l'application : le ton du message se durcit, mais rien n'est jamais bloqué.
+  Un utilisateur empêché de travailler à un mauvais moment appellerait le
+  support — à juste titre. Le champ `obligatoire` permet de sortir de ce
+  principe pour une publication précise, quand continuer serait dangereux.
 
 FORMAT ATTENDU (version.json)
 -----------------------------
 ```json
 {
   "version": "1.1.0",
-  "url": "https://github.com/VOTRE-COMPTE/podadmin-releases/releases/latest",
+  "url": "https://github.com/caine777-data/podadmin-releases/releases/latest",
   "notes": "Correction de l'affichage des groupes d'accès.",
-  "version_minimale": "1.0.0"
+  "version_minimale": "1.0.0",
+  "obligatoire": false
 }
 ```
 Seul `version` est obligatoire.
+
 `version_minimale` désigne la version en dessous de laquelle l'application est
 considérée comme périmée (par exemple après une rotation du mot de passe du
 compte véhicule, qui rend les anciennes versions incapables de téléverser les
-gros fichiers). Le message devient alors insistant — sans blocage.
+gros fichiers).
+
+`obligatoire` décide de la RÉACTION une fois ce seuil franchi :
+  • false (par défaut) — le bandeau devient insistant, l'application démarre
+    normalement. C'est le principe « informer, pas contraindre » ci-dessus.
+  • true — l'application affiche une fenêtre BLOQUANTE avant toute autre
+    chose et ne démarre pas. Réservé aux cas où continuer serait dangereux
+    (ex. le mot de passe du compte véhicule a changé et un dépôt échouerait
+    en abîmant des fichiers à moitié envoyés). Ce n'est PAS un dispositif de
+    licence ou de contrôle d'accès : il ne s'active que sur un vrai risque
+    technique, choisi au cas par cas lors de chaque publication, et un
+    réseau coupé ne le déclenche jamais (voir `recuperer_info`, qui renvoie
+    alors None — aucune information, donc aucun blocage possible).
 """
 
 __author__ = "Cédric MONNA"
@@ -147,7 +166,7 @@ def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
 
 
 def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
-                     journal=None) -> dict | None:
+                     journal=None, infos: dict | None = None) -> dict | None:
     """Compare la version installée à celle publiée.
 
     Renvoie None si tout va bien (à jour, ou vérification impossible), sinon un
@@ -155,10 +174,18 @@ def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
         {"version": "1.1.0", "url": "...", "notes": "...", "urgent": False}
 
     `urgent` est vrai lorsque la version installée est antérieure à la
-    `version_minimale` annoncée : le bandeau est alors plus visible, mais
-    l'application reste utilisable.
+    `version_minimale` annoncée. `obligatoire` (même seuil, réaction
+    différente) indique si l'appelant doit BLOQUER le démarrage plutôt que se
+    contenter d'un bandeau insistant — voir le format documenté en tête de
+    fichier.
+
+    `infos` : si l'appelant a DÉJÀ récupéré le fichier de version (via
+    `recuperer_info`) pour un autre usage — par exemple distinguer "à jour
+    confirmé" d'un simple échec réseau — il peut le transmettre ici pour
+    éviter un second appel réseau redondant. Sinon, il est téléchargé ici.
     """
-    infos = recuperer_info(url, timeout, journal=journal)
+    if infos is None:
+        infos = recuperer_info(url, timeout, journal=journal)
     if not infos:
         return None
     derniere = str(infos.get("version", "")).strip()
@@ -167,10 +194,15 @@ def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
 
     minimale = str(infos.get("version_minimale", "") or "").strip()
     urgent = bool(minimale) and comparer_versions(version_actuelle, minimale) < 0
+    # L'obligation n'a de sens QUE si le seuil est lui-même franchi : un
+    # « obligatoire: true » dans le fichier ne doit jamais forcer un blocage
+    # pour un simple retard mineur, hors de portée de version_minimale.
+    obligatoire = urgent and bool(infos.get("obligatoire", False))
 
     return {
         "version": derniere,
         "url": str(infos.get("url", "") or ""),
         "notes": str(infos.get("notes", "") or ""),
         "urgent": urgent,
+        "obligatoire": obligatoire,
     }

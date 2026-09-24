@@ -146,10 +146,15 @@ jobs:
       # avec raccourcis menu Démarrer + Bureau et désinstalleur.
       - name: Fabriquer l'installeur (Inno Setup)
         run: |
+          # Version lue dans __version__.py — SOURCE UNIQUE (voir
+          # TestSourceUniqueDeVersion) : un numéro codé en dur ici avait déjà
+          # divergé du code par le passé, sans qu'aucun test ne le protège.
+          $appVersion = (Select-String -Path "__version__.py" -Pattern '__version__\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          Write-Host "Version : $appVersion"
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.8.3
+          AppVersion=$appVersion
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin

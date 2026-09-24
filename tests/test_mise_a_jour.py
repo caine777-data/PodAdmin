@@ -59,6 +59,18 @@ class TestSourceUniqueDeVersion:
             assert not re.search(r'^__version__\s*=\s*"', _lire(nom), re.M), (
                 f"{nom} redéfinit sa propre version : elle divergera")
 
+    def test_installeur_windows_ne_code_pas_la_version_en_dur(self):
+        """⚠️ RÉGRESSION RÉELLE : AppVersion était codé en dur dans le script
+        Inno Setup du workflow, sans qu'aucun test ne le protège — un troisième
+        endroit à mettre à jour, oublié aussi facilement que les deux autres
+        avant la mise en place de __version__.py."""
+        w = _lire(".github/workflows/build.yml")
+        assert "AppVersion=$appVersion" in w, (
+            "AppVersion n'est plus lu dynamiquement depuis __version__.py "
+            "dans le workflow Windows")
+        assert not re.search(r"AppVersion=\d+\.\d+\.\d+", w), (
+            "AppVersion est de nouveau codé en dur avec un numéro littéral")
+
     def test_version_txt_concorde(self):
         """Métadonnées de l'exécutable Windows : il ne peut pas importer de
         Python, d'où ce contrôle."""

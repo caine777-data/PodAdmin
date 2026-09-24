@@ -1158,53 +1158,44 @@ class TestAlignementNavigation:
         assert len(prefixe) > 1, "aucun espacement produit"
 
 
-class TestBoutonDeMasse:
-    """La cardinalité doit figurer DANS le bouton d'action de masse.
+class TestClassementDuLot:
+    """La barre « En masse » est retirée : type et disciplines d'un lot passent
+    par le panneau de sélection multiple. On y garde son meilleur principe —
+    le NOMBRE de vidéos concernées écrit dans le bouton."""
 
-    « Appliquer » nu, à côté d'un libellé disant « aux vidéos affichées » sans
-    jamais dire combien, était le seul élément saturé de l'écran Vidéos — et
-    l'action la plus lourde de conséquences. Porter le nombre dans le bouton
-    est la meilleure protection contre le clic de masse par inadvertance."""
-
-    def test_compte_affiche_et_suit_le_filtre(self, app):
+    def _lot(self, app, n):
+        app.videos = [{"slug": f"v{i}", "title": f"V{i}", "is_draft": False,
+                       "encoded": True, "channel": [], "type": "", "owner": "u",
+                       "date_added": "2026-01-01", "url": "x"} for i in range(n)]
+        app.type_map = {"Cours": "t1"}
+        app.browse_chan_by_url = {}
         app._show_tab("browse")
+        app._browse_do_filter()
+        app.browse_multi.clear()
+        app.browse_multi.update(v["slug"] for v in app.videos)
+        app._browse_render_detail()
         app.update()
-        app.browse_filtered = [{"slug": f"v{i}"} for i in range(74)]
-        app._maj_bouton_masse()
-        app.update()
-        assert "74" in app.browse_mass_btn.cget("text")
-        # Le compte doit SUIVRE le filtre : figé, il devient un mensonge, ce
-        # qui est pire qu'une absence de compte.
-        app.browse_filtered = [{"slug": "v1"} for _ in range(3)]
-        app._maj_bouton_masse()
-        app.update()
-        assert "3" in app.browse_mass_btn.cget("text")
-        assert "74" not in app.browse_mass_btn.cget("text")
 
-    def test_singulier(self, app):
-        app.browse_filtered = [{"slug": "v1"}]
-        app._maj_bouton_masse()
-        app.update()
-        texte = app.browse_mass_btn.cget("text")
-        assert "1 vidéo" in texte and "vidéos" not in texte
+    def test_le_bouton_de_type_porte_le_nombre(self, app):
+        import customtkinter as ctk
+        self._lot(app, 7)
+        textes = [str(w.cget("text")) for f in app.browse_detail.winfo_children()
+                  for w in [f, *f.winfo_children()] if isinstance(w, ctk.CTkButton)]
+        try:
+            assert any("Appliquer le type à 7 vidéos" in x for x in textes), textes
+            assert any("Disciplines" in x for x in textes)
+        finally:
+            app.browse_multi.clear()
 
-    def test_desactive_quand_rien_a_appliquer(self, app):
-        """Un bouton actif qui ne fait rien laisse croire à un échec."""
-        app.browse_filtered = []
-        app._maj_bouton_masse()
-        app.update()
-        assert app.browse_mass_btn.cget("state") == "disabled"
+    def test_la_barre_en_masse_a_disparu(self, app):
+        assert not hasattr(app, "browse_mass_btn")
+        assert not hasattr(app, "browse_mass_type")
 
-    def test_teinte_d_alerte_et_non_d_action(self):
-        """Ce n'est pas l'opération courante de l'écran mais une opération de
-        masse irréversible."""
-        corps = TestEchelleDeSurfaces._corps()
-        appels = [a for _l, a in TestHierarchieVisuelle._appels(corps, "CTkButton")
-                  if "browse_mass_btn" in corps[max(0, corps.index(a) - 120):
-                                                corps.index(a) + len(a)]]
-        assert appels, "bouton de masse introuvable"
-        assert "fg_color=C_ALERTE" in appels[0], (
-            "le bouton de masse doit être en teinte d'alerte")
+    def test_le_type_du_lot_demande_confirmation(self):
+        import inspect
+
+        import app as module_app
+        assert "askyesno" in inspect.getsource(module_app.App._browse_lot_type)
 
 
 class TestSeparationBarreContenu:
@@ -1359,23 +1350,6 @@ class TestLibellesDeFiltres:
         assert filtrer(enc="Encodées") == 1
         assert filtrer(ch="MFCA") == 1
         assert filtrer(ty="Cours") == 1
-
-    def test_la_barre_de_masse_tient_en_fenetre_minimale(self, app):
-        """Avec deux menus et le bouton, la phrase longue d'origine faisait
-        sortir le bouton de l'écran : il s'affichait « ppliquer à 1 vidé »."""
-        app._show_tab("browse")
-        app.geometry("1000x660")
-        app.update()
-        app.update_idletasks()
-        try:
-            b = app.browse_mass_btn
-            droite = b.winfo_rootx() + b.winfo_width()
-            assert droite <= app.winfo_width(), (
-                f"le bouton de masse est tronqué : il finit à {droite} px pour "
-                f"une fenêtre de {app.winfo_width()}")
-        finally:
-            app.geometry("1180x760")
-            app.update()
 
     def test_tient_en_fenetre_minimale(self, app):
         """Les filtres sont sur deux rangées parce qu'ils débordaient déjà :
@@ -1716,13 +1690,19 @@ class TestCoherenceDuWorkflow:
             f"fichiers publiés mais jamais produits : {sorted(manquants)}. "
             f"Disponibles : {sorted(attendus)}")
 
-    def test_le_portable_est_archive_avant_publication(self):
-        """Publier un dossier entier échouait ; l'archive préalable évite aussi
-        à l'utilisateur une double décompression."""
+    def test_seuls_les_deux_installeurs_sont_publies(self):
+        """Demande explicite, alignée sur le Pod Téléverseur : plus de version
+        portable dans la Release, et chaque nom de FICHIER porte son OS — c'est
+        ce nom que voit la personne qui télécharge, jamais le libellé de
+        l'artefact GitHub."""
+        import os
         texte = self._workflow()
-        assert "Compress-Archive" in texte, (
-            "le portable Windows n'est plus archivé avant publication")
-        assert "PodAdmin-Windows-portable.zip" in texte
+        bloc = texte[texte.index("files: |"):]
+        bloc = bloc[:bloc.index("\n\n")]
+        noms = [os.path.basename(l.strip()) for l in bloc.split("\n")[1:] if l.strip()]
+        assert sorted(noms) == ["PodAdmin-Windows-Setup.exe", "PodAdmin-macOS.dmg"], noms
+        assert "OutputBaseFilename=PodAdmin-Windows-Setup" in texte, (
+            "l'installeur n'est pas nommé avec son OS dès sa fabrication")
 
     def test_controle_avant_archivage(self):
         """Sans contrôle, une compilation muette laisse l'échec surgir plus
@@ -2220,7 +2200,7 @@ class TestContratDesOngletsApresConnexion:
     # automatiques — pas au jugé.
     CONTRAT = {
         "upload":   ["type_combo", "visibility_combo"],
-        "browse":   ["browse_type", "browse_mass_type", "browse_status",
+        "browse":   ["browse_type", "browse_status",
                      "browse_text", "browse_list", "browse_detail"],
         "encode":   ["encode_status", "encode_list"],
         "stats":    ["stats_status", "stats_export_btn"],

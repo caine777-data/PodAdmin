@@ -1253,7 +1253,7 @@ class TestDisciplineGlobale:
         import inspect
 
         import app as module_app
-        source = inspect.getsource(module_app.App._browse_mass_set_discipline)
+        source = inspect.getsource(module_app.App._browse_lot_disciplines)
         assert "REMPLAC" in source.upper(), (
             "la confirmation ne prévient pas du remplacement")
 
@@ -1264,7 +1264,7 @@ class TestDisciplineGlobale:
 
         import app as module_app
         source = inspect.getsource(module_app.App._do_browse_mass_set_discipline)
-        assert 'v["discipline"] = [url]' in source
+        assert 'v["discipline"] = list(urls)' in source
 
     def test_table_vide_annoncee_explicitement(self):
         """Un menu vide se prend pour une panne de chargement."""
@@ -1392,3 +1392,31 @@ class TestChainesEtThemesEnLot:
         source = inspect.getsource(module_app.App._browse_multi_action)
         assert "ChainesThemesPicker(" in source
         assert "ChannelPicker(" not in source
+
+
+class TestCouleursDuPanneauDeLot:
+    """Boutons du panneau de sélection multiple : teintes voulues par Cédric,
+    conservées. Seul le vert a été foncé, validé avec lui : #16a34a donnait
+    3,30:1 sous le texte blanc."""
+
+    def test_texte_blanc_lisible_sur_chaque_bouton(self):
+        import app as module_app
+        # Calcul WCAG déjà utilisé par les tests de contraste de PodAdmin.
+        for action, couple in module_app.COULEURS_LOT.items():
+            for teinte in couple:
+                r = TestContrastesAccessibilite._ratio("#ffffff", teinte)
+                assert r >= 4.5, f"« {action} » : {teinte} donne {r:.2f}:1"
+
+    def test_identiques_dans_les_deux_modes(self):
+        """Ce sont des aplats vifs : ils ne doivent pas changer avec le mode."""
+        import app as module_app
+        for action, (clair, sombre) in module_app.COULEURS_LOT.items():
+            assert clair == sombre, action
+
+    def test_les_teintes_choisies_sont_conservees(self):
+        """Garde-fou contre une « harmonisation » non demandée."""
+        import app as module_app
+        assert module_app.COULEURS_LOT == {
+            "draft": ("gray35", "gray35"), "public": ("#15803d", "#15803d"),
+            "restricted": ("#b45309", "#b45309"), "groups": ("#7c3aed", "#7c3aed"),
+            "channels": ("#2563eb", "#2563eb")}

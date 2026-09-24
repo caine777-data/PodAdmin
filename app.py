@@ -64,6 +64,18 @@ except Exception:
 APP_TITLE = "PodAdmin — Université de Toulouse"
 APP_VERSION = __version__      # affichée dans la barre latérale et « À propos »
 
+# Boutons du panneau de sélection multiple (onglet Vidéos). Teintes voulues par
+# Cédric — ne pas les « harmoniser » sans son accord. Couples (clair, sombre)
+# identiques : aucun changement d'un mode à l'autre, mais le test de contraste
+# peut les surveiller comme le reste de la palette.
+COULEURS_LOT = {
+    "draft":      ("gray35", "gray35"),
+    "public":     ("#15803d", "#15803d"),   # était #16a34a : 3,30:1 → 5,02:1
+    "restricted": ("#b45309", "#b45309"),
+    "groups":     ("#7c3aed", "#7c3aed"),
+    "channels":   ("#2563eb", "#2563eb"),
+}
+
 # Texte de la fenêtre de mise à jour OBLIGATOIRE. Volontairement neutre : il
 # ne donne jamais la raison du blocage (voir `_bloquer_demarrage`).
 MESSAGE_BLOCAGE = ("Une nouvelle version de PodAdmin est nécessaire pour "
@@ -2505,8 +2517,6 @@ class App(_AppBase):
             titres = list(self.type_map.keys()) or ["(aucun type)"]
             self.type_combo.configure(values=titres)
             self.browse_type.configure(values=["Tous"] + list(self.type_map.keys()))
-            self.browse_mass_type.configure(
-                values=["(aucun type)"] + list(self.type_map.keys()))
         except Exception as e:
             self._log(f"Rafraîchissement des menus de type : {e}")
 
@@ -2632,7 +2642,9 @@ class App(_AppBase):
                   "Vérifié par sonde.\n\n"
                   "Pour supprimer ce type :\n"
                   "1. onglet Vidéos, filtrer sur ce type ;\n"
-                  "2. « Modifier en masse » pour leur donner un autre type ;\n"
+                  "2. « Tout sélectionner », puis dans le panneau de droite, "
+                  "section Classement : « Appliquer le type » pour leur en "
+                  "donner un autre ;\n"
                   "3. revenir ici, le type sera alors vide."),
             wraplength=470, justify="left").pack(padx=20)
         ctk.CTkButton(fen, text="J'ai compris", width=140,
@@ -3607,12 +3619,9 @@ class App(_AppBase):
                 self.upload_discipline.configure(
                     values=[self.SANS_DISCIPLINE] + titres)
                 self.browse_discipline.configure(values=["Toutes"] + titres)
-                self.browse_mass_disc.configure(
-                    values=[self.SANS_DISCIPLINE] + titres)
             else:
-                for menu in (self.upload_discipline, self.browse_mass_disc):
-                    menu.configure(values=[self.AUCUNE_DISCIPLINE])
-                    menu.set(self.AUCUNE_DISCIPLINE)
+                self.upload_discipline.configure(values=[self.AUCUNE_DISCIPLINE])
+                self.upload_discipline.set(self.AUCUNE_DISCIPLINE)
                 self.browse_discipline.configure(values=["Toutes"])
                 self.browse_discipline.set("Toutes")
         except Exception as e:
@@ -4562,42 +4571,11 @@ class App(_AppBase):
         ctk.CTkLabel(filt2, text="mois", font=ctk.CTkFont(size=11),
                      text_color=T_SECONDAIRE).pack(side="left")
 
-        # — Action « en masse » : modifier le type des vidéos AFFICHÉES —
-        # On la détache nettement des filtres ci-dessus (séparateur + cadre
-        # encadré + libellé d'action) pour qu'on ne la confonde pas avec un filtre.
-        ctk.CTkFrame(frame, height=1, fg_color=S_FILET).pack(fill="x", pady=(6, 0))
-        massbar = ctk.CTkFrame(frame, fg_color=S_CARTE,
-                               corner_radius=8, border_width=1, border_color=S_FILET)
-        massbar.pack(fill="x", pady=(4, 4))
-        # Libellé court : avec deux menus et le bouton, la phrase longue
-        # d'origine faisait sortir le bouton de l'écran — il s'affichait
-        # « ppliquer à 1 vidé ».
-        ctk.CTkLabel(massbar, text="✏️  En masse — type :",
-                     font=ctk.CTkFont(size=11), text_color=T_SECONDAIRE
-                     ).pack(side="left", padx=(10, 6), pady=6)
-        self.browse_mass_type = ctk.CTkOptionMenu(massbar, width=150, values=["(aucun type)"], **STYLE_CHAMP)
-        self.browse_mass_type.pack(side="left", pady=6)
-        ctk.CTkLabel(massbar, text="ou discipline :", font=ctk.CTkFont(size=11),
-                     text_color=T_SECONDAIRE).pack(side="left", padx=(10, 6), pady=6)
-        self.browse_mass_disc = ctk.CTkOptionMenu(
-            massbar, width=150, values=[self.AUCUNE_DISCIPLINE], **STYLE_CHAMP)
-        self.browse_mass_disc.set(self.AUCUNE_DISCIPLINE)
-        self.browse_mass_disc.pack(side="left", pady=6)
-        # LE COMPTE EST DANS LE BOUTON.
-        #
-        # « Appliquer » nu, à côté d'un libellé disant « aux vidéos affichées »
-        # sans jamais dire combien, c'était le seul élément saturé de l'écran —
-        # et l'action la plus lourde de conséquences. Porter la cardinalité
-        # dans le bouton est la meilleure protection contre le clic de masse
-        # par inadvertance : on ne peut plus cliquer sans avoir lu le nombre.
-        #
-        # Teinte d'ALERTE et non d'action : ce n'est pas l'opération courante
-        # de l'écran, c'est une opération de masse irréversible.
-        self.browse_mass_btn = ctk.CTkButton(
-            massbar, text="Appliquer", width=170,
-            fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
-            command=self._browse_mass_set_type)
-        self.browse_mass_btn.pack(side="left", padx=8, pady=6)
+        # La barre « En masse » (type / discipline des vidéos AFFICHÉES) a été
+        # RETIRÉE : ces actions passent par la sélection (« Tout sélectionner »
+        # puis le panneau de lot), avec confirmation. Deux chemins pour la même
+        # action, dont l'un agissait sur tout ce qu'affichait le filtre, prêtaient
+        # à confusion.
 
         # — Corps : liste (gauche) + détail (droite) —
         body = ctk.CTkFrame(frame, fg_color="transparent")
@@ -4735,17 +4713,13 @@ class App(_AppBase):
         self._browse_refresh_type_menu()
 
     def _browse_refresh_type_menu(self):
-        """Remplit le filtre par type et le menu « en masse » avec les types chargés.
+        """Remplit le filtre par type avec les types chargés.
         Sans danger si appelé avant que les types soient chargés."""
         titles = sorted((self.type_map or {}).keys(), key=str.lower)
         if hasattr(self, "browse_type"):
             self.browse_type.configure(values=["Tous"] + titles)
             if self.browse_type.get() not in (["Tous"] + titles):
                 self.browse_type.set("Tous")
-        if hasattr(self, "browse_mass_type"):
-            self.browse_mass_type.configure(values=titles or ["(aucun type)"])
-            if titles and self.browse_mass_type.get() not in titles:
-                self.browse_mass_type.set(titles[0])
 
     # ── Filtrage ───────────────────────────────────────────────────────────
 
@@ -4870,7 +4844,6 @@ class App(_AppBase):
         for w in self.browse_list.winfo_children():
             w.destroy()
         self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
-        self._maj_bouton_masse()
 
         if not self.browse_filtered:
             etat_vide(self.browse_list, "🔍", "Aucune vidéo ne correspond.",
@@ -5154,16 +5127,46 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=12, weight="bold")).pack(
             anchor="w", padx=6, pady=(6, 2))
 
+        # Couleurs choisies par Cédric, conservées telles quelles : aplats vifs à
+        # texte blanc, IDENTIQUES dans les deux modes (couples égaux).
+        # Seul le vert a changé : #16a34a donnait 3,30:1 sous le texte blanc
+        # (minimum 4,5) ; #15803d donne 5,02:1 — c'est le vert du bouton
+        # « Lancer le téléversement ». Voir COULEURS_LOT et son test.
         for libelle, action, couleur in (
-                ("📝  Mettre en brouillon", "draft", "gray35"),
-                ("🌐  Rendre public", "public", "#16a34a"),
-                ("🔒  Rendre restreint", "restricted", "#b45309"),
-                ("🔐  Restreindre au groupe…", "groups", "#7c3aed"),
-                ("📺  Affecter à une chaîne…", "channels", "#2563eb")):
+                ("📝  Mettre en brouillon", "draft", COULEURS_LOT["draft"]),
+                ("🌐  Rendre public", "public", COULEURS_LOT["public"]),
+                ("🔒  Rendre restreint", "restricted", COULEURS_LOT["restricted"]),
+                ("🔐  Restreindre au groupe…", "groups", COULEURS_LOT["groups"]),
+                ("📺  Affecter à une chaîne…", "channels", COULEURS_LOT["channels"])):
             ctk.CTkButton(self.browse_detail, text=libelle, anchor="w",
                           fg_color=couleur,
                           command=lambda a=action: self._browse_multi_action(a)).pack(
                 fill="x", padx=6, pady=2)
+
+        # — Classement du lot : type et disciplines —
+        # Comme dans le Pod Téléverseur : sur un lot, le type ne s'applique pas
+        # au simple changement du menu (un clic de travers modifierait N
+        # vidéos) ; il faut le bouton, qui porte le NOMBRE de vidéos — principe
+        # repris de l'ancienne barre « En masse » — puis une confirmation.
+        n_lot = len(self._browse_multi_videos())
+        ctk.CTkLabel(self.browse_detail, text="Classement",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(
+            anchor="w", padx=6, pady=(10, 2))
+        ligne_type = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        ligne_type.pack(fill="x", padx=6)
+        titres_types = sorted(self.type_map or {}, key=str.lower) or ["(aucun type)"]
+        menu_type_lot = ctk.CTkOptionMenu(ligne_type, width=170, values=titres_types,
+                                          **STYLE_CHAMP)
+        menu_type_lot.pack(side="left")
+        ctk.CTkButton(ligne_type, text=f"Appliquer le type à {n_lot} vidéos",
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      text_color=T_SUR_NEUTRE,
+                      command=lambda: self._browse_lot_type(menu_type_lot.get())
+                      ).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(self.browse_detail, text="🏷️  Disciplines…", anchor="w",
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                      text_color=T_SUR_NEUTRE, command=self._browse_lot_disciplines
+                      ).pack(anchor="w", padx=6, pady=(6, 0))
 
         self.browse_multi_msg = ctk.CTkLabel(
             self.browse_detail, text="", font=ctk.CTkFont(size=11),
@@ -5856,87 +5859,76 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Suppression sous-titre : {e}")
             self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
 
-    def _maj_bouton_masse(self):
-        """Inscrit le nombre de vidéos concernées dans le bouton de masse.
+    def _browse_multi_videos(self) -> list:
+        """Vidéos de la sélection multiple, dans l'ordre de la liste."""
+        choisis = set(self.browse_multi)
+        return [v for v in (self.videos or []) if v.get("slug") in choisis]
 
-        Appelée à chaque rendu de la liste filtrée : le compte doit suivre le
-        filtre, sinon il devient un mensonge — pire qu'une absence de compte.
-
-        À zéro vidéo le bouton est DÉSACTIVÉ plutôt qu'affiché avec « 0 » : il
-        n'y a rien à appliquer, et un bouton actif qui ne fait rien laisse
-        croire à un échec."""
-        bouton = getattr(self, "browse_mass_btn", None)
-        if bouton is None:
+    def _browse_lot_type(self, titre_type):
+        """Type pour toute la sélection, après confirmation."""
+        url = (self.type_map or {}).get(titre_type)
+        vids = self._browse_multi_videos()
+        if not url or not vids:
+            self.browse_multi_msg.configure(text="Aucun type disponible.",
+                                            text_color=T_ALERTE)
             return
-        n = len(getattr(self, "browse_filtered", []) or [])
-        if n == 0:
-            bouton.configure(text="Appliquer", state="disabled")
-        elif n == 1:
-            bouton.configure(text="Appliquer à 1 vidéo", state="normal")
-        else:
-            bouton.configure(text=f"Appliquer aux {n} vidéos", state="normal")
+        if not messagebox.askyesno("Type en lot",
+                                   f"Donner le type « {titre_type} » à "
+                                   f"{len(vids)} vidéo(s) ?"):
+            return
+        self.browse_multi_msg.configure(text="⏳ Application en cours…",
+                                        text_color=T_SECONDAIRE)
+        self._run(self._do_browse_mass_set_type, vids, url, titre_type)
 
-    def _browse_mass_set_type(self):
-        """Affecte le type OU la discipline choisis à toutes les vidéos
-        affichées (résultat du filtre courant).
-
-        Un seul bouton pour les deux : appliquer les deux d'un coup
-        multiplierait les effets d'un unique clic, sur une action déjà lourde.
-        Si une discipline est choisie, c'est elle qui est appliquée — c'est le
-        choix le plus récent de l'utilisateur, et le type reste modifiable au
-        clic suivant."""
-        disc_choix = (self.browse_mass_disc.get()
-                      if hasattr(self, "browse_mass_disc") else "")
-        disc_url = (getattr(self, "discipline_map", {}) or {}).get(disc_choix)
-        if disc_url:
-            self._browse_mass_set_discipline(disc_choix, disc_url)
+    def _browse_lot_disciplines(self):
+        """Disciplines pour toute la sélection. Cases à cocher (une vidéo peut
+        en porter plusieurs) ; la sélection REMPLACE les disciplines actuelles
+        — la confirmation le dit, rien à l'écran ne le laisserait deviner."""
+        disciplines = [{"url": u, "title": t} for t, u in
+                       sorted((getattr(self, "discipline_map", {}) or {}).items(),
+                              key=lambda x: x[0].lower())]
+        vids = self._browse_multi_videos()
+        if not disciplines:
+            self.browse_multi_msg.configure(
+                text="Aucune discipline définie : créez-en dans l'onglet "
+                     "« Types & disciplines ».", text_color=T_ALERTE)
             return
 
-        choice = self.browse_mass_type.get()
-        new_url = (self.type_map or {}).get(choice)
-        vids = list(self.browse_filtered)
-        if not new_url or not vids:
-            self._browse_set_msg("Rien à appliquer (aucun type ou aucune vidéo affichée).",
-                                 "#f59e0b")
-            return
-        if not messagebox.askyesno(
-                "Type en masse",
-                f"Affecter le type « {choice} » à {len(vids)} vidéo(s) affichée(s) ?\n\n"
-                "Cette action écrase le type actuel de chacune."):
-            return
-        self._run(self._do_browse_mass_set_type, vids, new_url, choice)
+        def appliquer(urls, libelles):
+            texte = ", ".join(libelles) if libelles else "aucune"
+            if not messagebox.askyesno(
+                    "Disciplines en lot",
+                    f"Donner les disciplines « {texte} » à {len(vids)} vidéo(s) ?\n\n"
+                    "Leurs disciplines actuelles seront REMPLACÉES."):
+                return
+            self.browse_multi_msg.configure(text="⏳ Application en cours…",
+                                            text_color=T_SECONDAIRE)
+            self._run(self._do_browse_mass_set_discipline, vids, list(urls), texte)
 
-    def _browse_mass_set_discipline(self, choix: str, url: str):
-        """Affecte une discipline à toutes les vidéos affichées.
-
-        ⚠️ REMPLACE les disciplines existantes, elle ne s'y ajoute pas : le
-        champ est une liste, et envoyer une valeur écrase l'ensemble. La
-        confirmation le dit, car rien à l'écran ne le laisserait deviner."""
-        vids = list(self.browse_filtered)
-        if not vids:
-            self._browse_set_msg("Aucune vidéo affichée.", T_ALERTE)
-            return
-        if not messagebox.askyesno(
-                "Discipline en masse",
-                f"Affecter la discipline « {choix} » à {len(vids)} vidéo(s) "
-                f"affichée(s) ?\n\n"
-                "Les disciplines actuelles de ces vidéos seront REMPLACÉES."):
-            return
-        self._run(self._do_browse_mass_set_discipline, vids, url, choix)
+        ChannelPicker(self, disciplines, on_done=appliquer,
+                      title=f"Disciplines pour {len(vids)} vidéo(s)",
+                      consigne="Cochez les disciplines à donner aux vidéos "
+                               "sélectionnées. Elles REMPLACERONT leurs disciplines "
+                               "actuelles.",
+                      vide="Aucune discipline.")
 
     def _do_browse_mass_set_discipline(self, vids, url, choix):
-        """(Thread) Applique la discipline à chaque vidéo affichée."""
+        """(Thread) Applique les disciplines à chaque vidéo du lot.
+
+        `url` : une URL ou une LISTE d'URLs (une vidéo peut porter plusieurs
+        disciplines ; la sélection REMPLACE les disciplines actuelles)."""
+        urls = list(url) if isinstance(url, (list, tuple)) else [url]
         ok = fail = 0
         for v in vids:
             slug = v.get("slug", "")
             if not slug:
                 continue
             try:
-                self.api.set_disciplines(slug, [url])
+                self.api.set_disciplines(slug, urls)
                 # Mise à jour du cache : sans cela, le filtre « Discipline »
                 # continuerait d'ignorer les vidéos qu'on vient de classer,
                 # jusqu'au prochain rafraîchissement serveur.
-                v["discipline"] = [url]
+                v["discipline"] = list(urls)
                 ok += 1
             except Exception as e:
                 fail += 1

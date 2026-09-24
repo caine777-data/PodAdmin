@@ -85,8 +85,10 @@ quatre orthographes testées) : il n'y a qu'une nomenclature à décider, pas de
 
 Automatique via **GitHub Actions** (`.github/workflows/build.yml`) :
 - déclenchée par un tag `v*` (crée une *Release*) ou manuellement (« Run workflow ») ;
-- produit un **dossier** `PodAdmin/` (Windows), l'installeur `PodAdmin-Setup.exe`
-  et `PodAdmin-macOS.zip` (Apple Silicon).
+- ne publie que les **installeurs**, nommés par OS pour qu'on ne puisse pas se
+  tromper au téléchargement : `PodAdmin-Windows-Setup.exe` et
+  `PodAdmin-macOS.dmg` (Apple Silicon). Plus de version portable, comme pour
+  le Pod Téléverseur.
 
 ⚠️ **Compilation en `--onedir`, pas `--onefile`.** En `--onefile`, l'exécutable
 est une archive auto-extractible : à chaque lancement, tout l'interpréteur
@@ -95,17 +97,14 @@ s'affiche. En `--onedir`, le démarrage est 3 à 5 fois plus rapide. Sur macOS,
 cela règle en outre la dépréciation de `--onefile --windowed`, bloquante à
 partir de PyInstaller 7.
 
-Conséquence : le portable Windows est livré sous forme d'**archive à
-décompresser en entier** (`PodAdmin-Windows-portable.zip`). `PodAdmin.exe` seul
-ne démarre pas — il lui faut ses fichiers voisins. L'installeur, lui, ne change
-pas d'usage.
+Conséquence : `PodAdmin.exe` seul ne démarre pas — il lui faut ses fichiers
+voisins. L'installeur embarque le dossier entier. Le workflow **vérifie** que
+la compilation a produit l'exécutable avant de fabriquer l'installeur : sans ce
+contrôle, une compilation muette ferait échouer l'installeur plus loin, sans
+rapport apparent.
 
-⚠️ Le workflow **archive** le dossier avant de le publier plutôt que de laisser
-`upload-artifact` téléverser des centaines de fichiers : publier le dossier
-entier échouait, et `upload-artifact` rezippe de toute façon ce qu'on lui donne
-— sans archive préalable, l'utilisateur devait décompresser deux fois. Renommer
-un artefact oblige à mettre à jour la liste `files:` de la publication
-(`TestCoherenceDuWorkflow`).
+⚠️ Renommer un artefact oblige à mettre à jour la liste `files:` de la
+publication (`TestCoherenceDuWorkflow`).
 
 Compilation locale (Windows) :
 
@@ -237,6 +236,27 @@ Alt+F4 inopérant et obligé à tuer le processus.
 ⚠️ Les champs du formulaire doivent être TRANSMIS au `version.json` : sur le
 Téléverseur, ils avaient été ajoutés au formulaire sans jamais être écrits
 dans le fichier — cocher « obligatoire » ne bloquait rien.
+
+---
+
+## Classement d'un lot (onglet Vidéos)
+
+La barre « En masse » (type / discipline des vidéos AFFICHÉES) a été
+**retirée**, dans PodAdmin comme dans le Pod Téléverseur : ces actions passent
+par la sélection multiple (« Tout sélectionner », puis panneau de lot, section
+Classement). Le type s'applique par un bouton qui porte le **nombre** de vidéos
+(« Appliquer le type à 12 vidéos ») puis une confirmation ; les disciplines par
+cases à cocher, en **remplacement**, confirmé.
+
+---
+
+## Couleurs du panneau de lot
+
+Les boutons de la sélection multiple (brouillon, public, restreint, groupe,
+chaîne) gardent les teintes **choisies par Cédric** (`COULEURS_LOT`). Seul le
+vert de « Rendre public » a été foncé, avec son accord : `#16a34a` donnait
+3,30:1 sous le texte blanc, `#15803d` donne 5,02:1. ⚠️ Ne pas « harmoniser »
+ces teintes sans son accord — un test les fige.
 
 ---
 
@@ -592,7 +612,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.8.0**
+Version : **1.8.3**
 
 ---
 

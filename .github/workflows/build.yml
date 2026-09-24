@@ -1,13 +1,12 @@
 name: Build installers
 
-# Compile PodAdmin et fabrique TOUS les livrables en un seul run :
-#   Windows :
-#     • PodAdmin-Windows-portable.zip — portable, à décompresser EN ENTIER
-#       (en --onedir, PodAdmin.exe seul ne démarre pas)
-#     • PodAdmin-Setup.exe    — installeur Inno Setup (menu Démarrer, désinstalleur)
-#   macOS :
-#     • PodAdmin.dmg          — image disque (glisser dans Applications)
-#     • PodAdmin-macOS.zip    — archive .app (comme avant, pour compatibilité)
+# Compile PodAdmin et publie les livrables D'INSTALLATION SEULEMENT (plus de
+# version portable), comme le Pod Téléverseur :
+#   • PodAdmin-Windows-Setup.exe — installeur Inno Setup
+#   • PodAdmin-macOS.dmg         — image disque
+#
+# Chaque nom de fichier PUBLIÉ porte son OS, pour qu'une personne qui
+# télécharge depuis la page de Release ne puisse pas se tromper.
 #
 # Déclencheurs :
 #   • Bouton "Run workflow" dans l'onglet Actions (build manuel)
@@ -109,27 +108,18 @@ jobs:
       # On vérifie d'abord que la compilation a bien produit le dossier et
       # l'exécutable : sans ce contrôle, une compilation muette laisserait
       # l'échec se produire plus loin, dans une étape sans rapport.
-      - name: Archiver le portable Windows
+      # Le portable n'est PLUS publié (seuls les installeurs le sont), mais
+      # le contrôle reste : Inno Setup embarque ce dossier, et une compilation
+      # muette ferait échouer l'installeur plus loin, sans rapport apparent.
+      - name: Vérifier la compilation Windows
         run: |
           if (-not (Test-Path "dist/PodAdmin/PodAdmin.exe")) {
             Write-Error "dist/PodAdmin/PodAdmin.exe est absent : la compilation n'a pas produit ce qui est attendu."
             Get-ChildItem dist -Recurse -Depth 2 | Select-Object FullName
             exit 1
           }
-          Write-Host "Contenu du dossier portable :"
+          Write-Host "Contenu du dossier compilé :"
           Get-ChildItem dist/PodAdmin | Select-Object Name, Length
-          Compress-Archive -Path "dist/PodAdmin/*" `
-                           -DestinationPath "dist/PodAdmin-Windows-portable.zip" -Force
-          Write-Host "Archive creee :"
-          Get-Item dist/PodAdmin-Windows-portable.zip | Select-Object Name, Length
-
-      # ⚠️ PodAdmin.exe seul ne fonctionne pas en --onedir : il lui faut les
-      # fichiers voisins. L'archive doit être décompressée EN ENTIER.
-      - name: Publier le portable Windows (archive)
-        uses: actions/upload-artifact@v4
-        with:
-          name: PodAdmin-Windows-portable
-          path: dist/PodAdmin-Windows-portable.zip
 
       # Installe Inno Setup (compilateur d'installeurs Windows) via Chocolatey.
       - name: Installer Inno Setup
@@ -143,14 +133,14 @@ jobs:
           $iss = @"
           [Setup]
           AppName=PodAdmin
-          AppVersion=1.8.0
+          AppVersion=1.8.3
           AppPublisher=Universite de Toulouse
           AppCopyright=(c) Copyright 2026 Cedric MONNA
           DefaultDirName={localappdata}\Programs\PodAdmin
           DefaultGroupName=PodAdmin
           PrivilegesRequired=lowest
           OutputDir=installer
-          OutputBaseFilename=PodAdmin-Setup
+          OutputBaseFilename=PodAdmin-Windows-Setup
           Compression=lzma
           SolidCompression=yes
           SetupIconFile=assets\podadmin.ico
@@ -184,7 +174,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PodAdmin-Windows-Setup
-          path: installer/PodAdmin-Setup.exe
+          path: installer/PodAdmin-Windows-Setup.exe
 
   # ──────────────────────────────── macOS ────────────────────────────────
   build-macos:
@@ -250,21 +240,9 @@ jobs:
           codesign --force --deep --sign - "dist/PodAdmin.app"
           codesign --verify --deep --strict --verbose=2 "dist/PodAdmin.app"
 
-      # IMPORTANT : ne PAS utiliser `zip` sur un .app. La commande zip ne
-      # préserve ni les liens symboliques internes ni les attributs étendus du
-      # paquet : la signature est cassée à la décompression, et macOS affiche à
-      # nouveau « est endommagé ». `ditto` est l'outil prévu par Apple pour
-      # archiver un paquet applicatif sans l'altérer.
-      - name: Compresser le .app (ditto, préserve la signature)
-        run: |
-          cd dist
-          ditto -c -k --sequesterRsrc --keepParent PodAdmin.app PodAdmin-macOS.zip
-
-      - name: Publier l'archive macOS
-        uses: actions/upload-artifact@v4
-        with:
-          name: PodAdmin-macOS-zip
-          path: dist/PodAdmin-macOS.zip
+      # L'archive .zip du .app n'est plus publiée : seul le .dmg l'est. (Le
+      # jour où elle reviendrait : `ditto`, jamais `zip`, qui casse la
+      # signature et fait réapparaître « est endommagé ».)
 
       - name: Fabriquer le DMG (glisser-déposer vers Applications)
         run: |
@@ -274,13 +252,13 @@ jobs:
           ditto "dist/PodAdmin.app" "dmg_stage/PodAdmin.app"
           ln -s /Applications dmg_stage/Applications
           hdiutil create -volname "PodAdmin" -srcfolder dmg_stage \
-            -ov -format UDZO "dist/PodAdmin.dmg"
+            -ov -format UDZO "dist/PodAdmin-macOS.dmg"
 
       - name: Publier le DMG macOS
         uses: actions/upload-artifact@v4
         with:
           name: PodAdmin-macOS-DMG
-          path: dist/PodAdmin.dmg
+          path: dist/PodAdmin-macOS.dmg
 
   # ──────────────────── Release GitHub (si tag v*) ─────────────────────
   # Publication : crée la Release et prévient les applications installées.
@@ -347,10 +325,8 @@ jobs:
           name: PodAdmin v${{ steps.v.outputs.num }}
           body: ${{ inputs.notes || 'Nouvelle version.' }}
           files: |
-            PodAdmin-Windows-Setup/PodAdmin-Setup.exe
-            PodAdmin-Windows-portable/PodAdmin-Windows-portable.zip
-            PodAdmin-macOS-DMG/PodAdmin.dmg
-            PodAdmin-macOS-zip/PodAdmin-macOS.zip
+            PodAdmin-Windows-Setup/PodAdmin-Windows-Setup.exe
+            PodAdmin-macOS-DMG/PodAdmin-macOS.dmg
 
       # ── Notification de mise à jour, entièrement automatique ──────────────
       # Cette étape écrit `version.json` sur le dépôt PUBLIC des releases.

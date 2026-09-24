@@ -94,11 +94,13 @@ def comparer_versions(a: str, b: str) -> int:
     return 0
 
 
-def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
-    """Télécharge et analyse le fichier de version. Renvoie None en cas d'échec.
+def _telecharger_json(url: str, timeout: float, journal=None) -> dict | None:
+    """Télécharge et décode un fichier JSON distant. Renvoie None en cas d'échec.
 
     Toute erreur est absorbée : réseau coupé, adresse fausse, dépôt supprimé,
     JSON malformé… La vérification est un confort, pas une dépendance.
+    Factorisé entre `recuperer_info` (version.json) et `etat_blocage`
+    (etat.json) : même adresse de dépôt public, même prudence réseau.
 
     `journal` : fonction appelée avec un message en cas d'échec. Sans elle,
     l'échec est totalement silencieux — pratique pour l'utilisateur, mais
@@ -129,14 +131,14 @@ def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
         r = requests.get(url, headers=entetes, timeout=timeout)
         if r.status_code != 200:
             if journal:
-                journal(f"vérification de mise à jour : HTTP {r.status_code}")
+                journal(f"vérification : HTTP {r.status_code}")
             return None
         brut = r.text
     except ImportError:
         pass                             # on tente urllib plus bas
     except Exception as e:
         if journal:
-            journal(f"vérification de mise à jour impossible ({type(e).__name__}) : {e}")
+            journal(f"vérification impossible ({type(e).__name__}) : {e}")
         return None
 
     # 2. Repli : urllib
@@ -149,20 +151,62 @@ def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
                 brut = reponse.read().decode("utf-8", "replace")
         except Exception as e:
             if journal:
-                journal(f"vérification de mise à jour impossible ({type(e).__name__}) : {e}")
+                journal(f"vérification impossible ({type(e).__name__}) : {e}")
             return None
 
     try:
         donnees = json.loads(brut)
     except Exception as e:
         if journal:
-            journal(f"fichier de version illisible : {e}")
+            journal(f"fichier illisible : {e}")
         return None
-    if not isinstance(donnees, dict) or not donnees.get("version"):
+    if not isinstance(donnees, dict):
+        if journal:
+            journal("fichier présent mais mal formé (objet JSON attendu).")
+        return None
+    return donnees
+
+
+def recuperer_info(url: str, timeout: float = 5.0, journal=None) -> dict | None:
+    """Télécharge et analyse le fichier de version. Renvoie None en cas d'échec.
+
+    Voir `_telecharger_json` pour le détail du téléchargement (deux moyens
+    d'accès, toute erreur absorbée en silence sauf `journal`).
+    """
+    donnees = _telecharger_json(url, timeout, journal=journal)
+    if donnees is not None and not donnees.get("version"):
         if journal:
             journal("fichier de version présent mais sans numéro exploitable.")
         return None
     return donnees
+
+
+def etat_blocage(url: str, timeout: float = 5.0, journal=None) -> bool | None:
+    """Interroge le fichier d'état du blocage à distance (etat.json).
+
+    Renvoie True (bloqué), False (autorisé) ou None si aucune réponse
+    exploitable n'a été obtenue (réseau coupé, fichier absent, adresse
+    désactivée…) — un None ne doit JAMAIS être interprété comme un
+    déblocage : voir `config.enregistrer_blocage_distant`, qui ne change
+    l'état mémorisé localement que sur une réponse réseau réelle.
+
+    Fichier attendu : `{"bloque": true}` ou `{"bloque": false}`, publié par
+    le workflow GitHub Actions (choix « Blocage », par défaut « ne rien
+    changer » — voir BLOCAGE.md). Absence du champ `bloque` : traité comme
+    aucune réponse exploitable, jamais comme un déblocage implicite.
+    """
+    donnees = _telecharger_json(url, timeout, journal=journal)
+    if donnees is None:
+        return None
+    bloque = donnees.get("bloque")
+    # ⚠️ isinstance(bloque, bool), et non `bool(bloque)` : un champ absent,
+    # une chaîne ("oui"), ou tout autre truthy accidentel ne doit JAMAIS être
+    # silencieusement converti en blocage. Seul un booléen explicite compte.
+    if not isinstance(bloque, bool):
+        if journal:
+            journal("fichier d'état présent mais sans champ 'bloque' exploitable.")
+        return None
+    return bloque
 
 
 def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,

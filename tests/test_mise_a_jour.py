@@ -25,7 +25,7 @@ def app():
         import app as module_app
     except Exception as e:
         pytest.skip(f"interface indisponible : {e}")
-    for nom in ("_auto_connect", "_verifier_maj"):
+    for nom in ("_auto_connect", "_verifier_maj", "_surveiller_blocage"):
         setattr(module_app.App, nom, lambda s, *a, **k: None)
     a = module_app.App()
     a.update()

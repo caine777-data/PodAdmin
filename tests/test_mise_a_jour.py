@@ -15,6 +15,28 @@ RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
 
+def _bash():
+    """Chemin d'un VRAI bash POSIX, jamais le lanceur WSL de
+    `C:\\Windows\\System32\\bash.exe`.
+
+    ⚠️ Sous Windows, ce lanceur gagne TOUJOURS la résolution d'un simple
+    `["bash", ...]` : CreateProcess cherche dans le dossier système avant
+    même de consulter PATH, peu importe l'ordre de PATH lui-même. Sur un
+    poste sans distribution WSL installée, il échoue avec un message
+    Windows générique écrit sur **stdout**, jamais sur stderr — exactement
+    le piège « échec silencieux » que ce projet documente ailleurs (fiche
+    de reprise, §3) : le test croirait le script bash cassé alors que bash
+    n'a jamais tourné. On préfère donc explicitement le bash de Git s'il
+    existe, avant de se rabattre sur la résolution normale."""
+    git_bash = os.path.join(
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        "Git", "usr", "bin", "bash.exe")
+    if os.path.exists(git_bash):
+        return git_bash
+    import shutil
+    return shutil.which("bash") or "bash"
+
+
 @pytest.fixture(scope="module")
 def app():
     """Instance partagée, réseau neutralisé : ni connexion automatique, ni
@@ -220,18 +242,26 @@ class TestTransmissionDesChampsObligatoires:
         # d'arguments. On écrit le script dans un VRAI fichier temporaire,
         # exactement comme GitHub Actions le ferait lui-même.
         with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".sh", delete=False) as f:
+                mode="w", suffix=".sh", delete=False, encoding="utf-8") as f:
             f.write(bloc_bash)
             f.write('\necho "OBL=$OBLIGATOIRE"\necho "MIN=$MINIMALE"\n')
             chemin_script = f.name
 
         try:
             for env_supp, attendu in cas:
-                env = {"V_NUM": "2.3.0", "IN_NOTES": "test",
-                       "DEPOT_PUBLIC": "", "GITHUB_REPOSITORY_OWNER": "x"}
+                # ⚠️ Partir de `os.environ`, jamais d'un dict isolé : sous
+                # Windows, bash a besoin de variables système (SYSTEMROOT,
+                # PATH…) pour seulement démarrer. Un environnement réduit aux
+                # 4 variables du test le fait échouer AVANT même d'exécuter
+                # le script — sans rien sur stderr, juste un message Windows
+                # générique sur stdout, ce qui ressemblait à tort à un défaut
+                # du script bash lui-même.
+                env = dict(os.environ)
+                env.update({"V_NUM": "2.3.0", "IN_NOTES": "test",
+                            "DEPOT_PUBLIC": "", "GITHUB_REPOSITORY_OWNER": "x"})
                 env.update(env_supp)
                 resultat = subprocess.run(
-                    ["bash", chemin_script],
+                    [_bash(), chemin_script],
                     capture_output=True, text=True, env=env)
                 sortie = resultat.stdout
                 lignes_obl = [l for l in sortie.splitlines() if l.startswith("OBL=")]
@@ -493,7 +523,8 @@ class TestFermetureToujoursPossibleDepuisLeBlocage:
         import tempfile
 
         with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False, dir=RACINE) as f:
+                mode="w", suffix=".py", delete=False, dir=RACINE,
+                encoding="utf-8") as f:
             f.write(code_python)
             chemin = f.name
         try:

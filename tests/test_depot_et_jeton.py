@@ -301,8 +301,9 @@ class TestRecuperationApres504:
                 vus["envoi"] = kw["marqueur"]
                 raise PodChunkedError("passerelle", status=504)
 
-        def verifier(marqueur, vehicule):
+        def verifier(marqueur, vehicule, annuler=None, delai_s=None):
             vus["recherche"] = (marqueur, vehicule)
+            vus["annuler"] = annuler
             return {"slug": "retrouvee", "url": "u"}
 
         faux = SimpleNamespace(
@@ -311,9 +312,39 @@ class TestRecuperationApres504:
             _ui=lambda *a, **k: None, _log=lambda *a: None,
             _set_item_status=lambda *a: None, api=None)
         it = SimpleNamespace(path="v.mp4", title="Cours")
-        slug, video = A.App._deposer_par_morceaux(faux, _Morceaux(), it, None, None)
+        arret = threading.Event().is_set
+        slug, video = A.App._deposer_par_morceaux(faux, _Morceaux(), it, None, None, arret)
         assert slug == "retrouvee"
         assert vus["recherche"] == (vus["envoi"], VEHICULE)
+        assert vus["annuler"] is arret, "l'attente après 504 ne reçoit pas l'arrêt"
+
+    @pytest.mark.parametrize("code, delai", [(504, "CHUNK_VERIFY_TIMEOUT_S"),
+                                             (502, "CHUNK_VERIFY_TIMEOUT_502_S"),
+                                             (503, "CHUNK_VERIFY_TIMEOUT_502_S")])
+    def test_attente_longue_seulement_pour_un_504(self, code, delai):
+        """Un 502 est tombé 44 s après le début d'un envoi et la vidéo n'est
+        jamais apparue : 30 min d'attente pour rien, tout le lot bloqué.
+        Seul le 504 (Pod continue de son côté) justifie l'attente longue."""
+        import app as A
+        from pod_chunked import PodChunkedError
+        vus = {}
+
+        class _Morceaux:
+            def upload_video_chunked(self, path, **kw):
+                raise PodChunkedError("passerelle", status=code)
+
+        def verifier(marqueur, vehicule, annuler=None, delai_s=None):
+            vus["delai"] = delai_s
+            return {"slug": "s", "url": "u"}
+
+        faux = SimpleNamespace(
+            _nouveau_marqueur=A.App._nouveau_marqueur, _verify_chunked_creation=verifier,
+            vehicle_owner_url=VEHICULE, _ui=lambda *a, **k: None, _log=lambda *a: None,
+            _set_item_status=lambda *a: None, api=None)
+        A.App._deposer_par_morceaux(faux, _Morceaux(), SimpleNamespace(path="v", title="T"),
+                                    None, None)
+        assert vus["delai"] == getattr(A.cfg, delai)
+        assert A.cfg.CHUNK_VERIFY_TIMEOUT_502_S < A.cfg.CHUNK_VERIFY_TIMEOUT_S
 
     def test_tous_les_appels_de_verification_ont_le_bon_nombre_d_arguments(self):
         """Garde-fou statique : le défaut d'origine était un appel à deux
@@ -321,13 +352,278 @@ class TestRecuperationApres504:
         arbre = ast.parse(_lire("app.py"))
         definition = next(n for n in ast.walk(arbre) if isinstance(n, ast.FunctionDef)
                           and n.name == "_verify_chunked_creation")
-        attendus = len(definition.args.args) - 1
+        maximum = len(definition.args.args) - 1              # sans self
+        minimum = maximum - len(definition.args.defaults)    # sans les facultatifs
         appels = [n for n in ast.walk(arbre) if isinstance(n, ast.Call)
                   and isinstance(n.func, ast.Attribute)
                   and n.func.attr == "_verify_chunked_creation"]
         assert appels
         for n in appels:
-            assert len(n.args) + len(n.keywords) == attendus, f"ligne {n.lineno}"
+            assert minimum <= len(n.args) + len(n.keywords) <= maximum, f"ligne {n.lineno}"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  4 bis. Interruption du téléversement, y compris en cours de fichier
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestInterruption:
+    def test_envoi_direct_arrete_en_cours_de_fichier(self, tmp_path):
+        """Sur un VRAI serveur local : l'arrêt doit couper la requête au bloc
+        suivant, et non attendre la fin du fichier. On vérifie aussi que
+        `requests` laisse remonter l'exception telle quelle (une enveloppe
+        en ConnectionError déclencherait les nouvelles tentatives)."""
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from pod_api import EnvoiAnnule
+
+        class _Recepteur(BaseHTTPRequestHandler):
+            def do_POST(self):
+                reste = int(self.headers.get("Content-Length", 0))
+                while reste > 0:
+                    bloc = self.rfile.read(min(65536, reste))
+                    if not bloc:
+                        break
+                    reste -= len(bloc)
+                self.send_response(201)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        class _Serveur(HTTPServer):
+            def handle_error(self, *a):      # connexion coupée par le client : attendu
+                pass
+
+        serveur = _Serveur(("127.0.0.1", 0), _Recepteur)
+        threading.Thread(target=serveur.serve_forever, daemon=True).start()
+        try:
+            fichier = tmp_path / "gros.mp4"
+            fichier.write_bytes(os.urandom(20 * 1024 * 1024))
+            api = _api(None)
+            import requests
+            api.session = requests.Session()
+            api.rest = f"http://127.0.0.1:{serveur.server_address[1]}/rest"
+            envoyes = []
+            debut = time.time()
+            with pytest.raises(EnvoiAnnule):
+                api.upload_video(str(fichier), "t", "o", "ty",
+                                 progress_cb=lambda s, t: envoyes.append(s),
+                                 annuler=lambda: bool(envoyes) and envoyes[-1] > 2 * 1024 * 1024)
+            assert envoyes[-1] < 5 * 1024 * 1024, "l'envoi a continué après l'arrêt"
+            assert time.time() - debut < 10
+        finally:
+            serveur.shutdown()
+
+    def test_envoi_par_morceaux_arrete_avant_la_finalisation(self, tmp_path, monkeypatch):
+        """Arrêt entre deux morceaux : la finalisation, qui crée la vidéo,
+        ne doit pas avoir lieu."""
+        from pod_chunked import EnvoiAnnule
+        f = tmp_path / "v.mp4"
+        f.write_bytes(b"abcdef")
+        s, envoyes = _session_chunk(monkeypatch, [
+            {"upload_id": "u", "offset": 2}, {"offset": 4}, {"offset": 6}])
+        finalise = []
+        monkeypatch.setattr(s, "_complete", lambda *a, **k: finalise.append(1))
+        with pytest.raises(EnvoiAnnule):
+            s.upload_video_chunked(str(f), chunk_size=2,
+                                   annuler=lambda: len(envoyes) >= 1)
+        assert len(envoyes) == 1 and not finalise
+
+    def test_attente_apres_504_interrompue_en_moins_d_une_seconde(self, monkeypatch):
+        """Pause de sondage de 15 s : l'arrêt ne doit pas l'attendre. Et la
+        vidéo existant peut-être, l'annulation le signale (`a_verifier`)."""
+        import time
+
+        import app as A
+        from pod_api import EnvoiAnnule
+        monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_TIMEOUT_S", 60)
+        monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_INTERVAL_S", 15)
+        top = time.time() + 0.3
+        debut = time.time()
+        with pytest.raises(EnvoiAnnule) as info:
+            A.App._verify_chunked_creation(_faux_app([]), "pa0123456789ab", VEHICULE,
+                                           lambda: time.time() > top)
+        assert time.time() - debut < 1.5
+        assert info.value.a_verifier is True
+        assert "pa0123456789ab" in str(info.value), "le Journal doit dire quoi chercher"
+
+
+def _lot(items, upload):
+    """Faux App pour `_do_batch_upload` : widgets simulés, API factice."""
+    from unittest.mock import MagicMock
+
+    import app as A
+    faux = MagicMock()
+    faux.items = items
+    faux.api = SimpleNamespace(upload_video=upload, set_disciplines=lambda *a: None,
+                               launch_encoding=lambda *a: None)
+    faux.depot_interrompu = threading.Event()
+    faux.config_data = {"url": "https://videos.exemple.fr"}
+    faux.additional_owner_urls = []
+    faux.site_urls = []
+    faux._file_size = A.App._file_size
+    faux._est_coupure_reseau = A.App._est_coupure_reseau
+    faux._cle_fichier = A.App._cle_fichier
+    faux.deposes_session = {}
+    faux.appels_ui = []
+    faux._ui = lambda fn, *a, **k: faux.appels_ui.append((fn, a))
+    return faux
+
+
+def _bilan(faux):
+    """Arguments passés à `_on_batch_done` (dernier appel via _ui)."""
+    return next(a for fn, a in reversed(faux.appels_ui) if fn is faux._on_batch_done)
+
+
+class TestInterruptionDuLot:
+    def _items(self, n):
+        import app as A
+        return [A.UploadItem(f"video{i}.mp4") for i in range(n)]
+
+    def test_arret_demande_avant_une_video_rien_n_est_envoye(self):
+        import app as A
+        envois = []
+        faux = _lot(self._items(2), lambda *a, **k: envois.append(a) or {"slug": "s"})
+        faux.depot_interrompu.set()
+        A.App._do_batch_upload(faux, "owner", "type", True, False)
+        assert not envois
+        assert _bilan(faux) == (0, 2, True)
+
+    def test_arret_pendant_un_envoi_n_est_ni_un_echec_ni_suivi_du_suivant(self):
+        import app as A
+        from pod_api import EnvoiAnnule
+        envois = []
+
+        def envoi(*a, **k):
+            envois.append(k["annuler"])
+            raise EnvoiAnnule()
+        items = self._items(2)
+        faux = _lot(items, envoi)
+        A.App._do_batch_upload(faux, "owner", "type", True, False)
+        assert len(envois) == 1, "la vidéo suivante est partie après l'arrêt"
+        assert envois[0] == faux.depot_interrompu.is_set, "l'arrêt n'est pas transmis à l'envoi"
+        assert not items[0].done and not items[0].a_verifier
+        statuts = [a[1] for fn, a in faux.appels_ui if fn is faux._set_item_status]
+        assert "⏹ interrompu" in statuts and "❌ échec" not in statuts
+        assert _bilan(faux) == (0, 2, True)
+
+    def test_video_a_verifier_jamais_renvoyee(self):
+        """Arrêt pendant l'attente d'un 504 : la vidéo existe peut-être. La
+        relance du lot ne doit pas la renvoyer (doublon)."""
+        import app as A
+        from pod_api import EnvoiAnnule
+        items = self._items(1)
+        faux = _lot(items, lambda *a, **k: (_ for _ in ()).throw(
+            EnvoiAnnule("peut-être créée", a_verifier=True)))
+        A.App._do_batch_upload(faux, "owner", "type", True, False)
+        assert items[0].a_verifier is True
+
+        envois = []
+        faux2 = _lot(items, lambda *a, **k: envois.append(1) or {"slug": "s"})
+        A.App._do_batch_upload(faux2, "owner", "type", True, False)
+        assert not envois
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  4 ter. Liste de téléversement modifiée pendant ou après un lot
+# ══════════════════════════════════════════════════════════════════════════
+
+class TestListePendantEtApresUnLot:
+    def test_fichier_ajoute_pendant_le_lot_part_a_la_suite(self):
+        """La boucle suit la liste vivante : ajouté pendant l'envoi du
+        premier, le second part dans le même lot, et le total suit."""
+        import app as A
+        items = [A.UploadItem("premier.mp4")]
+        envoyes = []
+
+        def envoi(path, *a, **k):
+            envoyes.append(os.path.basename(path))
+            if len(envoyes) == 1:
+                items.append(A.UploadItem("ajoute_en_cours.mp4"))
+            return {"slug": f"s{len(envoyes)}", "url": "u"}
+        faux = _lot(items, envoi)
+        A.App._do_batch_upload(faux, "owner", "type", True, False)
+        assert envoyes == ["premier.mp4", "ajoute_en_cours.mp4"]
+        assert _bilan(faux) == (2, 2, False)
+
+    def test_envoi_reussi_memorise_pour_la_session(self):
+        import app as A
+        items = [A.UploadItem("cours.mp4")]
+        faux = _lot(items, lambda *a, **k: {"slug": "cours-mp4", "url": "u"})
+        A.App._do_batch_upload(faux, "owner", "type", True, False)
+        heure, slug = faux.deposes_session[A.App._cle_fichier("cours.mp4")]
+        assert slug == "cours-mp4" and re.match(r"\d\d:\d\d$", heure)
+
+    @pytest.mark.parametrize("methode", ["_remove_item", "_clear_items", "_retirer_terminees"])
+    def test_aucun_retrait_pendant_un_lot(self, methode):
+        """Retirer une ligne pendant l'envoi décalait les index : la vidéo
+        suivante était sautée sans un mot."""
+        import app as A
+        item = A.UploadItem("a.mp4")
+        item.done = True
+        faux = SimpleNamespace(items=[item], depot_en_cours=True,
+                               _refresh_list=lambda: pytest.fail("liste modifiée"))
+        args = (item,) if methode == "_remove_item" else ()
+        getattr(A.App, methode)(faux, *args)
+        assert faux.items == [item]
+
+
+def _ajout(items=(), deposes=None, en_cours=False):
+    from unittest.mock import MagicMock
+
+    import app as A
+    faux = MagicMock()
+    faux.items = list(items)
+    faux.deposes_session = dict(deposes or {})
+    faux.depot_en_cours = en_cours
+    faux._cle_fichier = A.App._cle_fichier
+    return faux
+
+
+def _message(faux):
+    return faux.global_msg.configure.call_args.kwargs["text"]
+
+
+class TestAjoutDeFichiers:
+    def test_meme_fichier_ecrit_autrement_n_entre_pas_deux_fois(self):
+        """Sélecteur et glisser-déposer n'écrivent pas le chemin pareil."""
+        import app as A
+        faux = _ajout([A.UploadItem(os.path.join(RACINE, "Cours.mp4"))])
+        autre_ecriture = os.path.join(RACINE, "Cours.mp4").replace(os.sep, "/")
+        if os.name == "nt":
+            autre_ecriture = autre_ecriture.upper()
+        assert A.App._add_paths(faux, [autre_ecriture]) == 0
+        assert len(faux.items) == 1
+        assert "1 déjà dans la liste" in _message(faux)
+
+    def test_selecteur_annule_ne_dit_rien(self):
+        import app as A
+        faux = _ajout()
+        assert A.App._add_paths(faux, ()) == 0
+        faux.global_msg.configure.assert_not_called()
+
+    def test_fichier_deja_envoye_demande_confirmation(self, monkeypatch):
+        """Envoyé, retiré de la liste, puis réajouté : doublon sur Pod si l'on
+        ne prévient pas."""
+        import app as A
+        chemin = os.path.join(RACINE, "deja.mp4")
+        questions = []
+        monkeypatch.setattr(A.messagebox, "askyesno",
+                            lambda titre, texte: questions.append(texte) or False)
+        faux = _ajout(deposes={A.App._cle_fichier(chemin): ("21:46", "0195-deja")})
+        assert A.App._add_paths(faux, [chemin]) == 0
+        assert questions and "0195-deja" in questions[0]
+        assert "1 déjà envoyée(s) non ajoutée(s)" in _message(faux)
+
+        monkeypatch.setattr(A.messagebox, "askyesno", lambda *a: True)
+        assert A.App._add_paths(faux, [chemin]) == 1
+
+    def test_ajout_pendant_un_lot_annonce_qu_il_part_a_la_suite(self):
+        import app as A
+        faux = _ajout(en_cours=True)
+        A.App._add_paths(faux, [os.path.join(RACINE, "nouveau.mp4")])
+        assert "à la suite du lot en cours" in _message(faux)
 
 
 # ══════════════════════════════════════════════════════════════════════════

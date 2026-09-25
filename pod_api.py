@@ -19,7 +19,7 @@ Particularités Esup-Pod gérées ici :
 from __future__ import annotations
 
 __author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__contact__     = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
 from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
@@ -31,6 +31,17 @@ import time
 import re
 import requests
 from typing import Callable, Optional
+from urllib.parse import urlsplit, urlunsplit
+
+# Délai des ENVOIS DE FICHIER : (connexion, lecture).
+#
+# Il valait `None` (attente infinie) : une connexion figée — serveur qui ne
+# répond plus sans couper la liaison — bloquait le lot pour toujours, et les
+# nouvelles tentatives prévues sur `Timeout` ne pouvaient jamais se déclencher.
+# 600 s de LECTURE ne limitent pas la durée totale de l'envoi : c'est le
+# silence maximal toléré entre deux échanges, largement au-dessus du temps
+# que met Pod à répondre une fois le fichier reçu.
+UPLOAD_TIMEOUT = (30, 600)
 
 try:
     # Permet un upload streamé avec callback de progression
@@ -56,6 +67,12 @@ class PodAPI:
     def __init__(self, base_url: str, token: str, verify_ssl: bool = True):
         """Initialise le client API : URL de base, token, session HTTP."""
         self.base_url = base_url.rstrip("/")
+        # Le jeton superutilisateur part dans l'en-tête de CHAQUE requête : une
+        # adresse en http:// l'enverrait en clair sur le réseau.
+        if urlsplit(self.base_url).scheme != "https":
+            raise PodAPIError(
+                "Adresse de l'instance refusée : elle doit commencer par "
+                "https:// (le jeton ne doit jamais circuler en clair).")
         self.rest = f"{self.base_url}/rest"
         self.token = token
         self.verify_ssl = verify_ssl
@@ -87,9 +104,41 @@ class PodAPI:
     # ╚══════════════════════════════════════════════════════════════════╝
 
     def _abs(self, endpoint_or_url: str) -> str:
-        """Accepte un endpoint relatif (/videos/) OU une URL absolue de l'API."""
-        s = str(endpoint_or_url)
-        return s if s.startswith("http") else f"{self.rest}{s}"
+        """Accepte un endpoint relatif (/videos/) OU une URL absolue de l'API.
+
+        ⚠️ Toute requête de ce client porte le jeton SUPERUTILISATEUR (en-tête
+        de la session). Une URL absolue vient presque toujours du serveur
+        (champ `url` d'un objet, lien `next` de pagination…) : elle n'est
+        suivie que si elle désigne LA MÊME instance, et toujours en https.
+        Sans ce contrôle, une valeur inattendue renvoyée par l'API suffisait à
+        envoyer le jeton vers un autre hôte, ou en clair."""
+        s = str(endpoint_or_url or "").strip()
+        if not s:
+            # `_abs("")` donnait la racine de l'API : un PATCH parti avec une
+            # URL de compte vide visait `/rest` au lieu d'échouer clairement.
+            raise PodAPIError("Adresse vide : aucune ressource désignée.")
+        # Relatif = commence par « / ». Tout le reste (http, https, ftp, ou
+        # un texte quelconque) passe par le contrôle d'instance.
+        if s.startswith("/"):
+            return f"{self.rest}{s}"
+        return self._meme_instance(s)
+
+    def _meme_instance(self, url: str) -> str:
+        """Renvoie `url` en https si elle désigne l'instance, sinon lève.
+
+        Un `http://` du MÊME hôte est réécrit en https plutôt que refusé :
+        derrière un proxy mal réglé, Django fabrique parfois ses liens en
+        http. Le réécrire garde l'application utilisable sans jamais laisser
+        partir le jeton en clair. Un autre hôte, lui, est toujours refusé."""
+        cible = urlsplit(url)
+        instance = urlsplit(self.rest)
+        if (cible.scheme not in ("http", "https")
+                or cible.netloc.lower() != instance.netloc.lower()):
+            raise PodAPIError(
+                f"Adresse refusée ({cible.scheme}://{cible.netloc}) : elle ne "
+                f"désigne pas l'instance {instance.netloc}. Le jeton n'a pas "
+                "été envoyé.")
+        return urlunsplit(("https",) + tuple(cible)[1:])
 
     def _json(self, resp: requests.Response):
         """Transforme une réponse HTTP en données Python ; lève PodAPIError si code >= 400."""
@@ -167,7 +216,10 @@ class PodAPI:
             data = self._json(r)
             if isinstance(data, dict):
                 items.extend(data.get("results", []))
-                url = data.get("next")     # URL absolue de la page suivante
+                # `next` est fourni par le serveur : même contrôle que toute
+                # autre URL absolue avant d'y renvoyer le jeton.
+                suivante = data.get("next")
+                url = self._abs(suivante) if suivante else None
             else:
                 items.extend(data or [])
                 url = None
@@ -358,13 +410,13 @@ class PodAPI:
                     monitor = MultipartEncoderMonitor(encoder, _cb)
                     headers = {"Content-Type": monitor.content_type}
                     r = self.session.post(f"{self.rest}/videos/", data=monitor,
-                                         headers=headers, timeout=None,
+                                         headers=headers, timeout=UPLOAD_TIMEOUT,
                                          verify=self.verify_ssl)
                 else:
                     files = {"video": (filename, f, "application/octet-stream")}
                     data = {k: v for k, v in fields if k != "video"}
                     r = self.session.post(f"{self.rest}/videos/", data=data,
-                                         files=files, timeout=None,
+                                         files=files, timeout=UPLOAD_TIMEOUT,
                                          verify=self.verify_ssl)
                 return self._json(r)
             finally:
@@ -453,10 +505,6 @@ class PodAPI:
         """Donne (True) ou retire (False) le statut « équipe » à un compte."""
         return self._patch(user_url, json={"is_staff": bool(is_staff)})
 
-    def set_user_groups(self, user_url: str, group_names: list[str]) -> dict:
-        """Remplace les groupes d'accès d'un compte (champ 'groups')."""
-        return self._patch(user_url, json={"groups": list(group_names)})
-
     # ── B. Vidéos en masse — inventaire, réaffectation, nettoyage ─────────
     # Diagnostic : PATCH + DELETE autorisés, owner / is_draft modifiables.
     # Champs de statut utiles : encoded, encoding_in_progress,
@@ -531,8 +579,7 @@ class PodAPI:
         N'amorce PAS l'encodage (appeler launch_encoding ensuite)."""
         if not os.path.isfile(file_path):
             raise PodAPIError(f"Fichier introuvable : {file_path}")
-        endpoint = self._video_endpoint(video)
-        target = endpoint if str(endpoint).startswith("http") else f"{self.rest}{endpoint}"
+        target = self._abs(self._video_endpoint(video))
         filename = os.path.basename(file_path)
 
         def _one_attempt():
@@ -552,11 +599,11 @@ class PodAPI:
                     monitor = MultipartEncoderMonitor(encoder, _cb)
                     headers = {"Content-Type": monitor.content_type}
                     r = self.session.patch(target, data=monitor, headers=headers,
-                                           timeout=None, verify=self.verify_ssl)
+                                           timeout=UPLOAD_TIMEOUT, verify=self.verify_ssl)
                 else:
                     files = {"video": (filename, f, "application/octet-stream")}
                     r = self.session.patch(target, files=files,
-                                           timeout=None, verify=self.verify_ssl)
+                                           timeout=UPLOAD_TIMEOUT, verify=self.verify_ssl)
                 return self._json(r)
             finally:
                 f.close()
@@ -746,7 +793,8 @@ class PodAPI:
                 user_url = o.get("user")
                 if user_url:
                     mapping[str(user_url).rstrip("/")] = o.get("url")
-            url = d.get("next") if isinstance(d, dict) else None
+            suivante = d.get("next") if isinstance(d, dict) else None
+            url = self._abs(suivante) if suivante else None
             pages += 1
         # Même garde-fou que _paginate : signaler une liste incomplète.
         self.troncatures["/owners/"] = bool(url)
@@ -796,7 +844,7 @@ class PodAPI:
     def set_access_group_members(self, group_url: str, owner_urls: list[str]) -> dict:
         """Remplace la liste des membres d'un groupe (PATCH du champ `users`,
         au format /owners/<id>/)."""
-        r = self.session.patch(group_url, json={"users": list(owner_urls)},
+        r = self.session.patch(self._abs(group_url), json={"users": list(owner_urls)},
                                headers={"Accept": "application/json"},
                                timeout=30, verify=self.verify_ssl)
         # Les membres font partie des données mises en cache : à rafraîchir.
@@ -894,6 +942,20 @@ class PodAPI:
         `file` (l'adresse du fichier, pour afficher une vignette), `name` et
         `folder`."""
         return self._paginate("/images/", {"limit": 100}, max_pages=max_pages)
+
+    def telecharger_media(self, url: str, timeout: float = 20) -> requests.Response:
+        """Télécharge un fichier média (vignette d'image) SANS le jeton.
+
+        L'adresse vient du champ `file` renvoyé par le serveur : elle peut
+        désigner un serveur de fichiers distinct de l'API. Passer par
+        `self.session` y aurait envoyé le jeton superutilisateur. Un fichier
+        média n'a pas besoin d'authentification : requête anonyme."""
+        s = str(url or "").strip()
+        if s.startswith("/"):
+            s = f"{self.base_url}{s}"
+        if urlsplit(s).scheme not in ("http", "https"):
+            raise PodAPIError(f"Adresse de média invalide : {s[:80]}")
+        return requests.get(s, timeout=timeout, verify=self.verify_ssl)
 
     def get_folders(self, max_pages: int = 10) -> list[dict]:
         """Liste les dossiers de rangement des images (champ obligatoire au dépôt)."""

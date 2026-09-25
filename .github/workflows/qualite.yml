@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:      # bouton « Run workflow » dans l'onglet Actions
 
+# Lecture seule : les tests n'ont rien à écrire sur le dépôt.
+permissions:
+  contents: read
+
 jobs:
   tests:
     runs-on: ubuntu-latest

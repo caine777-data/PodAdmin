@@ -14,7 +14,7 @@ config.py — Configuration et stockage sécurisé des identifiants (PodAdmin).
 from __future__ import annotations
 
 __author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__contact__     = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
 from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"

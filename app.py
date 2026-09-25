@@ -14,7 +14,7 @@ Nécessite un token de compte SUPERUTILISATEUR.
 from __future__ import annotations
 
 __author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__contact__     = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
 from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
@@ -765,12 +765,18 @@ class App(_AppBase):
         self.videos: list[dict] = []            # la liste unique
         self.videos_loaded_at = None            # datetime du dernier chargement
         self.videos_loading = False             # un scan est-il déjà en cours ?
+        self._videos_rescan = False             # relecture forcée demandée pendant un scan
         self._videos_waiters: list = []         # callbacks à servir en fin de scan
         # VERROU du magasin. Plusieurs threads peuvent vouloir remplir ou muter
         # `self.videos` en même temps (l'onglet Chaînes charge en synchrone
         # pendant qu'un scan asynchrone tourne, un lot supprime des vidéos…).
         # Sans verrou, deux scans complets pouvaient s'écrire l'un sur l'autre.
         self._videos_lock = threading.RLock()
+        # Verrou COURT, distinct du précédent : il ne protège que la décision
+        # « un scan tourne-t-il / faut-il en relancer un ». `_videos_lock` est
+        # tenu pendant tout un scan réseau par `ensure_videos_sync` : le
+        # prendre depuis le thread principal gèlerait l'interface.
+        self._videos_etat_lock = threading.Lock()
         self.site_urls: list[str] = []         # sites (requis à l'upload)
         self.access_groups: list[dict] = []    # groupes d'accès {code_name, display_name, url}
         # Vrai une fois l'onglet Groupes réellement chargé (groupes + table des
@@ -1833,32 +1839,52 @@ class App(_AppBase):
             return 0
 
     @staticmethod
-    def _search_term_for(filename: str) -> str:
-        """Terme de recherche pour retrouver une vidéo créée par chunké (Pod la
-        titre d'après le nom de fichier ASCII envoyé)."""
-        base = os.path.splitext(os.path.basename(filename))[0]
-        return PodChunkedSession._ascii_filename(base)
+    def _nouveau_marqueur() -> str:
+        """Marqueur unique d'un envoi par morceaux (voir `_verify_chunked_creation`)."""
+        import uuid
+        return f"pa{uuid.uuid4().hex[:12]}"
 
-    def _verify_chunked_creation(self, search_term: str, pre_ids: set, creator_owner_url: str):
+    def _verify_chunked_creation(self, marqueur: str, creator_owner_url: str):
         """(Thread) Après un 504 à la finalisation, Pod termine la création côté
-        serveur. On sonde l'API jusqu'à voir une vidéo NOUVELLE (id absent de
-        pre_ids) correspondant au fichier, créée par le compte VÉHICULE. Renvoie
-        le dict vidéo, ou None après expiration de la fenêtre de vérification."""
+        serveur. On sonde l'API jusqu'à voir LA vidéo portant `marqueur` (ajouté
+        au nom de fichier envoyé, donc au titre provisoire). Renvoie le dict
+        vidéo, ou None après expiration de la fenêtre de vérification.
+
+        ⚠️ Ne JAMAIS retrouver la vidéo par son seul nom de fichier : le compte
+        véhicule est partagé (PodAdmin, Pod Téléverseur, d'autres postes). Deux
+        dépôts du même fichier existent sans peine, et la vidéo retrouvée est
+        ensuite RÉATTRIBUÉE au propriétaire choisi : se tromper donnait la
+        vidéo d'un autre à ce propriétaire. Le marqueur est unique par envoi ;
+        si malgré tout plusieurs vidéos le portent, on refuse de choisir."""
         import time as _t
         deadline = _t.time() + cfg.CHUNK_VERIFY_TIMEOUT_S
+        attendu = marqueur.lower()
+        vehicule = str(creator_owner_url or "").rstrip("/")
         while _t.time() < deadline:
             try:
-                cands = self.api.search_videos({"search": search_term, "limit": 25})
+                cands = self.api.search_videos({"search": marqueur, "limit": 25})
             except Exception:
                 cands = []
+            trouvees = []
             for v in cands:
-                if v.get("id") in pre_ids:
+                texte = f"{v.get('title', '')} {v.get('slug', '')}".lower()
+                if attendu not in texte:
                     continue
                 own = v.get("owner")
                 own_str = own if isinstance(own, str) else (
                     own.get("url", "") if isinstance(own, dict) else "")
-                if creator_owner_url and own_str and creator_owner_url.rstrip("/") not in own_str.rstrip("/"):
+                # Égalité stricte : une inclusion de chaîne confondait
+                # `/users/1` et `/users/18`.
+                if vehicule and str(own_str).rstrip("/") != vehicule:
                     continue
+                trouvees.append(v)
+            if len(trouvees) > 1:
+                raise PodAPIError(
+                    f"{len(trouvees)} vidéos portent le marqueur d'envoi {marqueur} : "
+                    "réattribution refusée pour ne pas donner la mauvaise vidéo. "
+                    "Vérifiez côté web.", 0, "")
+            if trouvees:
+                v = trouvees[0]
                 self._ui(self._log, f"✓ Vidéo apparue après finalisation serveur : {v.get('slug')}")
                 return v
             remaining = max(0, int(deadline - _t.time()))
@@ -1891,6 +1917,40 @@ class App(_AppBase):
         sans_reponse = getattr(err, "status", 0) in (0, 502, 503, 504)
         return sans_reponse and any(i in texte for i in indices)
 
+    def _deposer_par_morceaux(self, chunked, it, progress, on_retry):
+        """Envoie une vidéo NEUVE par morceaux, avec récupération après un 504.
+
+        Point de passage UNIQUE des deux chemins qui créent une vidéo par
+        morceaux (gros fichier, et repli après coupure de l'envoi direct). Ils
+        avaient chacun leur copie de la récupération, et l'une appelait
+        `_verify_chunked_creation` avec de mauvais arguments : un 504 dans le
+        repli levait une TypeError, la vidéo — peut-être bien créée — était
+        affichée en échec, et « Relancer les échecs » en créait une seconde.
+
+        Renvoie (slug, vidéo) ; la vidéo vaut None si l'API ne la retrouve pas."""
+        marqueur = self._nouveau_marqueur()
+        video = None
+        try:
+            slug = chunked.upload_video_chunked(
+                it.path, chunk_size=cfg.CHUNK_SIZE_BYTES,
+                progress_cb=progress, retry_cb=on_retry, marqueur=marqueur)
+        except PodChunkedError as ce:
+            # La passerelle a coupé la finalisation : Pod termine côté serveur.
+            # On attend que la vidéo apparaisse plutôt que de conclure à l'échec.
+            if ce.status not in (502, 503, 504):
+                raise
+            self._ui(self._log,
+                     f"⏳ {it.title} : finalisation coupée (HTTP {ce.status}) — "
+                     "Pod termine côté serveur, vérification en cours…")
+            self._ui(self._set_item_status, it, "⏳ finalisation serveur", T_ALERTE)
+            video = self._verify_chunked_creation(marqueur, self.vehicle_owner_url)
+            if not video:
+                raise
+            slug = video.get("slug", "")
+        if video is None:
+            video = self.api.get_video_by_slug(slug)
+        return slug, video
+
     def _replier_sur_chunked(self, it, owner_url: str, type_url: str,
                              is_draft: bool, progress, on_retry):
         """Renvoie le fichier par MORCEAUX après l'échec de l'envoi direct.
@@ -1905,26 +1965,10 @@ class App(_AppBase):
                                     self.vehicle_username, self.vehicle_password)
         chunked.login()
         try:
-            slug = chunked.upload_video_chunked(
-                it.path, chunk_size=cfg.CHUNK_SIZE_BYTES,
-                progress_cb=progress, retry_cb=on_retry)
-        except PodChunkedError as ce:
-            # La passerelle a coupé la finalisation : Pod termine côté serveur.
-            # On attend que la vidéo apparaisse plutôt que de conclure à l'échec.
-            if ce.status in (502, 503, 504):
-                self._ui(self._log,
-                         f"⏳ {it.title} : finalisation coupée (HTTP {ce.status}) — "
-                         "Pod termine côté serveur, vérification en cours…")
-                video = self._verify_chunked_creation(it, owner_url)
-                if not video:
-                    raise
-                slug = video.get("slug", "")
-            else:
-                raise
+            slug, video = self._deposer_par_morceaux(chunked, it, progress, on_retry)
         finally:
             chunked.close()
 
-        video = self.api.get_video_by_slug(slug)
         if not video:
             raise PodAPIError(f"Vidéo envoyée (slug={slug}) mais introuvable via l'API.", 0, "")
 
@@ -2006,35 +2050,9 @@ class App(_AppBase):
                     self._ui(self._log,
                              f"Gros fichier (> {cfg.CHUNK_THRESHOLD_BYTES//1024//1024} Mo) : "
                              f"bascule chunkée pour {it.title}.")
-                    # Repères pour la récupération après un éventuel 504.
-                    search_term = self._search_term_for(it.filename)
-                    try:
-                        pre_ids = {v.get("id") for v in
-                                   self.api.search_videos({"search": search_term, "limit": 25})}
-                    except Exception:
-                        pre_ids = set()
                     # 1) Envoi par morceaux → vidéo créée au nom du VÉHICULE.
-                    video = None
-                    try:
-                        slug = chunked.upload_video_chunked(
-                            it.path, chunk_size=cfg.CHUNK_SIZE_BYTES,
-                            progress_cb=progress, retry_cb=on_retry)
-                    except PodChunkedError as ce:
-                        if ce.status in (502, 503, 504):
-                            self._ui(self._log,
-                                     f"⏳ Finalisation coupée par la passerelle (HTTP {ce.status}) "
-                                     "— Pod termine côté serveur, vérification en cours…")
-                            self._ui(self._set_item_status, it, "⏳ finalisation serveur", T_ALERTE)
-                            video = self._verify_chunked_creation(
-                                search_term, pre_ids, self.vehicle_owner_url)
-                            if not video:
-                                raise
-                            slug = video.get("slug", "")
-                        else:
-                            raise
+                    slug, video = self._deposer_par_morceaux(chunked, it, progress, on_retry)
                     it.slug = slug
-                    if video is None:
-                        video = self.api.get_video_by_slug(slug)
                     it.video_url = video.get("url", "") if isinstance(video, dict) else ""
                     # 2) RÉATTRIBUTION au propriétaire choisi + métadonnées (par token).
                     #    Point critique : si le PATCH owner échoue, la vidéo reste au
@@ -2118,7 +2136,10 @@ class App(_AppBase):
                 # disproportionné.
                 if discipline_url and it.slug:
                     try:
-                        self.api.set_disciplines(it.slug, [discipline_url])
+                        # L'URL de la vidéo, pas son slug : l'API indexe les
+                        # vidéos par identifiant numérique, et `/videos/<slug>/`
+                        # peut répondre 404 (voir `PodAPI._video_endpoint`).
+                        self.api.set_disciplines(it.video_url or it.slug, [discipline_url])
                     except Exception as e:
                         self._ui(self._log,
                                  f"Discipline non rattachée ({it.title}) : {e}")
@@ -5172,7 +5193,12 @@ class App(_AppBase):
         """Renvoie les objets vidéo correspondant à la sélection multiple.
 
         On parcourt TOUTES les vidéos filtrées, pas seulement les 300 affichées :
-        « Tout sélectionner » peut en retenir davantage."""
+        « Tout sélectionner » peut en retenir davantage.
+
+        ⚠️ SEULE définition de la cible d'une action de lot. Une seconde,
+        qui lisait tout le magasin, servait au type et aux disciplines : une
+        vidéo cochée puis sortie du filtre restait visée par ces deux actions
+        alors que l'en-tête ne la comptait plus."""
         return [v for v in self.browse_filtered if v.get("slug") in self.browse_multi]
 
     def _browse_render_multi_panel(self):
@@ -5244,7 +5270,7 @@ class App(_AppBase):
         # au simple changement du menu (un clic de travers modifierait N
         # vidéos) ; il faut le bouton, qui porte le NOMBRE de vidéos — principe
         # repris de l'ancienne barre « En masse » — puis une confirmation.
-        n_lot = len(self._browse_multi_videos())
+        n_lot = len(self._browse_videos_multi())
         ctk.CTkLabel(self.browse_detail, text="Classement",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(
             anchor="w", padx=6, pady=(10, 2))
@@ -5955,15 +5981,10 @@ class App(_AppBase):
             self._ui(self._log, f"❌ Suppression sous-titre : {e}")
             self._ui(self._browse_set_msg, f"❌  {message_utilisateur(e)}", T_ERREUR)
 
-    def _browse_multi_videos(self) -> list:
-        """Vidéos de la sélection multiple, dans l'ordre de la liste."""
-        choisis = set(self.browse_multi)
-        return [v for v in (self.videos or []) if v.get("slug") in choisis]
-
     def _browse_lot_type(self, titre_type):
         """Type pour toute la sélection, après confirmation."""
         url = (self.type_map or {}).get(titre_type)
-        vids = self._browse_multi_videos()
+        vids = self._browse_videos_multi()
         if not url or not vids:
             self.browse_multi_msg.configure(text="Aucun type disponible.",
                                             text_color=T_ALERTE)
@@ -5983,7 +6004,7 @@ class App(_AppBase):
         disciplines = [{"url": u, "title": t} for t, u in
                        sorted((getattr(self, "discipline_map", {}) or {}).items(),
                               key=lambda x: x[0].lower())]
-        vids = self._browse_multi_videos()
+        vids = self._browse_videos_multi()
         if not disciplines:
             self.browse_multi_msg.configure(
                 text="Aucune discipline définie : créez-en dans l'onglet "
@@ -6208,15 +6229,21 @@ class App(_AppBase):
             return
 
         # 2. Un scan tourne déjà → on s'inscrit dans la file d'attente.
-        if self.videos_loading:
+        #
+        # ⚠️ Avec `force`, ce scan-là ne suffit pas : il a pu démarrer AVANT
+        # l'événement qui motive la relecture (un dépôt qui vient de finir) et
+        # rendrait une liste sans les nouvelles vidéos. On demande donc une
+        # relecture de plus, enchaînée à sa suite. Sous verrou : le thread de
+        # scan consulte ce drapeau au moment exact où il décide de s'arrêter.
+        with self._videos_etat_lock:
             if on_ready:
                 self._videos_waiters.append(on_ready)
-            return
-
-        # 3. Sinon, on lance LE scan.
-        self.videos_loading = True
-        if on_ready:
-            self._videos_waiters.append(on_ready)
+            if self.videos_loading:
+                if force:
+                    self._videos_rescan = True
+                return
+            # 3. Sinon, on lance LE scan (drapeau levé sous le même verrou).
+            self.videos_loading = True
         self._run(self._do_load_videos, progress_cb)
 
     def _do_load_videos(self, progress_cb=None):
@@ -6224,17 +6251,27 @@ class App(_AppBase):
         puis réveille tous les onglets qui l'attendaient."""
         from datetime import datetime
         try:
-            vids = self.api.get_all_videos(progress_cb=progress_cb)
-            with self._videos_lock:
-                # Remplacement du CONTENU (et non de l'objet liste) : d'éventuelles
-                # références conservées ailleurs restent ainsi valides.
-                self.videos[:] = vids
-                self.videos_loaded_at = datetime.now()
-            self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
-        except Exception as e:
-            self._ui(self._log, f"❌ Chargement des vidéos : {e}")
+            while True:
+                try:
+                    vids = self.api.get_all_videos(progress_cb=progress_cb)
+                    with self._videos_lock:
+                        # Remplacement du CONTENU (et non de l'objet liste) :
+                        # d'éventuelles références conservées ailleurs restent
+                        # ainsi valides.
+                        self.videos[:] = vids
+                        self.videos_loaded_at = datetime.now()
+                    self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
+                except Exception as e:
+                    self._ui(self._log, f"❌ Chargement des vidéos : {e}")
+                # Une relecture forcée demandée PENDANT ce scan ? On la fait
+                # maintenant, avant de servir les demandeurs (voir ensure_videos).
+                with self._videos_etat_lock:
+                    if not self._videos_rescan:
+                        self.videos_loading = False
+                        break
+                    self._videos_rescan = False
         finally:
-            # Quoi qu'il arrive : libérer le verrou et servir les demandeurs,
+            # Quoi qu'il arrive : libérer le drapeau et servir les demandeurs,
             # sinon les onglets resteraient bloqués en attente.
             self.videos_loading = False
             self._ui(self._flush_videos_waiters)
@@ -6285,9 +6322,18 @@ class App(_AppBase):
                 self._ui(self._log, f"📚 {len(vids)} vidéo(s) chargée(s) (cache partagé).")
             finally:
                 # Toujours relâcher le drapeau, sinon `ensure_videos` croirait
-                # qu'un scan tourne encore et n'en lancerait plus jamais.
-                self.videos_loading = False
-                self._ui(self._flush_videos_waiters)
+                # qu'un scan tourne encore et n'en lancerait plus jamais —
+                # SAUF si une relecture forcée a été demandée pendant ce scan :
+                # le drapeau reste levé et un scan asynchrone prend le relais,
+                # qui servira lui-même les demandeurs.
+                with self._videos_etat_lock:
+                    relancer = self._videos_rescan
+                    self._videos_rescan = False
+                    self.videos_loading = relancer
+                if relancer:
+                    self._run(self._do_load_videos)
+                else:
+                    self._ui(self._flush_videos_waiters)
         return self.videos
 
     def scan_truncated_warning(self, *endpoints) -> str:
@@ -6656,11 +6702,21 @@ class App(_AppBase):
                 finally:
                     chunked.close()
                 if returned and returned != slug:
-                    # Sécurité : un slug différent = vidéo neuve créée au lieu
-                    # d'un remplacement. On le signale clairement.
+                    # Un slug différent = vidéo NEUVE créée au lieu d'un
+                    # remplacement. On s'arrête : relancer l'encodage de
+                    # l'ancienne vidéo ferait croire le remplacement réussi.
                     self._ui(self._log,
-                             f"⚠️ Le remplacement a renvoyé un slug différent ({returned}) : "
-                             "une vidéo neuve a peut-être été créée. À vérifier côté web.")
+                             f"⚠️ Le remplacement de {slug} a renvoyé un slug différent "
+                             f"({returned}) : une vidéo neuve a peut-être été créée au nom "
+                             "du compte véhicule. Encodage NON relancé — à vérifier côté web.")
+                    self._ui(self._browse_set_msg,
+                             "⚠️  Remplacement incertain : vérifiez la vidéo côté web.", T_ALERTE)
+                    if modal:
+                        self._ui(modal.finish, False,
+                                 f"Le serveur a renvoyé une autre vidéo ({returned}) au lieu de "
+                                 "remplacer celle-ci. Rien n'a été relancé : vérifiez sur le "
+                                 "site avant de recommencer.")
+                    return
             else:
                 # ── Fichier ≤ seuil : PATCH direct streamé (inchangé) ──
                 if modal:
@@ -8863,12 +8919,16 @@ class App(_AppBase):
             self.help_box.insert("end", titre.strip() + "\n", "titre")
             self.help_box.insert("end", corps.strip() + "\n\n")
 
+        # Seuil lu dans config.py, jamais écrit en toutes lettres : il est passé
+        # de 500 à 150 Mo et l'aide avait continué d'annoncer 500 Mo.
+        seuil = f"{cfg.CHUNK_THRESHOLD_BYTES // (1024 * 1024)} Mo"
+
         section(
             "🚀  Démarrage rapide",
             "1. Onglet Configuration : saisissez l'URL et le TOKEN d'un compte "
             "SUPERUTILISATEUR, puis « Tester & se connecter ».\n"
             "2. (Facultatif) Renseignez le compte VÉHICULE si vous téléverserez des "
-            "fichiers de plus de 500 Mo.\n"
+            f"fichiers de plus de {seuil}.\n"
             "3. Onglet Téléversement : ajoutez des vidéos, choisissez le propriétaire "
             "et le type, puis lancez.")
 
@@ -8878,22 +8938,22 @@ class App(_AppBase):
             "l'instance (comptes, vidéos, chaînes…) et sert à toutes les opérations API.\n"
             "• COMPTE VÉHICULE (facultatif) : un compte LOCAL, servant uniquement à "
             "ouvrir la session web du téléversement par morceaux (chunké). Requis "
-            "seulement pour les fichiers > 500 Mo.\n\n"
+            f"seulement pour les fichiers > {seuil}.\n\n"
             "Les deux sont stockés CHIFFRÉS dans le coffre-fort de l'OS, dans un espace "
             "séparé des autres applis Pod. « Oublier le token » efface tout du poste.")
 
         section(
             "📂  Téléverser des vidéos (et gros fichiers)",
             "• Choisissez le PROPRIÉTAIRE : les vidéos lui appartiendront.\n"
-            "• Bascule automatique par taille : ≤ 500 Mo → envoi classique par token ; "
-            "> 500 Mo → envoi par MORCEAUX via le compte véhicule, puis la vidéo est "
+            f"• Bascule automatique par taille : ≤ {seuil} → envoi classique par token ; "
+            f"> {seuil} → envoi par MORCEAUX via le compte véhicule, puis la vidéo est "
             "RÉATTRIBUÉE au propriétaire choisi (métadonnées + encodage ensuite). "
             "Transparent à l'usage.\n"
             "• Co-propriétaires et crédits (co-auteurs) disponibles comme d'habitude.")
 
         section(
             "⚠️  Gros fichiers : réattribution & finalisation serveur",
-            "Deux points à connaître pour les fichiers > 500 Mo :\n"
+            f"Deux points à connaître pour les fichiers > {seuil} :\n"
             "• La vidéo naît d'abord au nom du compte véhicule, puis est réattribuée "
             "au propriétaire choisi. Si cette réattribution échoue, l'appli l'affiche "
             "en ROUGE (« ⚠️ NON réattribuée ») : la vidéo reste alors au véhicule, à "
@@ -9996,7 +10056,7 @@ class BannerPicker(ctk.CTkToplevel):
             try:
                 import io
                 from PIL import Image as _Img
-                r = self.master_app.api.session.get(url_fichier, timeout=20)
+                r = self.master_app.api.telecharger_media(url_fichier)
                 if r.status_code != 200:
                     return
                 pil = _Img.open(io.BytesIO(r.content))

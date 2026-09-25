@@ -60,6 +60,13 @@ on:
           - débloquer
         default: ne rien changer
 
+# Jeton automatique en LECTURE SEULE pour tous les jobs. Aucun n'écrit sur ce
+# dépôt : la Release, version.json et etat.json partent sur le dépôt PUBLIC
+# avec RELEASES_TOKEN. Un job compromis (dépendance, action tierce) ne peut
+# donc rien pousser ici.
+permissions:
+  contents: read
+
 jobs:
   # ─────────────────────────────── WINDOWS ───────────────────────────────
   build-windows:
@@ -323,11 +330,11 @@ jobs:
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     if: (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && inputs.blocage != 'bloquer' && inputs.blocage != 'débloquer'
-    # Le jeton automatique de GitHub Actions est en LECTURE SEULE par défaut
-    # depuis 2023 : sans cette autorisation, la création de la Release échoue
-    # avec « 403 — Resource not accessible by integration ».
-    permissions:
-      contents: write
+    # Pas de `contents: write` : il servait quand la Release était créée sur
+    # CE dépôt. Elle l'est désormais sur le dépôt public, avec RELEASES_TOKEN ;
+    # le jeton automatique ne sert plus qu'au checkout. (Si un jour la Release
+    # revenait ici, l'erreur serait « 403 — Resource not accessible by
+    # integration ».)
     steps:
       # ORDRE IMPORTANT : le checkout d'abord, car il NETTOIE le dossier de
       # travail. Placé après, il supprimerait les artefacts téléchargés — donc

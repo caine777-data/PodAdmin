@@ -50,7 +50,7 @@ ROBUSTESSE :
 from __future__ import annotations
 
 __author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__contact__     = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
 from __version__ import __version__   # source unique (voir __version__.py)
 __date__        = "2026"
@@ -116,6 +116,12 @@ class PodChunkedSession:
         Aucune connexion n'est ouverte ici : `login()` s'en charge, au moment
         où un envoi par morceaux devient nécessaire."""
         self.base_url = base_url.rstrip("/")
+        # Le mot de passe du compte véhicule part dans le formulaire de login :
+        # jamais sur une adresse en clair.
+        if not self.base_url.lower().startswith("https://"):
+            raise PodChunkedError(
+                "Adresse de l'instance refusée : elle doit commencer par "
+                "https:// (le mot de passe ne doit jamais circuler en clair).")
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
@@ -222,9 +228,15 @@ class PodChunkedSession:
         retry_cb: Optional[Callable[[int, int, str], None]] = None,
         max_retries: int = 4,
         target_slug: str = "",
+        marqueur: str = "",
     ) -> str:
         """Téléverse `file_path` en morceaux via la session web, puis finalise.
         Renvoie le SLUG de la vidéo.
+
+        `marqueur` : chaîne unique ajoutée au nom de fichier transmis. Pod titre
+        la vidéo d'après ce nom : si la finalisation est coupée (504), c'est ce
+        marqueur — et non le nom de fichier, partagé par d'autres dépôts du
+        même compte véhicule — qui permet de retrouver CETTE vidéo-là.
 
         Deux usages selon `target_slug` :
           • target_slug == ""       → CRÉATION d'une vidéo neuve (au nom de la session) ;
@@ -251,6 +263,9 @@ class PodChunkedSession:
         # vrai titre est posé ensuite par PATCH ; pour un REMPLACEMENT, la vidéo
         # cible conserve son titre. Le nom transmis n'est qu'indicatif.
         filename = self._ascii_filename(os.path.basename(file_path))
+        if marqueur:
+            base, ext = os.path.splitext(filename)
+            filename = f"{base} {self._ascii_filename(marqueur)}{ext}"
         md5 = hashlib.md5()          # calculé en un seul passage, pendant l'envoi
 
         upload_id: Optional[str] = None
@@ -271,15 +286,22 @@ class PodChunkedSession:
                     retry_cb=retry_cb, max_retries=max_retries)
 
                 # La réponse fournit l'upload_id (au 1er morceau) et l'offset.
-                if isinstance(resp, dict):
-                    if resp.get("upload_id"):
-                        upload_id = resp["upload_id"]
-                    if resp.get("offset") is not None:
-                        offset = int(resp["offset"])
-                    else:
-                        offset = end + 1
-                else:
-                    offset = end + 1
+                if isinstance(resp, dict) and resp.get("upload_id"):
+                    upload_id = resp["upload_id"]
+                offset = end + 1
+                annonce = resp.get("offset") if isinstance(resp, dict) else None
+                # ⚠️ Le fichier est lu en SÉQUENCE, quoi que dise le serveur :
+                # adopter un offset différent de `end + 1` décalerait le
+                # Content-Range du morceau suivant par rapport aux octets
+                # réellement envoyés, et le md5 porterait sur un autre contenu
+                # que celui retenu par Pod. Une vidéo corrompue sans erreur
+                # visible : on s'arrête plutôt que de continuer.
+                if annonce is not None and int(annonce) != offset:
+                    raise PodChunkedError(
+                        f"Position d'envoi incohérente : le serveur annonce "
+                        f"{annonce} octet(s) reçus, {offset} attendus. Envoi "
+                        "interrompu pour ne pas créer une vidéo corrompue ; "
+                        "relancez-le.")
 
                 if progress_cb:
                     progress_cb(min(offset, total), total)

@@ -674,6 +674,16 @@ class TestCoherenceDesTextes:
                    if isinstance(n, ast.Constant) and isinstance(n.value, str)]
         assert not [c for c in chaines if re.search(r"\b500 Mo\b", c)]
 
+    def test_l_aide_n_ecrit_pas_la_limite_aristote_en_dur(self):
+        """Même leçon pour la limite d'envoi à Aristote : elle vient d'une
+        mesure sur ILaaS et changera avec la passerelle."""
+        chaines = [n.value for n in ast.walk(ast.parse(_lire("app.py")))
+                   if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        assert not [c for c in chaines if re.search(r"\b7[0-9]{2} Mo\b", c)]
+        source = _lire("app.py")
+        aide = source[source.index("def _build_tab_help"):source.index("def _build_tab_about")]
+        assert "reglages_ia.LIMITE_ENVOI_OCTETS" in aide and "Enrichissement IA" in aide
+
     @pytest.mark.parametrize("nom", ["build.yml", "qualite.yml"])
     def test_workflows_en_lecture_seule(self, nom):
         w = _lire(f".github/workflows/{nom}")

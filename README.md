@@ -21,6 +21,7 @@ de vidéos par lot et y ajoute des modules d'administration.
 | **Réaffectation** | Transférer en masse les vidéos d'un compte vers un autre (départ d'un agent), avec aperçu *dry-run* et option de conserver l'ancien propriétaire en co-propriétaire. |
 | **Nettoyage / Modération** | Détecter (jamais encodées, brouillons, vieux brouillons, doublons de titre) puis agir par lot : mettre en brouillon, publier, restreindre, lever la restriction, **supprimer** (double confirmation). |
 | **Inventaire / Stats** | Volumétrie, durées, répartition par utilisateur / type / chaîne, **export Excel** (`.xlsx`). |
+| **Enrichissement IA** | Transcription par Aristote (ILaaS), découpage aux normes, éditeur de relecture, publication des sous-titres, traductions et métadonnées sur Pod, quiz GIFT pour Moodle. Repris de SousTitreur. |
 | **Chaînes & thèmes** | Créer, renommer, basculer la visibilité et supprimer chaînes et thèmes. |
 | **Configuration** | Connexion à l'instance, stockage chiffré du token. |
 | **Journal** | Historique horodaté de toutes les actions. |
@@ -551,11 +552,16 @@ vidéos »), mise à jour à chaque filtrage, et la teinte est `C_ALERTE` et non
 était le seul élément saturé de l'écran, pour l'action la plus lourde de
 conséquences.
 
-**Place dans la barre latérale** — la navigation doit tenir SANS DÉFILEMENT à la
-taille par défaut, **1180×760** (et non 1280×800 : mesurer dans une fenêtre
-confortable a fait passer pour correcte une navigation qui débordait chez tout
-le monde). « Aide » et « À propos » sont épinglés en pied sur une seule ligne à
-deux colonnes ; les épingler sans les compacter n'aurait rien rapporté.
+**Place dans la barre latérale** — « Aide » et « À propos » sont épinglés en
+pied sur une seule ligne à deux colonnes : ils restent visibles à toute taille.
+La navigation a longtemps tenu SANS DÉFILEMENT à la taille par défaut,
+**1180×760** (et non 1280×800 : mesurer dans une fenêtre confortable a fait
+passer pour correcte une navigation qui débordait chez tout le monde). Depuis
+l'ajout d'« Enrichissement IA » (octobre 2026), la zone de navigation DÉFILE à
+cette taille : « Journal » passe sous le bord. Décision de Cédric, préférée à la
+fusion de deux sections ou à l'épinglage de « Journal », qui tronquait les
+libellés du pied. Le test vérifie désormais que chaque entrée reste dans la
+zone défilante, donc atteignable.
 
 **Filtres** — chaque filtre porte son intitulé AU-DESSUS du menu (`bloc_filtre`),
 jamais enfermé dans sa valeur par défaut. « Tous statuts » disparaissait dès
@@ -597,22 +603,54 @@ tests le vérifient (`TestEchelleDeSurfaces`).
 
 ---
 
-## Architecture
+## Enrichissement IA (intégration de SousTitreur, 1.10.0)
+
+L'application autonome SousTitreur (v0.6.1) est fusionnée dans PodAdmin sous
+forme d'onglet. Le code sans interface Tk est dans `enrichissement/` ; le
+panneau et ses fenêtres sont en fin d'`app.py` (`PanneauEnrichissement`,
+`FenetreVideoPod`, `FenetreReglagesEnrichissement`).
+
+- **Identifiants Aristote embarqués** dans `config.py`, à côté du compte DEPOT.
+  Ce compte peut supprimer des enrichissements et les binaires sont publics :
+  dépôt privé, et toute rotation impose de recompiler. Des identifiants saisis
+  dans Configuration (carte « Aristote ») passent par le coffre-fort et
+  priment sur ceux fournis.
+- **Pas d'ffmpeg.** Une vidéo du poste part ENTIÈRE chez Aristote. La sonde
+  `verifier_ilaas_taille.py` a mesuré la passerelle d'ILaaS (2026-10-04) :
+  environ 795 Mo acceptés, refus à partir de 811 Mo. D'où
+  `LIMITE_ENVOI_OCTETS` = 780 Mo (`enrichissement/reglages.py`), vérifiée AVANT
+  l'envoi ; un 413 éventuel est traduit en message clair. Une vidéo déjà sur
+  Pod n'est pas concernée : Aristote télécharge lui-même son MP3.
+- **Règles métier figées** : la correction d'une vidéo française est toujours
+  publiée en « fr », chaque traduction dans sa langue ; une piste n'est
+  remplacée que sur demande, l'ancienne étant sauvegardée sur le poste puis
+  effacée de Pod ; métadonnées publiées champ par champ après un écran
+  avant / après, discipline ajoutée et jamais retirée ; quiz exporté en GIFT.
+- **Jeton Pod** : l'éditeur publie avec le client de la session PodAdmin. Un
+  fichier hébergé ailleurs (piste d'une autre instance) se lit SANS jeton
+  (`PodAPI._lire_fichier`).
+- **Données** dans `~/.soustitreur`, comme SousTitreur : projets, sauvegardes
+  des pistes remplacées, `journal_pod.jsonl`, préférences. Aucune migration.
+- **Onglet paresseux** : rien n'est construit au démarrage ; la reprise du
+  suivi Aristote attend la connexion (`_auto_loaders`) ; le serveur local de
+  l'éditeur ne démarre qu'au premier « Corriger ».
+
 
 ```
 PodAdmin/
 ├── app.py              # Interface CustomTkinter (onglets)
-├── pod_api.py          # Client API REST Esup-Pod (upload + admin)
+├── pod_api.py          # Client API REST Esup-Pod (upload + admin + pistes)
+├── enrichissement/     # Aristote, découpage, projets, éditeur web local (sans interface Tk)
 ├── config.py           # Config + stockage chiffré du token
 ├── verifier.py         # Diagnostic API (téléversement)
 ├── verifier_admin.py   # Diagnostic API (administration)
 ├── requirements.txt
-├── assets/logo_ut.png
+├── assets/            # logo, icônes, editeur.html (page de l'éditeur)
 ├── scripts/            # Scripts curl de référence (commentés)
 └── .github/workflows/build.yml
 ```
 
-Version : **1.9.2**
+Version : **1.10.0**
 
 ---
 

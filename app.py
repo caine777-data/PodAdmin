@@ -41,6 +41,16 @@ from pod_api import (PodAPI, PodAPIError, EnvoiAnnule,
 # Moteur de téléversement par morceaux via session web (gros fichiers > seuil).
 from pod_chunked import PodChunkedSession, PodChunkedError
 from pod_chunked import EnvoiAnnule as EnvoiAnnuleMorceaux
+# Onglet « Enrichissement IA » (repris de SousTitreur).
+import queue
+import unicodedata
+from urllib.parse import urlsplit
+from pod_api import identifiant_depuis_lien
+from enrichissement import reglages as reglages_ia
+from enrichissement import projet as projets_ia
+from enrichissement import sous_titres as soustitres_ia
+from enrichissement.aristote_api import AristoteAPI, AristoteErreur, ETATS
+from enrichissement.editeur import ServeurEditeur
 
 # Arrêts demandés par l'utilisateur (bouton 🛑 du Téléversement). Chacun des
 # deux modules d'envoi a sa classe, pour rester indépendant de l'autre.
@@ -982,6 +992,7 @@ class App(_AppBase):
                 ("📂", "Téléversement", "upload"),
                 ("🎬", "Encodage", "encode"),
                 ("🎞️", "Vidéos", "browse"),
+                ("🤖", "Enrichissement IA", "enrich"),
                 ("🔄", "Réaffectation", "reassign"),
             ]),
             ("ORGANISATION", [
@@ -1089,6 +1100,7 @@ class App(_AppBase):
         self._build_tab_encode()
         self._build_tab_comptes()
         self._build_tab_browse()
+        self._build_tab_enrich()
         self._build_tab_reassign()
         self._build_tab_stats()
         self._build_tab_ct()
@@ -1221,6 +1233,8 @@ class App(_AppBase):
         # vide, ce qui ressemble à une panne de l'instance.
         # `_on_connexion_etablie()` rejoue alors le chargement.
         self.onglet_courant = key
+        if key == "enrich":
+            self._enrich_construire()
         self._auto_charger(key)
 
     def _widget_empilable(self, widget):
@@ -1250,7 +1264,32 @@ class App(_AppBase):
             "stats":  self._stats_scan,
             "ct":     self._ct_load,
             "nomen":  self._nomen_load,
+            "enrich": self._enrich_reprendre,
         }
+
+    # ── Onglet « Enrichissement IA » ─────────────────────────────────────
+    # Le contenu est dans `PanneauEnrichissement` (fin de fichier).
+
+    def _build_tab_enrich(self):
+        """Onglet VIDE au démarrage : le panneau n'est construit qu'à la
+        première ouverture (`_enrich_construire`). Ainsi PodAdmin ne paie ni
+        ses widgets, ni la lecture des projets, ni le serveur de l'éditeur, à
+        chaque lancement et pour chaque administrateur."""
+        frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.tabs["enrich"] = frame
+        self.enrich_panneau = None
+
+    def _enrich_construire(self):
+        """Construit le panneau à la première ouverture de l'onglet."""
+        if self.enrich_panneau is None:
+            self.enrich_panneau = PanneauEnrichissement(self.tabs["enrich"], self)
+            self.enrich_panneau.pack(fill="both", expand=True)
+
+    def _enrich_reprendre(self):
+        """Chargement automatique (PodAdmin connecté, onglet ouvert) : reprise
+        du suivi des travaux restés en cours chez Aristote."""
+        self._enrich_construire()
+        self.enrich_panneau.reprendre_travaux()
 
     # ══════════════════════════════════════════════════════════════════════
     #  RACCOURCIS CLAVIER
@@ -3356,6 +3395,28 @@ class App(_AppBase):
                  "dans le coffre-fort de votre système (Keychain / Credential Manager).",
             justify="left", text_color=T_SECONDAIRE, wraplength=820).pack(anchor="w", padx=14, pady=(0, 12))
 
+        # — Aristote (onglet Enrichissement IA) —
+        # Carte COMPACTE : l'état et un bouton. Les champs vivent dans une
+        # fenêtre créée à la demande (`_aristote_ouvrir`) : l'application
+        # comptait 835 widgets pour un plafond de 860 (TestPoidsDeLInterface),
+        # et une section complète en aurait ajouté une quarantaine à chaque
+        # démarrage, pour un réglage qu'on ne touche presque jamais.
+        aristote_box = ctk.CTkFrame(frame, fg_color=S_CARTE, corner_radius=8)
+        aristote_box.pack(fill="x", pady=(0, 8))
+        aristote_box.columnconfigure(0, weight=1)
+        ctk.CTkLabel(aristote_box, text="🤖  Aristote (Enrichissement IA)",
+                     font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+        self.aristote_etat_lbl = ctk.CTkLabel(
+            aristote_box, text="", anchor="w", justify="left",
+            text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11))
+        self.aristote_etat_lbl.grid(row=1, column=0, sticky="w", padx=14, pady=(0, 10))
+        ctk.CTkButton(aristote_box, text="Modifier ou tester…", width=170,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self._aristote_ouvrir).grid(
+            row=0, column=1, rowspan=2, padx=14, pady=10)
+        self._aristote_maj_etat()
+
         # ── Réglages de l'instance (hors API) ────────────────────────────
         # Certains paramètres de Pod ne sont PAS exposés par l'API REST : la
         # page d'accueil, par exemple, relève de la configuration du serveur.
@@ -3465,6 +3526,145 @@ class App(_AppBase):
             text="🚪  Token effacé de ce poste. Saisissez-le à nouveau pour vous reconnecter.",
             text_color=T_ALERTE)
         self._log("Token effacé du poste — déconnexion.")
+
+    # ── Aristote : identifiants et adresse (onglet Enrichissement IA) ────
+
+    def _aristote_maj_etat(self):
+        """Libellé de la carte Aristote : origine des identifiants et instance."""
+        _cid, _secret, origine = cfg.load_aristote_credentials()
+        hote = urlsplit(reglages_ia.url_aristote()).netloc or "?"
+        texte = ("Identifiants fournis avec l'application" if origine == "embarques"
+                 else "Identifiants personnalisés, rangés dans le coffre-fort")
+        self.aristote_etat_lbl.configure(text=f"{texte}  ·  instance {hote}")
+
+    def _aristote_ouvrir(self):
+        """Fenêtre de réglage d'Aristote : adresse, identifiants, test.
+
+        Le secret embarqué n'est jamais affiché : les champs d'identifiants
+        restent vides tant qu'on utilise ceux fournis avec l'application.
+        « Tester » essaie ce qui est saisi, ou, champs vides, ce qui est en
+        service."""
+        fen = ctk.CTkToplevel(self)
+        fen.title("Aristote")
+        fen.configure(fg_color=S_FOND)
+        fen.resizable(False, False)
+        _focus_toplevel(fen, self)
+        cid_actuel, _s, origine = cfg.load_aristote_credentials()
+
+        corps = ctk.CTkFrame(fen, fg_color=S_CARTE, corner_radius=8)
+        corps.pack(fill="x", padx=14, pady=(14, 8))
+        corps.columnconfigure(1, weight=1)
+
+        def champ(ligne, libelle, valeur="", masque=False, aide=""):
+            ctk.CTkLabel(corps, text=libelle, width=110, anchor="e").grid(
+                row=ligne, column=0, padx=8, pady=6)
+            e = ctk.CTkEntry(corps, width=360, show="*" if masque else "",
+                             placeholder_text=aide)
+            if valeur:
+                e.insert(0, valeur)
+            e.grid(row=ligne, column=1, padx=8, pady=6, sticky="ew")
+            return e
+
+        e_url = champ(0, "Adresse :", reglages_ia.url_aristote())
+        e_id = champ(1, "Identifiant :", cid_actuel if origine == "coffre" else "",
+                     aide="vide = identifiants fournis avec l'application")
+        e_secret = champ(2, "Secret :", masque=True,
+                         aide="vide = identifiants fournis avec l'application")
+        afficher = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(corps, text="Afficher", variable=afficher,
+                        command=lambda: e_secret.configure(show="" if afficher.get() else "*")
+                        ).grid(row=2, column=2, padx=(0, 8))
+        resultat = ctk.CTkLabel(fen, text="", anchor="w", justify="left",
+                                wraplength=480, font=ctk.CTkFont(size=12))
+        resultat.pack(fill="x", padx=16)
+
+        def lire():
+            """(adresse, identifiant, secret) saisis, ou None après un message."""
+            url = e_url.get().strip().rstrip("/") or reglages_ia.URL_ARISTOTE_DEFAUT
+            cid, secret = e_id.get().strip(), e_secret.get().strip()
+            if not url.lower().startswith("https://"):
+                resultat.configure(text="L'adresse doit commencer par https:// : les "
+                                        "identifiants ne doivent jamais circuler en clair.",
+                                   text_color=T_ERREUR)
+                return None
+            if bool(cid) != bool(secret):
+                resultat.configure(text="Renseignez l'identifiant ET le secret, ou laissez "
+                                        "les deux vides.", text_color=T_ALERTE)
+                return None
+            return url, cid, secret
+
+        def tester():
+            saisie = lire()
+            if not saisie:
+                return
+            url, cid, secret = saisie
+            if not cid:
+                cid, secret, _o = cfg.load_aristote_credentials()
+            resultat.configure(text="Test en cours…", text_color=T_SECONDAIRE)
+            b_tester.configure(state="disabled")
+            self._run(self._aristote_tester, url, cid, secret, resultat, b_tester)
+
+        def enregistrer():
+            saisie = lire()
+            if not saisie:
+                return
+            url, cid, secret = saisie
+            prefs = reglages_ia.charger()
+            prefs["url_aristote"] = url
+            reglages_ia.enregistrer(prefs)
+            stockage = cfg.save_aristote_credentials(cid, secret) if cid else ""
+            if stockage == "file":
+                self._log("⚠️ Aristote : coffre-fort indisponible, identifiants rangés dans "
+                          "un fichier du dossier personnel.")
+            self._log("Aristote : réglages enregistrés"
+                      + (" (identifiants personnalisés)." if cid and stockage != "embarques"
+                         else "."))
+            self._aristote_maj_etat()
+            fen.destroy()
+
+        def revenir():
+            cfg.clear_aristote_credentials()
+            prefs = reglages_ia.charger()
+            prefs["url_aristote"] = reglages_ia.URL_ARISTOTE_DEFAUT
+            reglages_ia.enregistrer(prefs)
+            self._log("Aristote : retour aux réglages fournis avec l'application.")
+            self._aristote_maj_etat()
+            fen.destroy()
+
+        barre = ctk.CTkFrame(fen, fg_color="transparent")
+        barre.pack(fill="x", padx=14, pady=(8, 14))
+        ctk.CTkButton(barre, text="Revenir aux réglages fournis", width=210,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=revenir).pack(side="left")
+        b_enr = ctk.CTkButton(barre, text="Enregistrer", width=110, fg_color=C_ACTION,
+                              hover_color=C_ACTION_SURV, command=enregistrer)
+        b_enr.pack(side="right")
+        b_tester = ctk.CTkButton(barre, text="Tester", width=90, fg_color=C_NEUTRE,
+                                 hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                                 command=tester)
+        b_tester.pack(side="right", padx=8)
+        fen.bouton_defaut = b_enr          # Entrée = Enregistrer (voir _focus_toplevel)
+        fen.update_idletasks()
+        fen.geometry(f"{max(560, fen.winfo_reqwidth())}x{fen.winfo_reqheight()}")
+
+    def _aristote_tester(self, url, cid, secret, resultat, bouton):
+        """(Thread) Essaie les identifiants ; le résultat revient par `_ui`."""
+        try:
+            texte, couleur = AristoteAPI(cid, secret, url).tester(), T_SUCCES
+        except AristoteErreur as e:
+            texte, couleur = str(e), T_ERREUR          # déjà en français, actionnable
+        except Exception as e:
+            texte, couleur = message_utilisateur(e), T_ERREUR
+            self._ui(self._log, f"Test Aristote : {type(e).__name__} : {e}")
+
+        def afficher():
+            try:
+                if resultat.winfo_exists():
+                    resultat.configure(text=texte, text_color=couleur)
+                    bouton.configure(state="normal")
+            except Exception:
+                pass          # fenêtre fermée pendant le test
+        self._ui(afficher)
 
     def _connect(self):
         """Lit URL + token (+ identifiants véhicule optionnels) et lance la connexion."""
@@ -9389,6 +9589,40 @@ class App(_AppBase):
             "Pour masquer des vidéos sans les perdre, préférez « Mettre en "
             "brouillon ».")
 
+        # Limite lue dans les réglages, comme le seuil d'envoi par morceaux.
+        limite_ia = f"{reglages_ia.LIMITE_ENVOI_OCTETS // (1024 * 1024)} Mo"
+        section(
+            "🤖  Enrichissement IA : sous-titres, traductions, métadonnées, quiz",
+            "L'onglet Enrichissement IA fait transcrire une vidéo par Aristote (le "
+            "service d'IA d'ILaaS), découpe le texte aux normes de sous-titrage, puis "
+            "ouvre un éditeur de relecture dans une fenêtre à part.\n\n"
+            "Point de départ :\n"
+            "• « 🎞️ Vidéo sur Pod… » : collez le lien de la vidéo ou tapez un mot du "
+            "titre. La fiche propose une nouvelle transcription par Aristote, ou de "
+            "partir des sous-titres déjà présents sur Pod, sans transcription. Une "
+            "correction commencée sur le poste peut aussi être associée à la vidéo.\n"
+            "• « 📂 Fichiers du poste… » ou glisser-déposer : une vidéo ou un son part "
+            f"ENTIER chez Aristote, jusqu'à {limite_ia}. Au-delà, déposez d'abord la "
+            "vidéo sur Pod et partez de « Vidéo sur Pod ». Un fichier VTT ou SRT est "
+            "simplement importé et redécoupé, sans rien envoyer.\n\n"
+            "Dans l'éditeur (« ✏️ Corriger ») :\n"
+            "• les sous-titres corrigés sont publiés en français (« fr ») ; chaque "
+            "traduction est publiée dans sa propre langue ;\n"
+            "• une piste déjà présente sur Pod n'est remplacée que si vous le "
+            "demandez : l'ancienne est d'abord sauvegardée sur le poste, puis effacée "
+            "de Pod ;\n"
+            "• « Traduire et enrichir » demande à Aristote traductions, métadonnées et "
+            "quiz. Les métadonnées se publient champ par champ, après un écran "
+            "avant / après ; une discipline est ajoutée, jamais retirée ;\n"
+            "• le quiz s'exporte au format GIFT, à importer dans la banque de questions "
+            "de Moodle.\n\n"
+            "Chaque écriture sur Pod est notée dans le Journal. La connexion à Aristote "
+            "est fournie avec l'application ; la carte « Aristote » de l'onglet "
+            "Configuration permet de la tester ou d'en changer. Les projets restent "
+            "sur le poste (dossier .soustitreur, bouton 📁 de chaque ligne), et le "
+            "suivi d'une transcription reprend tout seul si PodAdmin a été fermé "
+            "entre-temps.")
+
         section(
             "⚠️  Message « LISTE INCOMPLÈTE »",
             "Si ce message rouge apparaît, la lecture des vidéos s'est arrêtée sur une "
@@ -10893,6 +11127,986 @@ class ChannelPicker(ctk.CTkToplevel):
         """Renvoie la sélection à l'appelant (on_done) puis ferme la fenêtre."""
         self.on_done(list(self.selected.keys()), list(self.selected.values()))
         self.destroy()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  ONGLET « ENRICHISSEMENT IA » (repris de SousTitreur 0.6.1)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Sous-titres aux normes par Aristote, relecture dans l'éditeur web local
+# (enrichissement/editeur.py), traduction, métadonnées et quiz, publication sur
+# Pod. Règles décidées par Cédric, à conserver telles quelles :
+#   • vidéos en français : la correction est TOUJOURS rangée en « fr » sur Pod,
+#     chaque traduction dans sa langue, sans choix proposé ;
+#   • une piste existante n'est remplacée qu'à la demande, l'ancienne étant
+#     sauvegardée sur le poste puis effacée de Pod ;
+#   • métadonnées publiées champ par champ après un écran avant/après, la
+#     discipline ajoutée et jamais retirée ;
+#   • quiz exporté en GIFT pour Moodle : Pod reste une vidéothèque.
+#
+# Le panneau est construit à la PREMIÈRE ouverture de l'onglet seulement
+# (`App._enrich_construire`) : rien de tout cela ne coûte au démarrage. La
+# reprise du suivi des travaux en cours chez Aristote, elle, passe par le
+# chargement automatique (`App._auto_loaders`), une fois PodAdmin connecté.
+
+EXT_VIDEO_IA = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".mpg", ".mpeg", ".flv"}
+EXT_AUDIO_IA = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus"}
+EXT_SOUS_TITRES_IA = {".vtt", ".srt"}
+
+# Message commun aux deux refus pour taille : avant l'envoi (seuil connu) et
+# après, si ILaaS refuse malgré tout (HTTP 413).
+MESSAGE_TROP_LOURD_IA = ("fichier trop lourd pour un envoi direct à Aristote. Déposez la "
+                         "vidéo en brouillon sur Pod (onglet Téléversement), puis "
+                         "enrichissez-la depuis Pod : Aristote télécharge alors son son "
+                         "lui-même, sans limite de taille.")
+
+LIBELLES_ETAT_IA = {
+    "envoi": "Préparation",
+    "attente": "Chez Aristote",
+    "a_corriger": "À corriger",
+    "corrige": "Exporté",
+    "erreur": "Erreur",
+}
+
+
+def message_editeur(e: Exception) -> str:
+    """Phrase affichée dans la page de l'éditeur pour une erreur.
+
+    Les messages écrits exprès pour l'utilisateur passent tels quels :
+    refus d'Aristote, contrôles de l'éditeur (ValueError), refus motivés du
+    client Pod (« Les pistes ont changé sur Pod… », sans code HTTP). Le
+    reste — code HTTP, coupure réseau — passe par `message_utilisateur`."""
+    if isinstance(e, (AristoteErreur, ValueError)):
+        return str(e)
+    if isinstance(e, PodAPIError) and not getattr(e, "status", 0):
+        return str(e)
+    return message_utilisateur(e)
+
+
+def _sans_accents(texte: str) -> str:
+    """Minuscules sans accents : la recherche de titre ignore les deux."""
+    return "".join(c for c in unicodedata.normalize("NFD", str(texte).lower())
+                   if unicodedata.category(c) != "Mn")
+
+
+def _ouvrir_dossier_systeme(chemin: str) -> None:
+    """Ouvre un dossier dans l'explorateur de fichiers du système."""
+    if sys.platform.startswith("win"):
+        os.startfile(chemin)                               # noqa: S606 (Windows)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", chemin])
+    else:
+        subprocess.Popen(["xdg-open", chemin])
+
+
+class PanneauEnrichissement(ctk.CTkFrame):
+    """Contenu de l'onglet : point de départ, travaux en cours, réglages.
+
+    `hote` est l'application : journal (`_log`), fils (`_run`), client Pod de
+    la session (`api`), magasin de vidéos partagé (`videos`, `ensure_videos`).
+
+    FILS D'EXÉCUTION. Les travaux longs (Aristote, Pod) tournent hors de
+    l'interface ; ils ne la touchent jamais directement, mais déposent des
+    événements dans `self.evenements`, lus toutes les 200 ms par
+    `_traiter_evenements` dans le fil principal. Repris tel quel de
+    SousTitreur, où ce mécanisme a fait ses preuves."""
+
+    def __init__(self, master, hote):
+        super().__init__(master, fg_color="transparent")
+        self.hote = hote
+        self.prefs = reglages_ia.charger()
+        self.evenements: queue.Queue = queue.Queue()
+        self.lignes: dict[str, dict] = {}
+        self.envois = threading.Semaphore(2)      # fichiers du poste : 2 envois à la fois au plus
+        self._serveur = None             # éditeur : démarré au premier besoin
+        self._refs = None                # disciplines et types de Pod (cache)
+        self._construire()
+        self._charger_projets()
+        self.after(200, self._traiter_evenements)
+
+    # ── Éditeur (serveur local) ─────────────────────────────────────────────
+    @property
+    def serveur(self) -> ServeurEditeur:
+        """Serveur de l'éditeur, démarré au premier besoin seulement : il
+        écoute un port local, inutile tant que personne ne corrige."""
+        if self._serveur is None:
+            self._serveur = ServeurEditeur(
+                formats_defaut=lambda: self.prefs.get("formats", ["vtt"]),
+                sur_enregistrement=lambda pid: self.evenements.put(("recharger", pid)),
+                client=self._client,
+                reglages=lambda: self.prefs,
+                pod=lambda: self.hote.api,
+                message_erreur=message_editeur,
+                # Appelé depuis les fils du serveur : retour au fil principal.
+                journal_hote=lambda texte: self.hote._ui(self.hote._log, texte),
+                sur_video_modifiee=self._video_modifiee)
+        return self._serveur
+
+    def _video_modifiee(self, video: dict) -> None:
+        """Métadonnées changées depuis l'éditeur : le magasin partagé est mis à
+        jour (règle de PodAdmin : toute modification passe par
+        `_sync_video_caches`), sans quoi l'onglet Vidéos garderait l'ancien titre."""
+        champs = ("title", "description", "tags", "discipline", "type")
+        self.hote._sync_video_caches(video.get("slug"),
+                                     {k: video[k] for k in champs if k in video})
+
+    # ── Interface ───────────────────────────────────────────────────────────
+    def _construire(self):
+        haut = ctk.CTkFrame(self, fg_color="transparent")
+        haut.pack(fill="x", pady=(0, 4))
+        ctk.CTkLabel(haut, text="🤖  Enrichissement IA",
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(side="left")
+        ctk.CTkButton(haut, text="⚙  Réglages", width=120, height=H_NORMAL,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self.ouvrir_reglages).pack(side="right")
+        ctk.CTkLabel(self, text="Transcription par Aristote, découpage aux normes et relecture, "
+                                "puis traduction, métadonnées et quiz, et publication sur Pod.",
+                     font=ctk.CTkFont(size=T_PETIT), text_color=T_SECONDAIRE,
+                     anchor="w").pack(fill="x", pady=(0, 10))
+
+        # Carte de départ : UNE action principale, colorée.
+        zone = ctk.CTkFrame(self, fg_color=S_CARTE, corner_radius=8)
+        zone.pack(fill="x", pady=(0, 10))
+        gauche = ctk.CTkFrame(zone, fg_color="transparent")
+        gauche.pack(side="left", fill="both", expand=True, padx=16, pady=14)
+        ctk.CTkLabel(gauche, text="Nouvelle vidéo à enrichir", anchor="w",
+                     font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(fill="x")
+        consigne = ctk.CTkLabel(
+            gauche, justify="left", anchor="w", font=ctk.CTkFont(size=T_CORPS),
+            text_color=T_SECONDAIRE, wraplength=520,
+            text="Choisissez une vidéo déjà sur Pod, ou déposez ici une vidéo, un son, ou "
+                 "des sous-titres (VTT, SRT) du poste. Aristote transcrit, vous corrigez "
+                 "dans l'éditeur, puis vous demandez traduction, métadonnées et quiz. Les "
+                 "vidéos sont en français : la correction est rangée en français sur Pod.")
+        consigne.pack(fill="x", pady=(4, 0))
+        boutons = ctk.CTkFrame(zone, fg_color="transparent")
+        boutons.pack(side="right", padx=16, pady=14)
+        ctk.CTkButton(boutons, text="🎞️  Vidéo sur Pod…", width=230, height=H_PRINCIPAL,
+                      fg_color=C_ACTION, hover_color=C_ACTION_SURV,
+                      font=ctk.CTkFont(size=T_CORPS, weight="bold"),
+                      command=self.choisir_video_pod).pack(pady=(0, 8))
+        ctk.CTkButton(boutons, text="📂  Fichiers du poste…", width=230, height=H_NORMAL,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self.choisir_fichiers).pack()
+        # Dépôt de fichiers sur la carte. PodAdmin n'inscrit au glisser-déposer
+        # que la liste du Téléversement : aucun conflit possible.
+        if HAS_DND and getattr(self.hote, "dnd_ok", False):
+            for w in (zone, gauche, consigne):
+                try:
+                    w.drop_target_register(DND_FILES)
+                    w.dnd_bind("<<Drop>>", lambda e: self.ajouter(self.tk.splitlist(e.data)))
+                except Exception:
+                    pass        # glisser-déposer indisponible : le bouton reste
+
+        ctk.CTkLabel(self, text="Vidéos en cours", anchor="w",
+                     font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(fill="x", pady=(4, 4))
+        self.liste = ctk.CTkScrollableFrame(self, fg_color=S_CARTE, corner_radius=8)
+        self.liste.pack(fill="both", expand=True)
+        self.liste.grid_columnconfigure(0, weight=1)
+        # État vide dans son propre cadre : `etat_vide` place ses widgets par
+        # `pack`, alors que les lignes de la liste sont placées par `grid`.
+        self.vide = ctk.CTkFrame(self.liste, fg_color="transparent")
+        etat_vide(self.vide, "🤖", "Aucune vidéo en cours.",
+                  "Commencez par « Vidéo sur Pod… », dans la carte ci-dessus.")
+
+    def journal(self, msg: str) -> None:
+        """Le panneau n'a plus sa propre zone de journal : tout va au Journal
+        de PodAdmin, affiché ET enregistré sur le disque."""
+        self.hote._log(msg)
+
+    # ── Liste des travaux ───────────────────────────────────────────────────
+    def _charger_projets(self):
+        for p in projets_ia.lister()[:60]:
+            self._ligne(p)
+        self._maj_vide()
+
+    def _maj_vide(self):
+        if self.lignes:
+            self.vide.grid_forget()
+        else:
+            self.vide.grid(row=0, column=0, pady=20)
+
+    def _ligne(self, p: dict) -> None:
+        pid = p["id"]
+        if pid not in self.lignes:
+            cadre = ctk.CTkFrame(self.liste, fg_color=S_LIGNE, corner_radius=6)
+            cadre.grid_columnconfigure(0, weight=1)
+            titre = ("🎞️  " if p.get("pod") else "📄  ") + p["nom"] + (
+                f"   ·   Pod n° {p['pod']['id']}" if p.get("pod") else "")
+            ctk.CTkLabel(cadre, text=titre, anchor="w",
+                         font=ctk.CTkFont(size=T_CORPS, weight="bold")).grid(
+                row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
+            etat = ctk.CTkLabel(cadre, text="", anchor="w", text_color=T_SECONDAIRE,
+                                font=ctk.CTkFont(size=T_PETIT))
+            etat.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+            barre = ctk.CTkProgressBar(cadre, height=6, progress_color=C_ACTION, fg_color=S_PUCE)
+            barre.set(0)
+            # Actions répétées sur chaque ligne : neutres et compactes.
+            b_corr = ctk.CTkButton(cadre, text="✏️  Corriger", width=104, height=H_COMPACT,
+                                   fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                                   text_color=T_SUR_NEUTRE, command=lambda: self.corriger(pid))
+            b_exp = ctk.CTkButton(cadre, text="Exporter", width=84, height=H_COMPACT,
+                                  fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                                  text_color=T_SUR_NEUTRE, command=lambda: self.exporter(pid))
+            b_dos = ctk.CTkButton(cadre, text="📁", width=34, height=H_COMPACT,
+                                  fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                                  text_color=T_SUR_NEUTRE,
+                                  command=lambda: self.ouvrir_dossier_projet(pid))
+            ajouter_infobulle(b_dos, "Ouvrir le dossier des fichiers exportés")
+            # Suppression répétée : icône seule, neutre, rouge AU SURVOL.
+            b_sup = ctk.CTkButton(cadre, text="🗑", width=34, height=H_COMPACT,
+                                  fg_color=C_NEUTRE, hover_color=C_DESTRUCTIF,
+                                  text_color=T_SUR_NEUTRE, command=lambda: self.supprimer(pid))
+            ajouter_infobulle(b_sup, "Retirer cette vidéo de la liste")
+            b_corr.grid(row=0, column=1, rowspan=2, padx=3)
+            b_exp.grid(row=0, column=2, rowspan=2, padx=3)
+            b_dos.grid(row=0, column=3, rowspan=2, padx=3)
+            b_sup.grid(row=0, column=4, rowspan=2, padx=(3, 8))
+            self.lignes[pid] = dict(cadre=cadre, etat=etat, barre=barre,
+                                    corriger=b_corr, exporter=b_exp)
+            self._reordonner(nouveau=pid)
+        self._maj_ligne(p)
+        self._maj_vide()
+
+    def _reordonner(self, nouveau: str | None = None):
+        ordre = list(self.lignes)
+        if nouveau:                       # le plus récent en haut
+            ordre.remove(nouveau)
+            ordre.insert(0, nouveau)
+            self.lignes = {k: self.lignes[k] for k in ordre}
+        for i, pid in enumerate(self.lignes):
+            self.lignes[pid]["cadre"].configure(fg_color=S_LIGNE if i % 2 == 0 else S_LIGNE_ALT)
+            self.lignes[pid]["cadre"].grid(row=i + 1, column=0, sticky="ew", padx=6, pady=2)
+
+    def _maj_ligne(self, p: dict, detail: str = "", progression: float | None = None):
+        w = self.lignes.get(p["id"])
+        if not w:
+            return
+        e = p.get("etat", "")
+        texte = LIBELLES_ETAT_IA.get(e, e)
+        if e == "erreur" and p.get("erreur"):
+            texte += " : " + p["erreur"]
+        elif e in ("a_corriger", "corrige"):
+            prm = soustitres_ia.Parametres.depuis_dict(p.get("parametres"))
+            sts = p.get("sous_titres") or []
+            revoir = sum(1 for d in sts
+                         if soustitres_ia.verifier(soustitres_ia.SousTitre.depuis_dict(d), prm))
+            texte += f" · {len(sts)} sous-titres" + (f", {revoir} à revoir" if revoir else "")
+        if detail:
+            texte += " · " + detail
+        w["etat"].configure(text=texte,
+                            text_color=T_ERREUR if e == "erreur"
+                            else T_SUCCES if e == "corrige" else T_SECONDAIRE)
+        pret = e in ("a_corriger", "corrige")
+        w["corriger"].configure(state="normal" if pret else "disabled")
+        w["exporter"].configure(state="normal" if pret else "disabled")
+        if progression is None or pret or e == "erreur":
+            w["barre"].grid_forget()
+        else:
+            w["barre"].grid(row=2, column=0, columnspan=5, sticky="ew", padx=10, pady=(0, 8))
+            if progression < 0:
+                w["barre"].configure(mode="indeterminate")
+                w["barre"].start()
+            else:
+                w["barre"].stop()
+                w["barre"].configure(mode="determinate")
+                w["barre"].set(progression)
+
+    # ── Événements venant des fils de travail ───────────────────────────────
+    def _traiter_evenements(self):
+        try:
+            while True:
+                ev = self.evenements.get_nowait()
+                genre = ev[0]
+                if genre == "etat":
+                    _, p, detail, prog = ev
+                    self._ligne(p)
+                    self._maj_ligne(p, detail, prog)
+                elif genre == "journal":
+                    self.journal(ev[1])
+                elif genre == "appel":                 # rappel venu d'un autre fil
+                    ev[1]()
+                elif genre == "recharger" and projets_ia.existe(ev[1]):
+                    self._maj_ligne(projets_ia.charger(ev[1]))
+                elif genre == "pret":
+                    p = ev[1]
+                    self._ligne(p)
+                    self.journal(f"✔ {p['nom']} : transcription prête, "
+                                 f"{len(p['sous_titres'])} sous-titres. Cliquez sur « Corriger ».")
+        except queue.Empty:
+            pass
+        except Exception as e:                          # un événement fautif n'arrête pas la boucle
+            self.hote._log(f"❌ Enrichissement IA : {type(e).__name__} : {e}")
+        try:
+            if self.winfo_exists():
+                self.after(200, self._traiter_evenements)
+        except Exception:
+            pass                                        # application en cours de fermeture
+
+    def _signaler(self, p: dict, detail: str = "", prog: float | None = None):
+        self.evenements.put(("etat", dict(p), detail, prog))
+
+    def _fond(self, travail, ensuite):
+        """Exécute `travail` hors de l'interface, puis `ensuite(résultat |
+        exception)` dans le fil principal, par la file d'événements."""
+        def fil():
+            try:
+                r = travail()
+            except Exception as e:
+                r = e
+            self.evenements.put(("appel", lambda: ensuite(r)))
+        self.hote._run(fil)
+
+    # ── Clients ─────────────────────────────────────────────────────────────
+    def _client(self) -> AristoteAPI:
+        """Client Aristote : identifiants embarqués, ou ceux de Configuration."""
+        cid, secret, _origine = cfg.load_aristote_credentials()
+        return AristoteAPI(cid, secret, reglages_ia.url_aristote())
+
+    def _parametres(self):
+        return soustitres_ia.Parametres.depuis_dict(self.prefs.get("decoupage"))
+
+    def pod(self):
+        """Client Pod de la session, ou None (avec un message) si PodAdmin
+        n'est pas connecté."""
+        if self.hote.api is None:
+            messagebox.showwarning(
+                "Non connecté",
+                "Connectez-vous d'abord à Pod, dans l'onglet Configuration.",
+                parent=self.winfo_toplevel())
+            return None
+        return self.hote.api
+
+    def references(self, api) -> dict:
+        """Disciplines et types de Pod (titre -> URL), lus une fois par session."""
+        if self._refs is None:
+            self._refs = api.references()
+        return self._refs
+
+    # ── Transcription et suivi ──────────────────────────────────────────────
+    def _attendre_et_recuperer(self, client: AristoteAPI, p: dict):
+        try:
+            self._signaler(p, "en attente d'Aristote", -1)
+            d = client.attendre(p["enrichment_id"],
+                                rappel=lambda s, _d: self._signaler(p, ETATS.get(s, s), -1))
+            self._signaler(p, "récupération de la transcription", -1)
+            tr = client.transcription(p["enrichment_id"], d.get("initialVersionId"))
+            projets_ia.appliquer_transcription(p, tr, self._parametres())
+            projets_ia.enregistrer(p)
+            self.evenements.put(("pret", dict(p)))
+        except Exception as e:
+            self._echec(p, e)
+
+    def _echec(self, p: dict, e: Exception):
+        """L'échec s'affiche en clair dans la ligne ; le détail technique va
+        au Journal, pour le support."""
+        p["etat"] = "erreur"
+        if isinstance(e, AristoteErreur) and "(413)" in str(e):
+            # ILaaS a refusé le fichier pour sa taille, malgré le seuil.
+            p["erreur"] = MESSAGE_TROP_LOURD_IA
+        else:
+            p["erreur"] = str(e) if isinstance(e, AristoteErreur) else message_utilisateur(e)
+        projets_ia.enregistrer(p)
+        self._signaler(p)
+        self.evenements.put(("journal", f"✖ {p['nom']} : {p['erreur']}"))
+        if not isinstance(e, AristoteErreur):
+            self.hote._ui(self.hote._log, f"   détail : {type(e).__name__} : {e}")
+
+    def reprendre_travaux(self):
+        """Relance le suivi des vidéos restées chez Aristote (application
+        fermée pendant une transcription ou un enrichissement)."""
+        for p in projets_ia.lister():
+            if p.get("etat") == "envoi":
+                p = projets_ia.charger(p["id"])
+                p["etat"], p["erreur"] = "erreur", "envoi interrompu, relancez la transcription"
+                projets_ia.enregistrer(p)
+                self._maj_ligne(p)
+            elif p.get("etat") == "attente" and p.get("enrichment_id"):
+                self.journal(f"Reprise du suivi : {p['nom']}")
+                self.hote._run(self._attendre_et_recuperer, self._client(),
+                               projets_ia.charger(p["id"]))
+            if (p.get("enrichissement") or {}).get("etat") == "en_cours":
+                self.journal(f"Reprise de l'enrichissement : {p['nom']}")
+                self.serveur.reprendre(p["id"])
+
+    def choisir_video_pod(self):
+        api = self.pod()
+        if api is not None:
+            FenetreVideoPod(self, api)
+
+    # ── Fichiers du poste (sans ffmpeg) ─────────────────────────────────────
+    def choisir_fichiers(self):
+        types = [("Vidéos, sons et sous-titres",
+                  " ".join(f"*{x}" for x in sorted(EXT_VIDEO_IA | EXT_AUDIO_IA | EXT_SOUS_TITRES_IA))),
+                 ("Tous les fichiers", "*.*")]
+        chemins = filedialog.askopenfilenames(title="Choisir des fichiers", filetypes=types,
+                                              parent=self.winfo_toplevel())
+        if chemins:
+            self.ajouter(chemins)
+
+    def ajouter(self, chemins):
+        for c in chemins:
+            ext = os.path.splitext(c)[1].lower()
+            if ext in EXT_SOUS_TITRES_IA:
+                self.importer_sous_titres(c)
+            elif ext in EXT_VIDEO_IA | EXT_AUDIO_IA:
+                self.transcrire_fichier(c)
+            else:
+                self.journal(f"Ignoré (format non pris en charge) : {os.path.basename(c)}")
+
+    def transcrire_fichier(self, chemin: str):
+        """Envoie un fichier du poste à Aristote, ENTIER : ffmpeg n'est pas
+        embarqué dans PodAdmin, le son n'est donc pas extrait. Au-delà de la
+        limite d'ILaaS, on refuse AVANT l'envoi plutôt que de faire attendre
+        l'utilisateur pour rien (voir reglages.LIMITE_ENVOI_OCTETS)."""
+        pid = projets_ia.identifiant(chemin)
+        if projets_ia.existe(pid):
+            ancien = projets_ia.charger(pid)
+            if ancien.get("etat") == "attente":
+                self.journal(f"{ancien['nom']} est déjà en cours de transcription.")
+                return
+            if ancien.get("etat") in ("a_corriger", "corrige"):
+                rep = messagebox.askyesnocancel(
+                    "Vidéo déjà transcrite",
+                    f"« {ancien['nom']} » a déjà été transcrite.\n\n"
+                    "Oui : rouvrir la correction existante.\n"
+                    "Non : la renvoyer à Aristote (les corrections seront perdues).",
+                    parent=self.winfo_toplevel())
+                if rep is None:
+                    return
+                if rep:
+                    ancien["media"] = os.path.abspath(chemin)     # si déplacée
+                    projets_ia.enregistrer(ancien)
+                    self.corriger(pid)
+                    return
+        taille = os.path.getsize(chemin)
+        if taille > reglages_ia.LIMITE_ENVOI_OCTETS:
+            self.journal(f"✖ {os.path.basename(chemin)} ({taille / 1024 / 1024:.0f} Mo) : "
+                         + MESSAGE_TROP_LOURD_IA)
+            messagebox.showwarning("Fichier trop lourd",
+                                   f"{os.path.basename(chemin)} pèse {taille / 1024 / 1024:.0f} Mo, "
+                                   f"au-delà des {reglages_ia.LIMITE_ENVOI_OCTETS // 1024 // 1024} Mo "
+                                   "qu'accepte Aristote.\n\n" + MESSAGE_TROP_LOURD_IA.capitalize(),
+                                   parent=self.winfo_toplevel())
+            return
+        client = self._client()
+        p = projets_ia.nouveau(chemin, "fr")
+        projets_ia.enregistrer(p)
+        self._ligne(p)
+        self.journal(f"→ {p['nom']} : envoi à Aristote ({taille / 1024 / 1024:.0f} Mo).")
+        self.hote._run(self._travail_fichier, client, p)
+
+    def _travail_fichier(self, client: AristoteAPI, p: dict):
+        """(Fil) Envoi du fichier entier, puis attente de la transcription."""
+        try:
+            with self.envois:
+                p["audio"] = p["media"] if os.path.splitext(p["media"])[1].lower() in EXT_AUDIO_IA else ""
+                self._signaler(p, "envoi à Aristote", 0.0)
+                p["enrichment_id"] = client.envoyer_fichier(
+                    p["media"], "fr", nom_original=p["nom"],
+                    progression=lambda lu, tot: self._signaler(
+                        p, f"envoi à Aristote {lu / max(tot, 1):.0%}", lu / max(tot, 1)))
+            p["etat"] = "attente"
+            projets_ia.enregistrer(p)
+            self.evenements.put(("journal", f"  {p['nom']} : envoyé (ID Aristote "
+                                            f"{p['enrichment_id']})."))
+            self._attendre_et_recuperer(client, p)
+        except Exception as e:
+            self._echec(p, e)
+
+    def importer_sous_titres(self, chemin: str):
+        """Projet créé à partir d'un VTT / SRT du poste, puis redécoupé aux
+        normes. Aucun envoi : ni Aristote, ni quota."""
+        try:
+            with open(chemin, encoding="utf-8-sig") as f:
+                sts = soustitres_ia.lire_vtt_srt(f.read())
+        except (OSError, UnicodeDecodeError) as e:
+            self.journal(f"✖ Lecture impossible de {os.path.basename(chemin)} : "
+                         "fichier illisible ou mal encodé (UTF-8 attendu).")
+            self.hote._log(f"   détail : {type(e).__name__} : {e}")
+            return
+        if not sts:
+            self.journal(f"✖ Aucun sous-titre trouvé dans {os.path.basename(chemin)}.")
+            return
+        # Vidéo du même nom dans le même dossier (« cours.fr.vtt » → « cours.mp4 »).
+        dossier, nom = os.path.split(chemin)
+        base = nom.rsplit(".", 1)[0]
+        bases = {base, base.rsplit(".", 1)[0]}
+        video = next((os.path.join(dossier, f) for f in os.listdir(dossier)
+                      if os.path.splitext(f)[1].lower() in EXT_VIDEO_IA | EXT_AUDIO_IA
+                      and os.path.splitext(f)[0] in bases), "")
+        p = projets_ia.nouveau(video or chemin, "fr")
+        # Identifiant tiré du fichier de sous-titres : ne remplace jamais le
+        # projet d'une transcription Aristote de la même vidéo.
+        p["id"] = projets_ia.identifiant(chemin)
+        p["nom"] = nom
+        p["dossier"] = dossier
+        if not video:
+            p["media"] = ""
+        phrases = [{"text": s.texte.replace("\n", " "), "start": s.debut, "end": s.fin}
+                   for s in sts]
+        projets_ia.appliquer_transcription(p, {"sentences": phrases, "language": "fr"},
+                                           self._parametres())
+        projets_ia.enregistrer(p)
+        self._ligne(p)
+        self.journal(f"✔ {nom} importé et redécoupé : {len(sts)} → "
+                     f"{len(p['sous_titres'])} sous-titres."
+                     + ("" if video else " Aucune vidéo du même nom trouvée à côté."))
+        self.corriger(p["id"])
+
+    def associer_pod(self, pid_local: str, fiche: dict) -> None:
+        """Rattache une correction faite sur le poste à une vidéo Pod : le
+        projet garde ses sous-titres et gagne la fiche, ce qui permet de publier."""
+        p = projets_ia.charger(pid_local)
+        modele = projets_ia.nouveau_pod(fiche["video"], fiche["lien"], fiche["mp4"],
+                                        fiche["proprietaire"], fiche["disciplines"],
+                                        fiche["types"], "fr")
+        p["pod"] = modele["pod"]
+        if not (p.get("media") and os.path.exists(p["media"])):
+            p["video_distante"] = fiche["mp4"] or ""
+        projets_ia.enregistrer(p)
+        self._maj_ligne(p)
+        self.journal(f"✔ « {p['nom']} » est associé à la vidéo Pod n° {fiche['video']['id']}.")
+        self.corriger(pid_local)
+
+    def transcrire_pod(self, fiche: dict) -> None:
+        """Nouvelle transcription : Aristote télécharge lui-même le MP3 de Pod.
+        Rien ne passe par le poste, et la limite d'envoi d'ILaaS ne s'applique
+        pas (voir verifier_ilaas_taille.py)."""
+        if not fiche.get("mp3"):
+            messagebox.showerror("Pas de son", "Pod n'a pas de fichier MP3 pour cette vidéo "
+                                 "(encodage pas encore terminé ?).",
+                                 parent=self.winfo_toplevel())
+            return
+        client = self._client()
+        p = projets_ia.nouveau_pod(fiche["video"], fiche["lien"], fiche["mp4"],
+                                   fiche["proprietaire"], fiche["disciplines"],
+                                   fiche["types"], "fr")
+        p["etat"] = "envoi"
+        projets_ia.enregistrer(p)
+        self._ligne(p)
+        self.journal(f"→ {p['nom']} (Pod n° {fiche['video']['id']}) : envoi du lien du son "
+                     "à Aristote.")
+
+        def fil():
+            try:
+                self._signaler(p, "Aristote télécharge le son depuis Pod", -1)
+                p["enrichment_id"] = client.envoyer_lien(
+                    fiche["mp3"], "fr",
+                    identifiant_utilisateur=f"podadmin-pod-{fiche['video']['id']}")
+                p["etat"] = "attente"
+                projets_ia.enregistrer(p)
+                self._attendre_et_recuperer(client, p)
+            except Exception as e:
+                self._echec(p, e)
+        self.hote._run(fil)
+
+    def partir_de_piste_pod(self, fiche: dict, piste: dict) -> None:
+        """Reprend une piste déjà déposée sur Pod : redécoupage aux normes,
+        sans transcription ni quota consommé. Lecture en arrière-plan."""
+        api = self.pod()
+        if api is None:
+            return
+
+        def ensuite(r):
+            if isinstance(r, Exception):
+                self.hote._log(f"❌ Piste illisible : {type(r).__name__} : {r}")
+                messagebox.showerror("Piste illisible", message_utilisateur(r),
+                                     parent=self.winfo_toplevel())
+                return
+            sts = soustitres_ia.lire_vtt_srt(r)
+            if not sts:
+                messagebox.showerror("Piste vide", "Cette piste ne contient aucun sous-titre.",
+                                     parent=self.winfo_toplevel())
+                return
+            p = projets_ia.nouveau_pod(fiche["video"], fiche["lien"], fiche["mp4"],
+                                       fiche["proprietaire"], fiche["disciplines"],
+                                       fiche["types"], "fr")
+            phrases = [{"text": s.texte.replace("\n", " "), "start": s.debut, "end": s.fin}
+                       for s in sts]
+            projets_ia.appliquer_transcription(p, {"sentences": phrases, "language": "fr"},
+                                               self._parametres())
+            p["origine"] = f"piste Pod {piste.get('lang')} ({piste.get('kind')})"
+            projets_ia.enregistrer(p)
+            self._ligne(p)
+            self.journal(f"✔ {p['nom']} : piste {piste.get('lang')} de Pod reprise et "
+                         f"redécoupée, {len(sts)} → {len(p['sous_titres'])} sous-titres.")
+            self.corriger(p["id"])
+        self._fond(lambda: api.lire_piste(piste), ensuite)
+
+    # ── Actions sur une ligne ───────────────────────────────────────────────
+    def corriger(self, pid: str):
+        self.serveur.ouvrir(pid)
+        self.journal("Éditeur ouvert dans le navigateur. Les corrections sont "
+                     "enregistrées automatiquement.")
+
+    def exporter(self, pid: str):
+        p = projets_ia.charger(pid)
+        prm = soustitres_ia.Parametres.depuis_dict(p.get("parametres"))
+        revoir = sum(1 for d in p["sous_titres"]
+                     if soustitres_ia.verifier(soustitres_ia.SousTitre.depuis_dict(d), prm))
+        if p.get("etat") != "corrige" and not messagebox.askyesno(
+                "Exporter sans relecture",
+                "Ces sous-titres n'ont pas été relus dans l'éditeur"
+                + (f" et {revoir} ne respectent pas la norme" if revoir else "")
+                + ".\n\nExporter quand même ?", parent=self.winfo_toplevel()):
+            return
+        fichiers = projets_ia.exporter(p, self.prefs.get("formats", ["vtt"]))
+        p["etat"] = "corrige"
+        projets_ia.enregistrer(p)
+        self._maj_ligne(p)
+        for f in fichiers:
+            self.journal(f"✔ Écrit : {f}")
+
+    def ouvrir_dossier_projet(self, pid: str):
+        p = projets_ia.charger(pid)
+        dossier = p.get("dossier") or os.path.dirname(p.get("media") or "")
+        try:
+            _ouvrir_dossier_systeme(dossier if os.path.isdir(dossier)
+                                    else os.path.expanduser("~"))
+        except Exception as e:
+            self.hote._log(f"❌ Ouverture du dossier : {e}")
+
+    def supprimer(self, pid: str):
+        p = projets_ia.charger(pid)
+        if not messagebox.askyesno(
+                "Retirer de la liste",
+                f"Retirer « {p['nom']} » de la liste ?\n\nLes corrections non exportées "
+                "seront perdues. La vidéo sur Pod et les fichiers déjà exportés ne sont "
+                "pas touchés.", parent=self.winfo_toplevel()):
+            return
+        for f in (projets_ia.chemin_projet(pid),
+                  os.path.join(projets_ia.DOSSIER_AUDIO, f"{pid}.mp3")):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        w = self.lignes.pop(pid, None)
+        if w:
+            w["cadre"].destroy()
+        self._reordonner()
+        self._maj_vide()
+
+    def ouvrir_reglages(self):
+        FenetreReglagesEnrichissement(self)
+
+
+class FenetreReglagesEnrichissement(ctk.CTkToplevel):
+    """Normes des sous-titres et formats d'export. La connexion à Aristote se
+    règle dans l'onglet Configuration."""
+
+    def __init__(self, panneau: PanneauEnrichissement):
+        racine = panneau.winfo_toplevel()
+        super().__init__(racine)
+        self.panneau = panneau
+        self.title("Réglages de l'enrichissement")
+        self.configure(fg_color=S_FOND)
+        self.resizable(False, False)
+        _focus_toplevel(self, racine)
+        prm = soustitres_ia.Parametres.depuis_dict(panneau.prefs.get("decoupage"))
+
+        corps = ctk.CTkFrame(self, fg_color=S_CARTE, corner_radius=8)
+        corps.pack(fill="x", padx=14, pady=(14, 8))
+        corps.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(corps, text="Normes des sous-titres",
+                     font=ctk.CTkFont(size=T_SOUS, weight="bold"), anchor="w").grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(10, 4))
+        self.champs = {}
+        for i, (cle, libelle) in enumerate((
+                ("car_par_ligne", "Caractères par ligne"),
+                ("lignes_max", "Lignes par sous-titre"),
+                ("duree_min", "Durée minimale (s)"),
+                ("duree_max", "Durée maximale (s)"),
+                ("cps_max", "Vitesse de lecture max. (car./s)")), start=1):
+            ctk.CTkLabel(corps, text=libelle, anchor="w", font=ctk.CTkFont(size=T_PETIT),
+                         text_color=T_SECONDAIRE).grid(row=i, column=0, sticky="w", padx=10, pady=3)
+            e = ctk.CTkEntry(corps, width=90, height=H_NORMAL)
+            e.insert(0, str(getattr(prm, cle)))
+            e.grid(row=i, column=1, sticky="w", padx=8, pady=3)
+            self.champs[cle] = e
+        formats = panneau.prefs.get("formats", ["vtt"])
+        self.v_vtt = ctk.BooleanVar(value="vtt" in formats)
+        self.v_srt = ctk.BooleanVar(value="srt" in formats)
+        ctk.CTkLabel(corps, text="Export", font=ctk.CTkFont(size=T_SOUS, weight="bold"),
+                     anchor="w").grid(row=6, column=0, columnspan=2, sticky="ew",
+                                      padx=10, pady=(12, 4))
+        for i, (texte, var) in enumerate((("Fichier VTT (Pod, Moodle, web)", self.v_vtt),
+                                          ("Fichier SRT (montage, YouTube)", self.v_srt)),
+                                         start=7):
+            ctk.CTkCheckBox(corps, text=texte, variable=var, font=ctk.CTkFont(size=T_CORPS),
+                            fg_color=C_ACTION, hover_color=C_ACTION_SURV).grid(
+                row=i, column=0, columnspan=2, sticky="w", padx=10, pady=3)
+        ctk.CTkLabel(corps, text="La connexion à Aristote se règle dans l'onglet Configuration.",
+                     font=ctk.CTkFont(size=T_MINI), text_color=T_DISCRET, anchor="w").grid(
+            row=9, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 10))
+
+        barre = ctk.CTkFrame(self, fg_color="transparent")
+        barre.pack(fill="x", padx=14, pady=(0, 14))
+        self.bouton_defaut = ctk.CTkButton(barre, text="Enregistrer", width=120,
+                                           fg_color=C_ACTION, hover_color=C_ACTION_SURV,
+                                           command=self.enregistrer)
+        self.bouton_defaut.pack(side="right")
+        ctk.CTkButton(barre, text="Annuler", width=100, fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self.destroy).pack(side="right", padx=8)
+        self.update_idletasks()
+        self.geometry(f"{max(440, self.winfo_reqwidth())}x{self.winfo_reqheight()}")
+
+    def enregistrer(self):
+        try:
+            decoupage = {
+                "car_par_ligne": int(self.champs["car_par_ligne"].get()),
+                "lignes_max": int(self.champs["lignes_max"].get()),
+                "duree_min": float(self.champs["duree_min"].get().replace(",", ".")),
+                "duree_max": float(self.champs["duree_max"].get().replace(",", ".")),
+                "cps_max": float(self.champs["cps_max"].get().replace(",", ".")),
+            }
+        except ValueError:
+            messagebox.showerror("Valeur incorrecte", "Les normes doivent être des nombres.",
+                                 parent=self)
+            return
+        formats = [x for x, v in (("vtt", self.v_vtt), ("srt", self.v_srt)) if v.get()] or ["vtt"]
+        self.panneau.prefs.update(decoupage=decoupage, formats=formats)
+        reglages_ia.enregistrer(self.panneau.prefs)
+        self.panneau.journal("Enrichissement IA : réglages enregistrés.")
+        self.destroy()
+
+
+class FenetreVideoPod(ctk.CTkToplevel):
+    """Choisir une vidéo de Pod, voir sa fiche, choisir le point de départ.
+
+    La recherche se fait dans le MAGASIN PARTAGÉ (`hote.videos`) : SousTitreur
+    relisait toute l'instance à chaque recherche. Rien n'est écrit dans Pod
+    depuis cette fenêtre."""
+
+    TYPES_PISTE = {"subtitles": "sous-titres", "captions": "légendes (sourds et malentendants)"}
+
+    def __init__(self, panneau: PanneauEnrichissement, api):
+        racine = panneau.winfo_toplevel()
+        super().__init__(racine)
+        self.panneau = panneau
+        self.hote = panneau.hote
+        self.api = api
+        self.fiche: dict | None = None
+        self.title("Vidéo sur Pod")
+        # 720 px de haut : CustomTkinter 6 ne descend pas sous ~212 px pour la
+        # zone des résultats ; à 660 px, la troisième action de la fiche était
+        # coupée en bas.
+        self.geometry("780x720")
+        self.configure(fg_color=S_FOND)
+        _focus_toplevel(self, racine)
+
+        ctk.CTkLabel(self, text="🎞️  Vidéo sur Pod", font=ctk.CTkFont(size=T_SOUS, weight="bold"),
+                     anchor="w").pack(fill="x", padx=18, pady=(14, 6))
+        haut = ctk.CTkFrame(self, fg_color="transparent")
+        haut.pack(fill="x", padx=16, pady=(0, 4))
+        self.entree = ctk.CTkEntry(haut, height=H_NORMAL,
+                                   placeholder_text="Collez le lien de la vidéo Pod, ou tapez un mot du titre")
+        self.entree.pack(side="left", fill="x", expand=True)
+        self.entree.bind("<Return>", lambda e: (self.chercher(), "break")[1])
+        ctk.CTkButton(haut, text="🔎  Chercher", width=120, height=H_NORMAL,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self.chercher).pack(side="left", padx=(8, 0))
+        self.statut = ctk.CTkLabel(self, text="", anchor="w", text_color=T_SECONDAIRE,
+                                   font=ctk.CTkFont(size=T_PETIT))
+        self.statut.pack(fill="x", padx=18)
+        self.resultats = ctk.CTkScrollableFrame(self, height=160, fg_color=S_CARTE, corner_radius=8)
+        self.resultats.pack(fill="x", padx=16, pady=6)
+        self.cadre_fiche = ctk.CTkScrollableFrame(self, fg_color=S_CARTE, corner_radius=8)
+        self.cadre_fiche.pack(fill="both", expand=True, padx=16, pady=(4, 16))
+        etat_vide(self.cadre_fiche, "🎞️", "Choisissez une vidéo pour voir sa fiche.",
+                  "Le lien se copie depuis la barre d'adresse, sur la page de la vidéo.")
+        self.after(100, self.entree.focus)
+
+    def _apres(self, fonction):
+        """Rappel protégé : la fenêtre a pu être fermée entre-temps."""
+        def rappel(r):
+            if self.winfo_exists():
+                fonction(r)
+        return rappel
+
+    # ── Recherche ───────────────────────────────────────────────────────────
+    def chercher(self):
+        texte = self.entree.get().strip()
+        if not texte:
+            return
+        ident = identifiant_depuis_lien(texte)
+        if ident:
+            connue = next((v for v in self.hote.videos if v.get("id") == ident), None)
+            if connue:
+                self._afficher_resultats([connue])
+                self.ouvrir_fiche(connue)
+                return
+            self.statut.configure(text=f"Lecture de la vidéo n° {ident}…", text_color=T_SECONDAIRE)
+            self.panneau._fond(lambda: self.api.video(ident), self._apres(self._resultat_unique))
+        elif self.hote.videos:
+            self._afficher_resultats(self._filtrer(texte))
+        else:
+            self.statut.configure(text="Chargement de la liste des vidéos…", text_color=T_SECONDAIRE)
+            self.hote.ensure_videos(on_ready=lambda: self.winfo_exists()
+                                    and self._afficher_resultats(self._filtrer(texte)))
+
+    def _filtrer(self, texte: str) -> list[dict]:
+        mots = _sans_accents(texte).split()
+        trouves = [v for v in self.hote.videos
+                   if all(m in _sans_accents(f"{v.get('title', '')} {v.get('slug', '')}")
+                          for m in mots)]
+        return sorted(trouves, key=lambda v: str(v.get("date_added", "")), reverse=True)
+
+    def _resultat_unique(self, r):
+        if isinstance(r, Exception):
+            self._afficher_resultats(r)
+            return
+        self._afficher_resultats([r])
+        self.ouvrir_fiche(r)
+
+    def _afficher_resultats(self, r):
+        for w in self.resultats.winfo_children():
+            w.destroy()
+        if isinstance(r, Exception):
+            self.statut.configure(text=message_utilisateur(r), text_color=T_ERREUR)
+            self.hote._log(f"Vidéo sur Pod : {type(r).__name__} : {r}")
+            return
+        self.statut.configure(text=f"{len(r)} vidéo(s) trouvée(s)." if r else "Aucune vidéo trouvée.",
+                              text_color=T_SECONDAIRE)
+        for i, v in enumerate(r[:40]):
+            texte = f"n° {v.get('id')}  ·  {v.get('title', '')}  ·  {str(v.get('date_added', ''))[:10]}"
+            ctk.CTkButton(self.resultats, text=texte, anchor="w", height=H_COMPACT,
+                          fg_color=S_LIGNE if i % 2 == 0 else S_LIGNE_ALT,
+                          text_color=T_CHAMP, hover_color=S_SELECTION,
+                          font=ctk.CTkFont(size=T_CORPS),
+                          command=lambda v=v: self.ouvrir_fiche(v)).pack(fill="x", padx=2, pady=1)
+
+    # ── Fiche ───────────────────────────────────────────────────────────────
+    def _nom_proprietaire(self, url: str) -> str:
+        """Nom du propriétaire : d'abord la liste des comptes déjà chargée."""
+        cible = str(url or "").rstrip("/")
+        for u in getattr(self.hote, "all_users", None) or []:
+            if str(u.get("url", "")).rstrip("/") == cible:
+                nom = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+                return nom or u.get("username", "")
+        try:
+            u = self.api.get_user(url)
+            return f"{u.get('first_name', '')} {u.get('last_name', '')}".strip() or u.get("username", "")
+        except Exception:
+            return ""
+
+    def ouvrir_fiche(self, video: dict):
+        self.statut.configure(text=f"Lecture de la fiche de « {video.get('title', '')} »…",
+                              text_color=T_SECONDAIRE)
+        api, panneau = self.api, self.panneau
+
+        def charger():
+            refs = panneau.references(api)
+            return {"video": video, "lien": api.lien_public(video),
+                    "proprietaire": self._nom_proprietaire(video.get("owner", "")),
+                    "pistes": api.pistes(video), "mp3": api.mp3(video), "mp4": api.mp4(video),
+                    "disciplines": list(refs["disciplines"]), "types": list(refs["types"])}
+        panneau._fond(charger, self._apres(self._afficher_fiche))
+
+    def _section(self, texte: str):
+        ctk.CTkLabel(self.cadre_fiche, text=texte, font=ctk.CTkFont(size=T_SOUS, weight="bold"),
+                     anchor="w").pack(fill="x", padx=14, pady=(14, 4))
+
+    def _bouton(self, parent, texte, commande, principal=False):
+        """Une seule action colorée par fiche ; les autres sont neutres."""
+        if principal:
+            return ctk.CTkButton(parent, text=texte, width=360, height=H_PRINCIPAL,
+                                 fg_color=C_ACTION, hover_color=C_ACTION_SURV,
+                                 font=ctk.CTkFont(size=T_CORPS, weight="bold"), command=commande)
+        return ctk.CTkButton(parent, text=texte, width=360, height=H_NORMAL,
+                             fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                             text_color=T_SUR_NEUTRE, command=commande)
+
+    def _afficher_fiche(self, f):
+        for w in self.cadre_fiche.winfo_children():
+            w.destroy()
+        if isinstance(f, Exception):
+            self.statut.configure(text=message_utilisateur(f), text_color=T_ERREUR)
+            self.hote._log(f"Fiche Pod : {type(f).__name__} : {f}")
+            return
+        self.fiche = f
+        v = f["video"]
+        self.statut.configure(text="Fiche chargée.", text_color=T_SECONDAIRE)
+        c = self.cadre_fiche
+        ctk.CTkLabel(c, text=v.get("title", ""), font=ctk.CTkFont(size=T_SOUS, weight="bold"),
+                     anchor="w", wraplength=680, justify="left").pack(fill="x", padx=14, pady=(12, 2))
+        duree = int(v.get("duration") or 0)
+        infos = (f"Pod n° {v.get('id')}  ·  {f['proprietaire'] or 'propriétaire inconnu'}  ·  "
+                 f"{duree // 60} min {duree % 60:02d}"
+                 + ("  ·  brouillon" if v.get("is_draft") else "")
+                 + ("  ·  accès restreint" if v.get("is_restricted") else ""))
+        ctk.CTkLabel(c, text=infos, anchor="w", text_color=T_SECONDAIRE,
+                     font=ctk.CTkFont(size=T_PETIT)).pack(fill="x", padx=14)
+        if not f["mp4"]:
+            ctk.CTkLabel(c, text="⚠  Pas de MP4 : l'éditeur ne pourra pas montrer l'image.",
+                         anchor="w", text_color=T_ALERTE,
+                         font=ctk.CTkFont(size=T_PETIT)).pack(fill="x", padx=14)
+
+        self._section("Sous-titres déjà présents sur Pod")
+        if not f["pistes"]:
+            ctk.CTkLabel(c, text="Aucun.", anchor="w", text_color=T_SECONDAIRE,
+                         font=ctk.CTkFont(size=T_CORPS)).pack(fill="x", padx=14)
+        for t in f["pistes"]:
+            ctk.CTkLabel(c, text=f"•  {t.get('lang')}, "
+                                 f"{self.TYPES_PISTE.get(t.get('kind'), t.get('kind'))}",
+                         anchor="w", font=ctk.CTkFont(size=T_CORPS)).pack(fill="x", padx=14)
+
+        self._section("Point de départ")
+        actions = ctk.CTkFrame(c, fg_color="transparent")
+        actions.pack(fill="x", padx=14, pady=(0, 12))
+        pid = projets_ia.id_pod(v["id"])
+        existe = projets_ia.existe(pid)
+        if existe:
+            self._bouton(actions, "✏️  Rouvrir la correction en cours",
+                         lambda: (self.panneau.corriger(pid), self.destroy()),
+                         principal=True).pack(anchor="w", pady=(0, 6))
+        self._bouton(actions, "🤖  Nouvelle transcription par Aristote", self._nouvelle,
+                     principal=not existe).pack(anchor="w", pady=3)
+        for t in f["pistes"]:
+            self._bouton(actions, f"Partir des {self.TYPES_PISTE.get(t.get('kind'), 'sous-titres')} "
+                                  f"existants ({t.get('lang')}), sans transcription",
+                         lambda t=t: self._depuis_piste(t)).pack(anchor="w", pady=3)
+
+        # Correction faite sur le poste avant la mise en ligne : on la rattache.
+        locaux = {f"{p['nom']}  ({str(p.get('modifie', ''))[:10]})": p["id"]
+                  for p in projets_ia.lister() if not p.get("pod") and p.get("sous_titres")}
+        if locaux:
+            bloc = bloc_filtre(actions, "Ou associer une correction faite sur le poste")
+            bloc.pack(anchor="w", pady=(12, 3), fill="x")
+            ligne = ctk.CTkFrame(bloc, fg_color="transparent")
+            ligne.pack(fill="x")
+            choix = ctk.StringVar(value=next(iter(locaux)))
+            ctk.CTkOptionMenu(ligne, values=list(locaux), variable=choix, width=300,
+                              height=H_NORMAL, dynamic_resizing=False,
+                              **STYLE_CHAMP).pack(side="left")
+            ctk.CTkButton(ligne, text="Associer", width=100, height=H_NORMAL,
+                          fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                          command=lambda: self._associer(locaux[choix.get()])).pack(side="left", padx=6)
+
+    def _confirmer_remplacement(self) -> bool:
+        pid = projets_ia.id_pod(self.fiche["video"]["id"])
+        return not projets_ia.existe(pid) or messagebox.askyesno(
+            "Correction en cours", "Une correction existe déjà pour cette vidéo.\n\n"
+            "La remplacer ? Les corrections non exportées seront perdues.", parent=self)
+
+    def _nouvelle(self):
+        if self._confirmer_remplacement():
+            self.panneau.transcrire_pod(self.fiche)
+            self.destroy()
+
+    def _associer(self, pid_local: str):
+        if projets_ia.existe(projets_ia.id_pod(self.fiche["video"]["id"])) and not messagebox.askyesno(
+                "Correction en cours", "Une autre correction est déjà rattachée à cette vidéo. "
+                "Associer quand même celle-ci ?", parent=self):
+            return
+        self.panneau.associer_pod(pid_local, self.fiche)
+        self.destroy()
+
+    def _depuis_piste(self, piste: dict):
+        if self._confirmer_remplacement():
+            self.panneau.partir_de_piste_pod(self.fiche, piste)
+            self.destroy()
 
 
 # ════════════════════════════════════════════════════════════════════════════

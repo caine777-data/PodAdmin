@@ -365,6 +365,59 @@ def clear_vehicle_credentials() -> None:
     _clear_secret(KEYRING_PASS_KEY, "vehicle_pass")
 
 
+# ── Identifiants Aristote embarqués (onglet « Enrichissement IA ») ────────
+# Repris de SousTitreur. DÉCISION DE CÉDRIC (2026-10-04), prise en
+# connaissance de cause : les identifiants sont EMBARQUÉS, pour que personne
+# n'ait rien à saisir. Des identifiants saisis dans Configuration (coffre-fort)
+# restent prioritaires.
+#
+# ⚠️ SÉCURITÉ — à relire avant toute rotation ou tout changement de droits :
+#    → ce compte peut lire et SUPPRIMER les enrichissements de l'instance
+#      Aristote, contrairement au compte DEPOT qui n'a aucun droit ;
+#    → les installeurs de PodAdmin sont publiés sur un dépôt PUBLIC
+#      (podadmin-releases) : ce secret est lisible par qui décompresse
+#      l'exécutable ;
+#    → le dépôt de code doit rester PRIVÉ ;
+#    → à terme, demander à ILaaS un identifiant propre à PodAdmin, aux droits
+#      limités à la création d'enrichissements ;
+#    → toute rotation du secret impose de recompiler et de republier.
+ARISTOTE_CLIENT_ID_EMBARQUE = "esup-POD"
+ARISTOTE_CLIENT_SECRET_EMBARQUE = "Fa6_C9_No8"
+KEYRING_ARISTOTE_ID = "aristote_client_id"
+KEYRING_ARISTOTE_SECRET = "aristote_client_secret"
+
+
+def load_aristote_credentials() -> tuple[str, str, str]:
+    """(identifiant, secret, origine) : ceux du coffre-fort s'ils existent,
+    sinon ceux embarqués. origine vaut « coffre » ou « embarques »."""
+    cid = _load_secret(KEYRING_ARISTOTE_ID, "aristote_id")
+    secret = _load_secret(KEYRING_ARISTOTE_SECRET, "aristote_secret")
+    if cid and secret:
+        return cid, secret, "coffre"
+    return ARISTOTE_CLIENT_ID_EMBARQUE, ARISTOTE_CLIENT_SECRET_EMBARQUE, "embarques"
+
+
+def save_aristote_credentials(client_id: str, client_secret: str) -> str:
+    """Range des identifiants personnalisés. Renvoie 'keyring', 'file' ou ''.
+
+    Si ce sont les valeurs embarquées, on VIDE au contraire le coffre-fort :
+    une copie qui y resterait masquerait le nouveau secret embarqué après une
+    rotation, sans que rien ne le signale."""
+    client_id, client_secret = client_id.strip(), client_secret.strip()
+    if (client_id, client_secret) == (ARISTOTE_CLIENT_ID_EMBARQUE,
+                                      ARISTOTE_CLIENT_SECRET_EMBARQUE):
+        clear_aristote_credentials()
+        return "embarques"
+    _save_secret(KEYRING_ARISTOTE_ID, "aristote_id", client_id)
+    return _save_secret(KEYRING_ARISTOTE_SECRET, "aristote_secret", client_secret)
+
+
+def clear_aristote_credentials() -> None:
+    """Efface les identifiants personnalisés : retour aux valeurs embarquées."""
+    _clear_secret(KEYRING_ARISTOTE_ID, "aristote_id")
+    _clear_secret(KEYRING_ARISTOTE_SECRET, "aristote_secret")
+
+
 # Extensions vidéo reconnues lors du scan de dossier (onglet Téléversement)
 VIDEO_EXTENSIONS = {
     ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v",

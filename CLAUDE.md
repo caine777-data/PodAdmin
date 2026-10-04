@@ -17,13 +17,14 @@ expliquent le POURQUOI (surtout les pièges), pas le quoi.**
 
 | Fichier | Rôle |
 |---|---|
-| `app.py` | toute l'interface : classe `App` (~8 800 lignes, ~275 méthodes), 12 onglets |
+| `app.py` | toute l'interface : classe `App` (~8 800 lignes, ~275 méthodes), 13 onglets ; en fin de fichier, `PanneauEnrichissement` et ses fenêtres (onglet « Enrichissement IA ») |
+| `enrichissement/` | modules sans interface repris de SousTitreur : Aristote, découpage aux normes, projets, éditeur web local, journal des écritures ; données dans `~/.soustitreur` |
 | `pod_api.py` | client REST (jeton superutilisateur) |
 | `pod_chunked.py` | envoi par morceaux via une session web du compte véhicule DEPOT ; indépendant de `pod_api.py` |
-| `config.py` | réglages, seuils, compte DEPOT **embarqué en clair** |
+| `config.py` | réglages, seuils, compte DEPOT et identifiants Aristote **embarqués en clair** |
 | `maj.py` | lecture de `version.json` et `etat.json` (dépôt public) |
 | `__version__.py` | source UNIQUE de la version |
-| `tests/` | ~370 tests pytest |
+| `tests/` | ~470 tests pytest |
 | `verifier_*.py` | sondes autonomes, lecture seule, lancées par Cédric sur l'instance |
 
 ## Méthode (établie par l'expérience — s'y tenir)
@@ -51,13 +52,15 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 - Échec connu et préexistant : `test_fenetres.py::TestLibellesDeFiltres::test_tient_en_fenetre_minimale`
   (largeur mesurée à 1 px sur ce poste). Des erreurs Tk intermittentes dans
   `TestSelectionMultiple` / `TestInfobulle` existent aussi avant toute modification.
-- ⚠️ Les tests qui créent `App()` écrivent dans le VRAI Journal
-  (`~/.podadmin/journal-AAAA-MM.log`) et lisent le vrai `~/.podadmin.json` :
-  `os.environ.setdefault("HOME", …)` ne redirige rien sous Windows
-  (`expanduser` y lit `USERPROFILE`). À corriger ; en attendant, ne pas prendre
-  ces lignes du Journal pour de vrais événements (« 9.9.9 », « FausseAPI »…).
+- `tests/conftest.py` ISOLE toute la suite : dossier personnel temporaire
+  (USERPROFILE et HOME : sous Windows, `expanduser` lit USERPROFILE) et coffre-fort
+  vide (`keyring.backends.null`), donc aucune connexion réelle. Avant lui, les
+  tests écrivaient dans le vrai Journal et se connectaient à la production avec
+  le jeton de Cédric. Ne jamais contourner ce fichier ; `test_isolement.py` le garde.
+  Les lignes « 9.9.9 » ou « FausseAPI » antérieures au 2026-10-04 dans le vrai
+  Journal viennent des tests, pas d'événements réels.
 - Préférer des tests sur faux objets (`App.methode(SimpleNamespace(...))`) à une
-  nouvelle instance `App()` : chaque instance aggrave le problème ci-dessus.
+  nouvelle instance `App()` : chaque instance aggrave le cumul Tk ci-dessus.
 
 ## Publier une version
 
@@ -75,8 +78,10 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 
 ## Sécurité — non négociable
 
-- `config.py` contient le mot de passe du compte **DEPOT** : dépôt `PodAdmin`
-  **privé**, toujours. DEPOT doit rester local et sans privilège.
+- `config.py` contient le mot de passe du compte **DEPOT** et les identifiants
+  **Aristote** (ce compte peut supprimer des enrichissements) : dépôt `PodAdmin`
+  **privé**, toujours. DEPOT doit rester local et sans privilège. Ne jamais
+  recopier ces valeurs dans une réponse ; les copier par script.
 - Dépôt **public** `podadmin-releases` : binaires PodAdmin + `version.json` +
   `etat.json`. **Jamais le Téléverseur** (son binaire contient aussi DEPOT).
 - Le jeton superutilisateur ne part que vers l'instance, en https :
@@ -113,6 +118,22 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 - « Encodage non lancé … HTTP 404 » après un envoi par morceaux : constaté dès
   août 2026, non élucidé.
 
+## Enrichissement IA (SousTitreur fusionné en 1.10.0)
+
+Détail dans le README, rubrique « Enrichissement IA ».
+
+- Pas d'ffmpeg : une vidéo du poste part entière. Limite
+  `reglages.LIMITE_ENVOI_OCTETS` (780 Mo) tirée de la sonde
+  `verifier_ilaas_taille.py` (ILaaS refuse vers 811 Mo). Ne jamais l'écrire en
+  dur dans un texte (test). Ne rien réimporter qui demande ffmpeg (test).
+- Règles métier à ne pas « améliorer » : correction toujours en « fr »,
+  remplacement d'une piste seulement sur demande avec sauvegarde préalable,
+  métadonnées champ par champ, discipline jamais retirée, quiz en GIFT.
+- Erreurs vers la page de l'éditeur : `message_editeur(e)` ; chaque écriture
+  sur Pod va au Journal (`journal_hote`) et à `journal_pod.jsonl`.
+- SousTitreur autonome (Téléchargements\SousTitreur) est GELÉ en 0.6.1 : les
+  corrections se font ici, plus là-bas.
+
 ## Pièges d'interface (liste complète : README et fiche §3)
 
 - Jamais de widget Tk lu ou modifié depuis un thread : lire dans le thread
@@ -130,6 +151,15 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 - `bind_all` agit aussi dans les champs : `_saisie_active()` d'abord.
 - Relations de l'API (owner, channel…) : URL ou objet → `App._rel_urls()`.
 - Vidéo désignée par son URL ou son id, pas son slug (`/videos/<slug>/` peut répondre 404).
+- Navigation : elle DÉFILE en 1180×760 depuis l'onglet Enrichissement IA
+  (décision de Cédric) ; Aide et À propos restent épinglés. Toute entrée doit
+  rester dans la zone défilante (test).
+- Onglet Enrichissement IA : construit à la PREMIÈRE ouverture
+  (`_enrich_construire`) ; la reprise du suivi Aristote passe par
+  `_auto_loaders` (PodAdmin connecté) ; le serveur de l'éditeur ne démarre
+  qu'au premier « Corriger ». Ne rien y ajouter qui travaille au démarrage.
+- CustomTkinter 6 : un `CTkScrollableFrame` ne descend pas sous ~212 px de
+  haut, quel que soit `height`. Agrandir la fenêtre plutôt que réduire le cadre.
 
 ## Décisions déjà prises — ne pas reproposer
 
@@ -142,5 +172,5 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 
 Voir la fiche §7 : captures des tutoriels, sauvegarde JSON avant opération de
 masse, listes de lecture, vocabulaire des tutoriels, notification de mise à jour
-du Téléverseur. Plus : tests qui écrivent dans le vrai Journal, 404 d'encodage
+du Téléverseur. Plus : 404 d'encodage
 après envoi par morceaux, marqueur visible dans le slug.

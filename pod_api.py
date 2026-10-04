@@ -1164,6 +1164,223 @@ class PodAPI:
         # 4) Création de la piste qui référence le fichier téléversé
         return self.add_track(video, lang, kind, f.get("url"))
 
+    # ── C-ter. Enrichissement IA (repris de SousTitreur 0.6.1) ────────────
+    # Constats faits sur la production (Pod 3.8.4) par SousTitreur :
+    #   • l'identifiant d'une vidéo figure au début de son lien public
+    #     (/video/0019-mon-titre/ -> vidéo 19) ;
+    #   • /tracks/, /encodings_audio/ et /encodings_video/ filtrent
+    #     correctement sur ?video=<id> (inutile de tout parcourir) ;
+    #   • les fichiers des encodages (/media/…) sont lisibles sans jeton :
+    #     Aristote télécharge le MP3, le navigateur lit le MP4.
+    # Toutes les requêtes passent par `_get` / `_post` / `_patch` / `_delete`,
+    # donc par `_abs` : le jeton ne part que vers l'instance, en https.
+
+    def video(self, ident: int) -> dict:
+        """Détail d'une vidéo à partir de son identifiant numérique."""
+        return self._get(f"/videos/{int(ident)}/")
+
+    def lien_public(self, video: dict) -> str:
+        """Adresse de la page publique de la vidéo."""
+        return f"{self.base_url}/video/{video.get('slug')}/"
+
+    @staticmethod
+    def _de_la_video(elements: list[dict], video: dict) -> list[dict]:
+        """Garde-fou : ne conserver que les éléments de CETTE vidéo, même si
+        le filtre ?video= était un jour ignoré par le serveur."""
+        cible = str(video.get("url", "")).rstrip("/")
+        return [e for e in elements if str(e.get("video", "")).rstrip("/") == cible]
+
+    def pistes(self, video: dict) -> list[dict]:
+        """Pistes de sous-titres de la vidéo : [{url, lang, kind, src}…]."""
+        return self._de_la_video(self._paginate("/tracks/", {"video": video["id"]}), video)
+
+    def mp3(self, video: dict) -> Optional[str]:
+        """Adresse du MP3 encodé par Pod : celle qu'on donne à Aristote."""
+        for e in self._de_la_video(self._paginate("/encodings_audio/",
+                                                  {"video": video["id"]}), video):
+            if e.get("encoding_format") == "audio/mp3" and e.get("source_file"):
+                return e["source_file"]
+        return None
+
+    def mp4(self, video: dict) -> Optional[str]:
+        """Adresse d'un MP4 lisible par le navigateur, 720p de préférence."""
+        mp4 = {e.get("name"): e.get("source_file")
+               for e in self._de_la_video(self._paginate("/encodings_video/",
+                                                         {"video": video["id"]}), video)
+               if e.get("encoding_format") == "video/mp4" and e.get("source_file")}
+        for nom in ("720p", "360p", "1080p"):
+            if mp4.get(nom):
+                return mp4[nom]
+        return next(iter(mp4.values()), None)
+
+    def _lire_fichier(self, url: str) -> requests.Response:
+        """Lit un fichier désigné par le serveur (contenu d'une piste…).
+
+        Sur l'instance elle-même, avec le jeton : la règle de `_abs` le permet,
+        et c'est nécessaire pour une vidéo en brouillon. Ailleurs, SANS jeton
+        (`telecharger_media`) : on ne l'envoie jamais à un autre hôte."""
+        s = str(url or "").strip()
+        if s.startswith("/"):
+            s = f"{self.base_url}{s}"
+        try:
+            cible = self._meme_instance(s)
+        except PodAPIError:
+            return self.telecharger_media(s, timeout=30)
+        return self.session.get(cible, timeout=30, verify=self.verify_ssl)
+
+    def lire_piste(self, piste: dict) -> str:
+        """Contenu VTT d'une piste."""
+        fichier = self._get(piste["src"])
+        r = self._lire_fichier(fichier.get("file", ""))
+        if r.status_code != 200:
+            raise PodAPIError(f"Fichier de sous-titres illisible (HTTP {r.status_code}).",
+                              status=r.status_code)
+        r.encoding = "utf-8"
+        return r.text
+
+    def references(self) -> dict:
+        """Correspondance titre -> URL des disciplines et des types."""
+        return {"disciplines": {d["title"]: d["url"] for d in self.get_disciplines()
+                                if d.get("title") and d.get("url")},
+                "types": {t["title"]: t["url"] for t in self.get_types()
+                          if t.get("title") and t.get("url")}}
+
+    def publier_piste(self, video: dict, lang: str, kind: str, vtt: str,
+                      remplacer: Optional[dict] = None,
+                      dossier_sauvegarde: Optional[str] = None) -> dict:
+        """Dépose une piste. Renvoie {piste, fichier, sauvegarde, remplacee,
+        fichier_supprime, avertissement}.
+
+        Testé en production sur la vidéo 202. Trois sécurités, à garder telles
+        quelles :
+          • juste avant d'écrire, l'état réel des pistes est relu : s'il a
+            changé depuis ce que l'utilisateur a vu, on refuse ;
+          • l'ancienne piste est SAUVEGARDÉE sur le poste avant toute
+            modification ;
+          • si la nouvelle piste ne peut pas être créée après la suppression
+            de l'ancienne, l'ancienne est remise en place.
+
+        `remplacer` : la piste existante de même langue et même type, que
+        l'utilisateur a explicitement choisi de remplacer. Sans elle, une piste
+        déjà présente bloque la publication. L'API ne vérifie pas l'unicité
+        langue + type (le formulaire de Pod, si) : c'est à nous de l'assurer.
+        """
+        from datetime import datetime
+        if kind not in ("subtitles", "captions"):
+            raise PodAPIError(f"Type de piste inconnu : {kind}")
+        if not vtt.lstrip().startswith("WEBVTT"):
+            raise PodAPIError("Le contenu n'est pas un fichier WebVTT.")
+
+        actuelles = [t for t in self.pistes(video)
+                     if t.get("lang") == lang and t.get("kind") == kind]
+        attendu = {remplacer["url"]} if remplacer else set()
+        if {t.get("url") for t in actuelles} != attendu:
+            raise PodAPIError(f"Les pistes « {lang} / {kind} » ont changé sur Pod depuis "
+                              "l'ouverture. Rouvrez la fenêtre de publication pour voir "
+                              "leur état actuel.")
+
+        # 1. Sauvegarde de l'ancienne piste, sur le poste, AVANT toute modification.
+        sauvegarde = ""
+        if remplacer:
+            ancien = self.lire_piste(remplacer)
+            dossier = dossier_sauvegarde or "."
+            os.makedirs(dossier, exist_ok=True)
+            sauvegarde = os.path.join(
+                dossier, f"ancienne_piste_{lang}_{kind}_{datetime.now():%Y%m%d-%H%M%S}.vtt")
+            with open(sauvegarde, "w", encoding="utf-8", newline="\n") as f:
+                f.write(ancien)
+
+        # 2. Nouveau fichier, à la convention de Pod : subtitle_<lang>_<horodatage>.
+        nom = f"subtitle_{lang}_{datetime.now():%Y%m%d-%H%M%S}"
+        dossier_pod = self.find_or_create_folder(video["slug"], video["owner"])
+        fichier = self.upload_subtitle_file(dossier_pod, nom, vtt.encode("utf-8"),
+                                            nom + ".vtt", video["owner"])
+
+        # 3. Remplacement : l'ancienne piste disparaît juste avant la création
+        #    de la nouvelle (une seule piste par langue et par type).
+        if remplacer:
+            self.delete_track(remplacer)
+        try:
+            piste = self.add_track(video, lang, kind, fichier["url"])
+        except Exception:
+            # N'importe quel échec, coupure réseau comprise : la vidéo ne doit
+            # pas rester sans piste.
+            if remplacer:
+                self.add_track(video, lang, kind, remplacer["src"])
+            raise
+
+        # 4. Supprimer une piste ne supprime pas son fichier : on l'efface
+        #    maintenant qu'il est sauvegardé et que la nouvelle piste existe.
+        #    Un échec ici n'annule pas la publication.
+        fichier_supprime, avertissement = "", ""
+        if remplacer and remplacer.get("src") and remplacer["src"] != fichier.get("url"):
+            try:
+                self._delete(remplacer["src"])
+                fichier_supprime = remplacer["src"]
+            except Exception as e:
+                avertissement = f"ancien fichier non supprimé de Pod : {e}"
+        return {"piste": piste, "fichier": fichier, "sauvegarde": sauvegarde,
+                "remplacee": remplacer["url"] if remplacer else "",
+                "fichier_supprime": fichier_supprime, "avertissement": avertissement}
+
+    # Formats constatés sur la production :
+    #   • title : texte, 250 caractères au plus, obligatoire ;
+    #   • description : HTML (paragraphes <p>, accents parfois en entités) ;
+    #   • tags : UNE chaîne de 255 caractères au plus, mots séparés par des
+    #     espaces, expressions entre guillemets : ohris "planning ohris" ;
+    #   • discipline : liste d'URL ; type : URL d'un type, obligatoire.
+
+    def metadonnees(self, video: dict, refs: Optional[dict] = None) -> dict:
+        """Métadonnées actuelles, sous forme lisible (texte, listes, titres)."""
+        refs = refs or self.references()
+        par_url_d = {u: t for t, u in refs["disciplines"].items()}
+        par_url_t = {u: t for t, u in refs["types"].items()}
+        return {
+            "titre": video.get("title") or "",
+            "description": html_vers_texte(video.get("description") or ""),
+            "mots_cles": tags_depuis_pod(video.get("tags") or ""),
+            "disciplines": [par_url_d.get(u, u) for u in video.get("discipline") or []],
+            "type": par_url_t.get(video.get("type"), video.get("type") or ""),
+        }
+
+    def maj_metadonnees(self, video_id: int, avant: dict, nouveau: dict) -> dict:
+        """Écrit les champs de `nouveau` (titre, description, mots_cles,
+        ajout_discipline, type). `avant` : ce que l'utilisateur a vu dans
+        l'écran avant/après ; si Pod a changé depuis, on refuse. La discipline
+        est AJOUTÉE à celles déjà présentes, jamais retirée."""
+        refs = self.references()
+        video = self.video(video_id)
+        actuel = self.metadonnees(video, refs)
+        for champ in nouveau:
+            cle = "disciplines" if champ == "ajout_discipline" else champ
+            if actuel.get(cle) != avant.get(cle):
+                raise PodAPIError(f"« {cle} » a changé sur Pod depuis l'ouverture de la "
+                                  "fenêtre. Rouvrez-la pour voir l'état actuel.")
+        corps: dict = {}
+        if "titre" in nouveau:
+            t = str(nouveau["titre"]).strip()
+            if not t:
+                raise PodAPIError("Le titre ne peut pas être vide.")
+            corps["title"] = t[:250]
+        if "description" in nouveau:
+            corps["description"] = texte_vers_html(str(nouveau["description"]))
+        if "mots_cles" in nouveau:
+            corps["tags"], _ = tags_vers_pod(list(nouveau["mots_cles"]))
+        if "ajout_discipline" in nouveau:
+            url = refs["disciplines"].get(nouveau["ajout_discipline"])
+            if not url:
+                raise PodAPIError(f"Discipline inconnue de Pod : {nouveau['ajout_discipline']}")
+            corps["discipline"] = list(dict.fromkeys((video.get("discipline") or []) + [url]))
+        if "type" in nouveau:
+            url = refs["types"].get(nouveau["type"])
+            if not url:
+                raise PodAPIError(f"Type inconnu de Pod : {nouveau['type']}")
+            corps["type"] = url
+        if not corps:
+            raise PodAPIError("Aucun champ à modifier.")
+        self._patch(f"/videos/{int(video_id)}/", json=corps)
+        return {"avant": actuel, "apres": self.metadonnees(self.video(video_id), refs)}
+
     # ── D. Découverte de schéma (OPTIONS) ─────────────────────────────────
     # Pour s'adapter à l'instance plutôt que supposer (réflexe « diagnostic »).
 
@@ -1182,6 +1399,54 @@ class PodAPI:
                              headers={"Accept": "application/json"},
                              timeout=20, verify=self.verify_ssl)
         return r.headers.get("Allow", "")
+
+
+# ── Enrichissement IA : conversions et lien (repris de SousTitreur) ───────
+
+def identifiant_depuis_lien(texte: str) -> Optional[int]:
+    """« https://…/video/0019-mon-titre/ », « 0019-mon-titre » ou « 19 » -> 19."""
+    t = str(texte or "").strip()
+    m = (re.search(r"/video(?:_[a-z]+)?/0*(\d+)-", t)
+         or re.fullmatch(r"0*(\d+)(?:-[\w-]*)?/?", t))
+    return int(m[1]) if m else None
+
+
+def html_vers_texte(html: str) -> str:
+    """Description HTML de Pod -> texte lisible (un paragraphe par ligne)."""
+    import html as h
+    t = re.sub(r"(?i)<br\s*/?>", "\n", html)
+    t = re.sub(r"(?i)</p\s*>", "\n\n", t)
+    t = h.unescape(re.sub(r"<[^>]+>", "", t))
+    return re.sub(r"\n{3,}", "\n\n", t.replace("\r", "")).strip()
+
+
+def texte_vers_html(texte: str) -> str:
+    """Texte -> paragraphes HTML, comme l'éditeur de description de Pod."""
+    import html as h
+    paragraphes = [p.strip() for p in re.split(r"\n\s*\n", texte.replace("\r", "")) if p.strip()]
+    return "\n\n".join("<p>" + h.escape(p, quote=False).replace("\n", "<br>") + "</p>"
+                       for p in paragraphes)
+
+
+def tags_depuis_pod(tags: str) -> list[str]:
+    """'ohris "planning ohris"' -> ['ohris', 'planning ohris']."""
+    return [a or b for a, b in re.findall(r'"([^"]+)"|(\S+)', tags or "")]
+
+
+def tags_vers_pod(mots: list[str], limite: int = 255) -> tuple[str, list[str]]:
+    """Liste -> chaîne de Pod. Renvoie (chaîne, mots écartés faute de place)."""
+    chaine, ecartes = "", []
+    for m in mots:
+        m = " ".join(str(m).replace('"', "").split())
+        if not m:
+            continue
+        jeton = f'"{m}"' if " " in m else m
+        essai = f"{chaine} {jeton}".strip()
+        if len(essai) <= limite:
+            chaine = essai
+        else:
+            ecartes.append(m)
+    return chaine, ecartes
 
 
 # Rôles de contributeur usuels dans Esup-Pod

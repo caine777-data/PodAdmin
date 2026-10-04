@@ -1,0 +1,1189 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SousTitreur, correction</title>
+<style>
+/* Couleurs = charte de PodAdmin (voir charte.py) : une couleur = un sens.
+   --accent  C_ACTION, le SEUL bouton coloré de l'écran ;
+   --ok      T_SUCCES ; --alerte T_ALERTE (hors norme, avertissement) ;
+   --erreur  T_ERREUR (échec) ; surfaces S_FOND, S_CARTE, S_LIGNE, S_FILET.
+   Le thème clair ou sombre suit celui de l'application (data-theme). */
+:root{
+  --fond:#e0e0e0; --carte:#f5f5f5; --ligne:#e8e8e8; --texte:#1a1a1a; --doux:#5c5c5c; --bord:#cccccc;
+  --accent:#2563eb; --accent-surv:#1d4ed8; --lien:#1d4ed8; --accent-doux:#dbeafe;
+  --actif:#dbeafe; --actif-bord:#93c5fd;
+  --ok:#166534; --alerte:#92400e; --alerte-doux:#fef3c7; --erreur:#991b1b;
+  --st-fond:rgba(0,0,0,.8); --st-texte:#fff;
+  --entete:56px;
+}
+:root[data-theme="dark"]{
+  --fond:#1c1c1c; --carte:#2e2e2e; --ligne:#383838; --texte:#e5e5e5; --doux:#b3b3b3; --bord:#525252;
+  --accent:#2563eb; --accent-surv:#1d4ed8; --lien:#60a5fa; --accent-doux:#1e3a8a;
+  --actif:#1e3a8a; --actif-bord:#2563eb;
+  --ok:#4ade80; --alerte:#f59e0b; --alerte-doux:#3b2a0a; --erreur:#fca5a5;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --fond:#1c1c1c; --carte:#2e2e2e; --ligne:#383838; --texte:#e5e5e5; --doux:#b3b3b3; --bord:#525252;
+    --accent:#2563eb; --accent-surv:#1d4ed8; --lien:#60a5fa; --accent-doux:#1e3a8a;
+    --actif:#1e3a8a; --actif-bord:#2563eb;
+    --ok:#4ade80; --alerte:#f59e0b; --alerte-doux:#3b2a0a; --erreur:#fca5a5;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--fond);color:var(--texte);
+  font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--bord);background:var(--carte);
+  border-radius:8px;padding:6px 12px;white-space:nowrap}
+button:hover{border-color:var(--accent)}
+button.primaire{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primaire:hover{background:var(--accent-surv);border-color:var(--accent-surv)}
+button.alerte{background:#b45309;border-color:#b45309;color:#fff;font-weight:600}
+button.alerte:hover{background:#92400e;border-color:#92400e}
+button.discret{border-color:transparent;background:transparent;color:var(--doux)}
+button.discret:hover{color:var(--texte);border-color:var(--bord)}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+input[type=text],input[type=number],input:not([type]),select{border:1px solid var(--bord);
+  background:var(--carte);border-radius:8px;padding:6px 9px}
+
+/* ── En-tête ── */
+header{height:var(--entete);display:flex;align-items:center;gap:10px;padding:0 18px;
+  background:var(--carte);border-bottom:1px solid var(--bord)}
+header h1{font-size:15px;margin:0;font-weight:600;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;min-width:0}
+#etat{color:var(--doux);font-size:12.5px;white-space:nowrap}
+.espace{flex:1}
+#enr-pastille{font-size:12.5px;color:var(--lien);white-space:nowrap}
+
+/* ── Deux colonnes : la vidéo, le texte ── */
+main{display:grid;grid-template-columns:minmax(0,3fr) minmax(400px,2fr);gap:20px;
+  padding:18px;height:calc(100% - var(--entete))}
+@media (max-width:1000px){main{grid-template-columns:1fr;height:auto}}
+#gauche{display:flex;flex-direction:column;gap:10px;min-height:0}
+#ecran{position:relative;flex:0 0 auto;width:100%;aspect-ratio:16/9;max-height:calc(100vh - var(--entete) - 110px);
+  background:#000;border-radius:12px;overflow:hidden;container-type:inline-size}
+#ecran video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+#incruste{position:absolute;left:0;right:0;bottom:var(--st-bas,4%);text-align:center;
+  pointer-events:none;padding:0 6%;--st-taille:3.4cqi}
+#incruste span{display:inline;background:var(--st-fond);color:var(--st-texte);
+  font-size:max(12px,var(--st-taille));line-height:1.35;padding:.08em .35em;white-space:pre-wrap;
+  box-decoration-break:clone;-webkit-box-decoration-break:clone}
+#incruste.fond-semi span{background:rgba(0,0,0,.5)}
+#incruste.fond-aucun span{background:none;
+  text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 4px #000}
+#incruste.jaune span{color:#ffe14d}
+#incruste.taille-p{--st-taille:2.7cqi} #incruste.taille-g{--st-taille:4.4cqi}
+#message-media{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  color:#ddd;text-align:center;padding:20px}
+.commandes{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.commandes select{padding:5px 6px}
+#temps{font-variant-numeric:tabular-nums;color:var(--doux);font-size:13px;margin:0 6px}
+
+/* ── Colonne de droite ── */
+#droite{display:flex;flex-direction:column;min-height:0;background:var(--carte);
+  border:1px solid var(--bord);border-radius:12px;overflow:hidden}
+#onglets{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--bord);flex-wrap:wrap}
+#onglets button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;
+  padding:8px 12px;color:var(--doux);font-weight:500}
+#onglets button:hover{color:var(--texte)}
+#onglets button.choisi{color:var(--texte);border-bottom-color:var(--accent)}
+#onglets button[hidden]{display:none}
+.barre{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--bord);flex-wrap:wrap}
+.barre input[type=text]{flex:1;min-width:140px}
+.barre .resume{font-size:12.5px;color:var(--doux);white-space:nowrap}
+.barre .resume b{color:var(--texte)}
+.barre .resume b.a-revoir{color:var(--alerte)}
+#remplacement{display:none;gap:8px;align-items:center;padding:0 12px 10px;flex-wrap:wrap;border-bottom:1px solid var(--bord)}
+#remplacement.ouvert{display:flex}
+#remplacement input[type=text]{flex:1;min-width:140px}
+.panneau{flex:1;min-height:0;display:flex;flex-direction:column}
+.panneau[hidden]{display:none}
+.defile{flex:1;min-height:0;overflow:auto;padding:10px 12px 40vh}
+.puce{display:inline-flex;gap:6px;align-items:center;font-size:12.5px;cursor:pointer;
+  border:1px solid var(--bord);border-radius:20px;padding:4px 10px;white-space:nowrap}
+.puce:has(input:checked){border-color:var(--alerte);color:var(--alerte)}
+.puce input{margin:0}
+details.menu{position:relative}
+details.menu summary{list-style:none;cursor:pointer;border:1px solid var(--bord);border-radius:8px;
+  padding:6px 10px;font-size:13px;white-space:nowrap}
+details.menu summary::-webkit-details-marker{display:none}
+details.menu[open] summary{border-color:var(--accent)}
+details.menu .contenu{position:absolute;right:0;top:calc(100% + 4px);z-index:5;background:var(--carte);
+  border:1px solid var(--bord);border-radius:10px;padding:6px;min-width:260px;
+  box-shadow:0 8px 24px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:2px}
+details.menu .contenu button,details.menu .contenu label{text-align:left;border:none;background:none;
+  padding:8px 10px;border-radius:6px;display:flex;gap:8px;align-items:center;font-size:13.5px}
+details.menu .contenu button:hover,details.menu .contenu label:hover{background:var(--fond)}
+
+/* ── Sous-titres ── */
+#liste,#liste-tr{display:flex;flex-direction:column;gap:6px}
+.st{display:grid;grid-template-columns:34px 1fr;gap:6px;border:1px solid transparent;
+  border-radius:10px;padding:8px 8px 8px 4px}
+.st:hover{background:var(--ligne)}
+.st.actif{background:var(--actif);border-color:var(--actif-bord)}
+.st.alerte{box-shadow:inset 3px 0 0 var(--alerte)}
+.st.cache{display:none}
+.num{color:var(--doux);font-variant-numeric:tabular-nums;font-size:12px;padding-top:6px;
+  cursor:pointer;text-align:right}
+.num:hover{color:var(--lien)}
+.entete-st{display:flex;gap:6px;align-items:center;margin-bottom:4px;min-height:26px}
+.entete-st input.t{width:92px;font-variant-numeric:tabular-nums;font-size:12px;padding:2px 5px;
+  border-color:transparent;background:transparent;color:var(--doux)}
+.entete-st input.t:hover,.entete-st input.t:focus{border-color:var(--bord);background:var(--carte);color:var(--texte)}
+.duree{font-size:12px;color:var(--doux);font-variant-numeric:tabular-nums}
+.actions{margin-left:auto;display:flex;gap:2px;visibility:hidden}
+.st:hover .actions,.st:focus-within .actions{visibility:visible}
+.actions button{padding:2px 7px;font-size:12px;border-color:transparent;background:transparent;color:var(--doux)}
+.actions button:hover{border-color:var(--bord);background:var(--carte);color:var(--texte)}
+.corps-st{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+textarea{width:100%;resize:vertical;border:1px solid var(--bord);background:var(--carte);
+  border-radius:8px;padding:7px 9px;line-height:1.45;font-size:15px;min-height:54px;font-family:inherit}
+textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.compteurs{font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--doux);
+  display:flex;flex-direction:column;gap:3px;padding-top:9px;min-width:22px;text-align:right}
+.compteurs .trop{color:var(--alerte);font-weight:700}
+.badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.badges:empty{display:none}
+.badge{font-size:11.5px;padding:1px 8px;border-radius:10px;background:var(--alerte-doux);color:var(--alerte)}
+.source{font-size:13px;color:var(--doux);margin:0 0 4px;white-space:pre-wrap}
+
+/* ── Métadonnées et quiz ── */
+.formulaire{padding:16px 18px 40vh}
+.champ{display:flex;flex-direction:column;gap:5px;margin-bottom:16px}
+.champ>span{font-weight:600;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.champ>span small{font-weight:400;color:var(--doux)}
+.champ input[type=text]{width:100%}
+.champ textarea{font-size:14px}
+.question{border:1px solid var(--bord);border-radius:10px;padding:14px;margin-bottom:12px}
+.choix{display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;margin:5px 0}
+.choix input[type=text]{width:100%}
+.choix.bon input[type=text]{border-color:var(--ok);box-shadow:inset 3px 0 0 var(--ok)}
+.vide-panneau{color:var(--doux);padding:40px 24px;text-align:center;max-width:420px;margin:0 auto}
+.vide-panneau button{margin-top:12px}
+.note{font-size:12.5px;color:var(--doux);margin:8px 0 0}
+#enr-etat{font-size:13px;margin-top:10px}
+#enr-etat.erreur{color:var(--erreur)}
+.roue{display:inline-block;width:11px;height:11px;border:2px solid var(--bord);
+  border-top-color:var(--accent);border-radius:50%;animation:tourne 1s linear infinite;
+  vertical-align:-1px;margin-right:6px}
+@keyframes tourne{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.roue{animation:none}}
+
+/* ── Fenêtres ── */
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#222;
+  color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:20;max-width:90vw}
+dialog{border:1px solid var(--bord);border-radius:14px;background:var(--carte);color:var(--texte);
+  width:min(460px,92vw);padding:20px 22px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin:0 0 12px;font-size:17px}
+dialog label{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:9px 0}
+dialog input[type=number]{width:90px}
+dialog fieldset{border:1px solid var(--bord);border-radius:10px;margin:0 0 12px;padding:6px 12px}
+dialog legend{color:var(--doux);font-size:12.5px;padding:0 4px}
+dialog fieldset label{justify-content:flex-start;margin:7px 0}
+.avap{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 14px;align-items:start;font-size:13.5px}
+.avap .entete{font-size:12px;color:var(--doux);text-transform:uppercase;letter-spacing:.04em}
+.avap .champ-nom{display:flex;gap:8px;align-items:center;font-weight:600;white-space:nowrap;padding-top:6px}
+.avap .valeur{border:1px solid var(--bord);border-radius:8px;padding:6px 9px;max-height:130px;overflow:auto;
+  white-space:pre-wrap;min-height:34px}
+.avap .valeur.vide{color:var(--doux);font-style:italic}
+.avap .valeur.ancien{background:var(--fond)}
+.avap .info{grid-column:2 / 4;font-size:12px;color:var(--doux);margin-top:-2px}
+.pied{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+kbd{border:1px solid var(--bord);border-bottom-width:2px;border-radius:4px;padding:0 5px;
+  font-size:12px;background:var(--fond)}
+.aide{font-size:13px;display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:center}
+.aide span:nth-child(even){color:var(--doux)}
+a{color:var(--lien)}
+header .logo{background:#fff;border-radius:6px;padding:4px 8px;display:flex;align-items:center}
+header .logo img{height:22px;display:block}
+header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px solid var(--bord)}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo"><img id="logo" alt="Université de Toulouse"></span>
+  <span class="appli">SousTitreur</span>
+  <h1 id="titre">Chargement…</h1>
+  <span id="etat"></span>
+  <span class="espace"></span>
+  <span id="enr-pastille"></span>
+  <button class="discret" id="b-annuler" title="Annuler (Ctrl+Z hors zone de texte)" disabled>↶ Annuler</button>
+  <button class="discret" id="b-retablir" title="Rétablir" disabled>↷ Rétablir</button>
+  <button id="b-ouvrir-enrichir">Traduire et enrichir…</button>
+  <button id="b-publier" hidden title="Déposer les sous-titres sur la vidéo déjà présente sur Pod. La vidéo elle-même n'est pas modifiée.">Publier les sous-titres sur Pod…</button>
+  <button class="primaire" id="b-exporter">Exporter…</button>
+</header>
+
+<main>
+  <section id="gauche">
+    <div id="ecran">
+      <video id="video" preload="metadata" controls></video>
+      <div id="incruste"><span></span></div>
+      <div id="message-media"></div>
+    </div>
+    <div class="commandes">
+      <button id="b-prec" title="Sous-titre précédent (Alt+↑)">⏮</button>
+      <button id="b-lecture" title="Lecture / pause (Échap)">▶ Lecture</button>
+      <button id="b-suiv" title="Sous-titre suivant (Alt+↓)">⏭</button>
+      <span id="temps">00:00</span>
+      <select id="vitesse" title="Vitesse de lecture"><option value="0.75">× 0,75</option><option value="1" selected>× 1</option><option value="1.25">× 1,25</option><option value="1.5">× 1,5</option></select>
+      <label id="ap-langue-l" hidden><select id="ap-langue" title="Langue affichée sur la vidéo"></select></label>
+      <span class="espace"></span>
+      <button class="discret" id="b-apparence" title="Apparence des sous-titres sur la vidéo">Aa Apparence</button>
+      <button class="discret" id="b-aide" title="Raccourcis clavier">? Raccourcis</button>
+    </div>
+  </section>
+
+  <section id="droite">
+    <nav id="onglets">
+      <button data-onglet="st" class="choisi">Sous-titres</button>
+      <button data-onglet="tr" id="o-tr" hidden>Traduction</button>
+      <button data-onglet="meta">Métadonnées</button>
+      <button data-onglet="quiz">Quiz</button>
+    </nav>
+
+    <div class="panneau" id="pan-st">
+      <div class="barre">
+        <input type="text" id="r-cherche" placeholder="Rechercher dans le texte">
+        <button class="discret" id="b-remplacer" title="Rechercher et remplacer">Remplacer…</button>
+        <label class="puce" title="N'afficher que les sous-titres hors norme"><input type="checkbox" id="seulement-alertes"> À revoir</label>
+        <details class="menu">
+          <summary>Outils ▾</summary>
+          <div class="contenu">
+            <label><input type="checkbox" id="suivre" checked> Suivre la lecture dans la liste</label>
+            <button id="b-equilibrer-tout">Rééquilibrer les lignes trop longues</button>
+            <button id="b-redecouper">Refaire tout le découpage…</button>
+          </div>
+        </details>
+      </div>
+      <div id="remplacement">
+        <input type="text" id="r-remplace" placeholder="Remplacer par">
+        <label class="puce"><input type="checkbox" id="r-casse"> Casse</label>
+        <label class="puce"><input type="checkbox" id="r-mot"> Mot entier</label>
+        <span id="r-compte" class="duree"></span>
+        <button id="r-suivant">Suivant</button>
+        <button id="r-tout">Tout remplacer</button>
+      </div>
+      <div class="barre" style="padding:6px 12px"><div class="resume" id="resume"></div></div>
+      <div class="defile"><div id="liste"></div></div>
+    </div>
+    <div class="panneau" id="pan-tr" hidden><div class="defile"><div id="liste-tr"></div></div></div>
+    <div class="panneau" id="pan-meta" hidden><div class="defile formulaire" id="contenu-meta"></div></div>
+    <div class="panneau" id="pan-quiz" hidden><div class="defile formulaire" id="contenu-quiz"></div></div>
+  </section>
+</main>
+
+<dialog id="d-enrichir">
+  <form method="dialog">
+    <h3>Traduire et enrichir avec Aristote</h3>
+    <p class="note" style="margin-top:0">Aristote travaille sur vos sous-titres tels qu'ils sont maintenant. Terminez la relecture avant l'envoi : la traduction et le quiz profitent de vos corrections.</p>
+    <label>Traduire en <select id="enr-langue"><option value="">pas de traduction</option></select></label>
+    <label style="justify-content:flex-start"><input type="checkbox" id="enr-meta" checked> Titre, description et mots-clés</label>
+    <label style="justify-content:flex-start"><input type="checkbox" id="enr-quiz" checked> Quiz (exportable vers Moodle)</label>
+    <div id="enr-etat"></div>
+    <div class="pied">
+      <button value="fermer">Fermer</button>
+      <button type="button" class="primaire" id="b-enrichir">Envoyer</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="d-publier" style="width:min(560px,94vw)">
+  <form method="dialog">
+    <h3>Publier les sous-titres sur Pod</h3>
+    <p class="note" id="pub-video" style="margin-top:0"></p>
+    <div id="pub-lignes"><p class="note"><span class="roue"></span>Lecture des pistes présentes sur Pod…</p></div>
+    <p class="note" id="pub-alerte" style="color:var(--alerte)"></p>
+    <div id="pub-resultats"></div>
+    <div class="pied">
+      <button value="fermer" id="pub-fermer">Annuler</button>
+      <button type="button" class="primaire" id="pub-go" disabled>Publier</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="d-meta" style="width:min(860px,95vw)">
+  <form method="dialog">
+    <h3>Publier les métadonnées sur Pod</h3>
+    <p class="note" id="meta-video" style="margin-top:0"></p>
+    <div id="meta-tableau"><p class="note"><span class="roue"></span>Lecture des métadonnées actuelles sur Pod…</p></div>
+    <div id="meta-resultat"></div>
+    <div class="pied">
+      <button value="fermer" id="meta-fermer">Annuler</button>
+      <button type="button" class="primaire" id="meta-go" disabled>Publier les champs cochés</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="d-apparence">
+  <form method="dialog">
+    <h3>Apparence des sous-titres</h3>
+    <label>Fond
+      <select id="ap-fond">
+        <option value="">noir opaque (Pod aujourd'hui)</option>
+        <option value="fond-semi">noir semi-transparent</option>
+        <option value="fond-aucun">sans fond, contour noir</option>
+      </select>
+    </label>
+    <label>Couleur <select id="ap-couleur"><option value="">blanc</option><option value="jaune">jaune</option></select></label>
+    <label>Taille <select id="ap-taille"><option value="taille-p">petite</option><option value="" selected>moyenne</option><option value="taille-g">grande</option></select></label>
+    <label>Hauteur <input type="range" id="ap-bas" min="1" max="30" value="4"></label>
+    <p class="note">Ces réglages simulent le lecteur de videos.utoulouse.fr. Par défaut, il affiche du blanc sur fond noir opaque. Le spectateur peut changer fond, couleur et taille dans le menu des sous-titres, mais Pod ne mémorise pas ses choix. « Sans fond, contour noir » correspond à la feuille de style proposée pour le site, si ses administrateurs l'adoptent.</p>
+    <div class="pied"><button value="fermer">Fermer</button></div>
+  </form>
+</dialog>
+
+<dialog id="d-aide">
+  <form method="dialog">
+    <h3>Raccourcis clavier</h3>
+    <div class="aide">
+      <span><kbd>Échap</kbd></span><span>lecture / pause</span>
+      <span><kbd class="alt">Alt</kbd> <kbd>↑</kbd> <kbd>↓</kbd></span><span>sous-titre précédent / suivant</span>
+      <span><kbd class="alt">Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></span><span>reculer / avancer de 2 s</span>
+      <span><kbd class="mod">Ctrl</kbd> <kbd>Entrée</kbd></span><span>couper le sous-titre au curseur</span>
+      <span><kbd class="mod">Ctrl</kbd> <kbd>S</kbd></span><span>enregistrer</span>
+      <span>Clic sur le numéro</span><span>lire à partir de ce sous-titre</span>
+    </div>
+    <div class="pied"><button value="fermer">Fermer</button></div>
+  </form>
+</dialog>
+
+<dialog id="d-redecouper">
+  <form method="dialog">
+    <h3 style="margin-top:0">Refaire le découpage</h3>
+    <p style="color:var(--alerte)">Le découpage repart de la transcription d'origine : toutes vos corrections seront perdues.</p>
+    <label>Caractères par ligne <input type="number" id="p-cpl" min="20" max="80"></label>
+    <label>Lignes par sous-titre <input type="number" id="p-lignes" min="1" max="3"></label>
+    <label>Durée maximale (s) <input type="number" id="p-dmax" min="2" max="10" step="0.5"></label>
+    <label>Durée minimale (s) <input type="number" id="p-dmin" min="0.5" max="3" step="0.1"></label>
+    <label>Vitesse de lecture maximale (car./s) <input type="number" id="p-cps" min="10" max="30"></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button value="non">Annuler</button>
+      <button value="oui" class="alerte">Refaire le découpage</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="d-exporter">
+  <form method="dialog">
+    <h3 style="margin-top:0">Exporter</h3>
+    <fieldset><legend>Format des sous-titres</legend>
+      <label><input type="checkbox" id="x-vtt"> VTT (Pod, Moodle, web)</label>
+      <label><input type="checkbox" id="x-srt"> SRT (montage, YouTube)</label>
+    </fieldset>
+    <fieldset><legend>Langues</legend><div id="x-langues"></div></fieldset>
+    <fieldset id="x-autres"><legend>Enrichissements</legend>
+      <label><input type="checkbox" id="x-meta"> Métadonnées (fichier texte)</label>
+      <label><input type="checkbox" id="x-quiz"> Quiz au format Moodle (GIFT)</label>
+    </fieldset>
+    <p class="note">Les fichiers sont écrits à côté de la vidéo. Un fichier que SousTitreur n'a pas créé n'est jamais écrasé.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button value="non">Annuler</button>
+      <button value="oui" class="primaire">Exporter</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const PID = location.pathname.split("/").pop();
+const JETON = new URLSearchParams(location.search).get("t");
+const API = `/api/${PID}?t=${encodeURIComponent(JETON)}`;
+const apiAction = a => `/api/${PID}/${a}?t=${encodeURIComponent(JETON)}`;
+
+let S = [];            // sous-titres [{start,end,text}]
+let P = {};            // paramètres de découpage
+let actif = -1;
+let pile = [], pileRetablir = [];
+let minuterieSauvegarde = null, modifie = false;
+
+/* Mots après lesquels on évite de couper une ligne (miroir de sous_titres.py). */
+const FAIBLES = new Set(("le la les l' un une des du de d' au aux ce cet cette ces mon ma mes ton ta tes son sa ses notre nos votre vos leur leurs " +
+  "à en dans par pour sur sous avec sans chez vers entre contre depuis pendant selon après avant jusqu' " +
+  "et ou mais donc or ni car que qu' qui dont où si comme quand lorsque puisque parce " +
+  "je j' tu il elle on nous vous ils elles ne n' se s' me m' te t' y est sont a ont c'est " +
+  "the an of to in on at for with and but that which who is are was were").split(" "));
+
+/* ─────────── Outils temps ─────────── */
+function fmt(t){
+  t = Math.max(0, t); const h = Math.floor(t/3600), m = Math.floor(t%3600/60), s = t%60;
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${s.toFixed(3).padStart(6,"0")}`;
+}
+function fmtCourt(t){ const m = Math.floor(t/60), s = Math.floor(t%60); return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`; }
+function lire(v){
+  const p = String(v).trim().replace(",", ".").split(":").map(Number);
+  if (p.some(isNaN)) return null;
+  return p.reduce((acc, x) => acc*60 + x, 0);
+}
+function toast(msg, ms=3500){ const t=$("#toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._m); t._m=setTimeout(()=>t.style.display="none", ms); }
+
+/* ─────────── Contrôle (miroir de verifier()) ─────────── */
+function alertes(s){
+  const a = [], lignes = s.text.split("\n"), d = s.end - s.start;
+  if (lignes.length > P.lignes_max) a.push(`${lignes.length} lignes`);
+  lignes.forEach((l,i) => { if (l.length > P.car_par_ligne) a.push(`ligne ${i+1} : ${l.length} car.`); });
+  if (d < P.duree_min - 1e-6) a.push(`trop bref (${d.toFixed(1)} s)`);
+  if (d > P.duree_max + 1e-6) a.push(`trop long (${d.toFixed(1)} s)`);
+  const nb = s.text.replace(/\n/g,"").length;
+  if (d > 0 && nb/d > P.cps_max) a.push(`lecture rapide (${Math.round(nb/d)} car./s)`);
+  if (!s.text.trim()) a.push("vide");
+  return a;
+}
+
+/* ─────────── Équilibrage des lignes (miroir de couper_lignes) ─────────── */
+function coutCoupure(m, suivant){
+  const n = m.replace(/[»"”)  ]+$/,"");
+  const maj = x => x && x[0] !== x[0].toLowerCase();
+  if (maj(m) && maj(suivant) && !/[.?!…,;:]$/.test(n)) return 4;   // « George Doran »
+  if (/[.?!…]$/.test(n)) return -1;
+  if (/[,;:]$/.test(m)) return -0.6;
+  const b = m.toLowerCase().replace(/^[«"“(\[]+|[»"”)\]]+$/g,"");
+  if (FAIBLES.has(b) || /['’]$/.test(b)) return 3;
+  return 0;
+}
+function equilibrer(texte){
+  const mots = texte.replace(/\n/g," ").split(/ +/).filter(Boolean);
+  const plein = mots.join(" ");
+  if (plein.length <= P.car_par_ligne || mots.length < 2) return plein;
+  let meilleur = null;
+  // 2 lignes (cas courant)
+  for (let k = 1; k < mots.length; k++){
+    const a = mots.slice(0,k).join(" "), b = mots.slice(k).join(" ");
+    if (a.length > P.car_par_ligne || b.length > P.car_par_ligne) continue;
+    const c = coutCoupure(mots[k-1], mots[k]) + 2*Math.abs(a.length-b.length)/P.car_par_ligne + (a.length > b.length+8 ? .3 : 0);
+    if (!meilleur || c < meilleur.c) meilleur = {c, t: a + "\n" + b};
+  }
+  if (meilleur) return meilleur.t;
+  // Trop long pour 2 lignes : coupure gloutonne (le sous-titre restera signalé).
+  const lignes = []; let l = "";
+  for (const m of mots){ if ((l + " " + m).trim().length > P.car_par_ligne && l){ lignes.push(l); l = m; } else l = (l+" "+m).trim(); }
+  if (l) lignes.push(l);
+  return lignes.join("\n");
+}
+
+/* ─────────── Historique (annuler / rétablir) ─────────── */
+function memoriser(){
+  pile.push(JSON.stringify(S)); if (pile.length > 200) pile.shift();
+  pileRetablir = []; majBoutonsHisto();
+}
+function majBoutonsHisto(){ $("#b-annuler").disabled = !pile.length; $("#b-retablir").disabled = !pileRetablir.length; }
+function annuler(){ if (!pile.length) return; pileRetablir.push(JSON.stringify(S)); S = JSON.parse(pile.pop()); rendre(); aSauver(); majBoutonsHisto(); }
+function retablir(){ if (!pileRetablir.length) return; pile.push(JSON.stringify(S)); S = JSON.parse(pileRetablir.pop()); rendre(); aSauver(); majBoutonsHisto(); }
+
+/* ─────────── Rendu de la liste ─────────── */
+const liste = $("#liste");
+function htmlSt(s, i){
+  return `<div class="st" data-i="${i}">
+    <div class="num" title="Lire à partir d'ici">${i+1}</div>
+    <div>
+      <div class="entete-st">
+        <input class="t" data-c="start" value="${fmt(s.start)}" title="Début">
+        <span class="duree">→</span>
+        <input class="t" data-c="end" value="${fmt(s.end)}" title="Fin">
+        <span class="duree d"></span>
+        <span class="actions">
+          <button data-a="debut" title="Placer le début à la position de lecture">⇤ ici</button>
+          <button data-a="fin" title="Placer la fin à la position de lecture">ici ⇥</button>
+          <button data-a="equilibrer" title="Recalculer les retours à la ligne">≡</button>
+          <button data-a="couper" title="Couper à l'emplacement du curseur (Ctrl+Entrée)">✂</button>
+          <button data-a="fusion" title="Fusionner avec le suivant">⤓</button>
+          <button data-a="suppr" title="Supprimer">✕</button>
+        </span>
+      </div>
+      <div class="corps-st">
+        <textarea rows="2" spellcheck="true" lang="${document.documentElement.lang}"></textarea>
+        <div class="compteurs"></div>
+      </div>
+      <div class="badges"></div>
+    </div>
+  </div>`;
+}
+function rendre(){
+  liste.innerHTML = S.map(htmlSt).join("");
+  liste.querySelectorAll(".st").forEach((el, i) => { el.querySelector("textarea").value = S[i].text; majSt(i); });
+  actif = -1; majResume(); majIncruste(); filtrer();
+}
+function elSt(i){ return liste.children[i]; }
+function majSt(i){
+  const el = elSt(i), s = S[i]; if (!el) return;
+  const a = alertes(s);
+  el.classList.toggle("alerte", a.length > 0);
+  el.querySelector(".d").textContent = `${(s.end - s.start).toFixed(1)} s`;
+  el.querySelector(".compteurs").innerHTML = s.text.split("\n").map(l =>
+    `<span class="${l.length > P.car_par_ligne ? "trop" : ""}">${l.length}</span>`).join("");
+  el.querySelector(".badges").innerHTML = a.map(x => `<span class="badge">${x}</span>`).join("");
+  const ta = el.querySelector("textarea");
+  ta.rows = Math.max(2, s.text.split("\n").length);
+}
+function majResume(){
+  const n = S.length, revoir = S.filter(s => alertes(s).length).length;
+  $("#resume").innerHTML = `<b>${n}</b> sous-titres · <b class="${revoir ? "a-revoir" : ""}">${revoir}</b> à revoir · norme ${P.car_par_ligne} caractères × ${P.lignes_max} lignes`;
+}
+function filtrer(){
+  const seul = $("#seulement-alertes").checked;
+  S.forEach((s,i) => elSt(i).classList.toggle("cache", seul && !alertes(s).length));
+}
+
+/* ─────────── Édition ─────────── */
+let focusMemorise = null;
+liste.addEventListener("focusin", e => {
+  if (e.target.tagName === "TEXTAREA" || e.target.classList.contains("t")){
+    const i = +e.target.closest(".st").dataset.i;
+    if (focusMemorise !== i){ memoriser(); focusMemorise = i; }
+  }
+});
+liste.addEventListener("focusout", () => { focusMemorise = null; });
+liste.addEventListener("input", e => {
+  const el = e.target.closest(".st"); if (!el) return;
+  const i = +el.dataset.i;
+  if (e.target.tagName === "TEXTAREA"){ S[i].text = e.target.value; majSt(i); majResume(); majIncruste(true); aSauver(); }
+});
+liste.addEventListener("change", e => {
+  if (!e.target.classList.contains("t")) return;
+  const i = +e.target.closest(".st").dataset.i, v = lire(e.target.value);
+  if (v === null){ e.target.value = fmt(S[i][e.target.dataset.c]); toast("Horaire illisible : utilisez le format 00:01:23.450"); return; }
+  S[i][e.target.dataset.c] = v;
+  if (S[i].end <= S[i].start) S[i].end = S[i].start + 0.5;
+  e.target.value = fmt(v); majSt(i); majResume(); aSauver();
+});
+liste.addEventListener("click", e => {
+  const el = e.target.closest(".st"); if (!el) return;
+  const i = +el.dataset.i;
+  if (e.target.classList.contains("num")){ allerA(i, true); return; }
+  const a = e.target.dataset.a; if (!a) return;
+  const v = $("#video");
+  if (a === "debut"){ memoriser(); S[i].start = v.currentTime; if (S[i].end <= S[i].start) S[i].end = S[i].start + 1; rafraichirLigne(i); }
+  if (a === "fin"){ memoriser(); S[i].end = Math.max(v.currentTime, S[i].start + 0.2); rafraichirLigne(i); }
+  if (a === "equilibrer"){ memoriser(); S[i].text = equilibrer(S[i].text); rafraichirLigne(i); }
+  if (a === "couper") couper(i, el.querySelector("textarea").selectionStart);
+  if (a === "fusion") fusionner(i);
+  if (a === "suppr"){ memoriser(); S.splice(i,1); rendre(); aSauver(); }
+});
+function rafraichirLigne(i){
+  const el = elSt(i);
+  el.querySelector("textarea").value = S[i].text;
+  el.querySelector('[data-c="start"]').value = fmt(S[i].start);
+  el.querySelector('[data-c="end"]').value = fmt(S[i].end);
+  majSt(i); majResume(); majIncruste(true); aSauver();
+}
+function couper(i, pos){
+  const s = S[i], t = s.text;
+  if (pos === undefined || pos <= 0 || pos >= t.length){ toast("Placez le curseur dans le texte, à l'endroit de la coupure."); return; }
+  memoriser();
+  const a = t.slice(0,pos).trim(), b = t.slice(pos).trim();
+  const ratio = a.replace(/\n/g,"").length / Math.max(1, (a+b).replace(/\n/g,"").length);
+  const milieu = s.start + (s.end - s.start) * ratio;
+  S.splice(i, 1, {start: s.start, end: milieu - 0.04, text: equilibrer(a)}, {start: milieu + 0.04, end: s.end, text: equilibrer(b)});
+  rendre(); aSauver();
+  elSt(i+1).querySelector("textarea").focus();
+}
+function fusionner(i){
+  if (i >= S.length - 1) return;
+  memoriser();
+  const a = S[i], b = S[i+1];
+  S.splice(i, 2, {start: a.start, end: b.end, text: equilibrer(a.text + " " + b.text)});
+  rendre(); aSauver();
+  elSt(i).querySelector("textarea").focus();
+}
+
+/* ─────────── Enregistrement ─────────── */
+function aSauver(){
+  modifie = true; $("#etat").textContent = "Modifications non enregistrées…";
+  clearTimeout(minuterieSauvegarde); minuterieSauvegarde = setTimeout(sauver, 1500);
+}
+async function sauver(){
+  clearTimeout(minuterieSauvegarde);
+  if (!modifie) return true;
+  try{
+    const r = await fetch(API, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({sous_titres: S})});
+    if (!r.ok) throw new Error((await r.json()).erreur || r.status);
+    modifie = false; $("#etat").textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR");
+    return true;
+  }catch(err){ $("#etat").textContent = "Échec de l'enregistrement : " + err.message; return false; }
+}
+window.addEventListener("beforeunload", e => { if (modifie){ sauver(); e.preventDefault(); e.returnValue = ""; } });
+
+$("#b-exporter").onclick = () => {
+  const trad = Object.keys(E.traductions || {}).filter(l => (E.traductions[l] || []).length);
+  $("#x-langues").innerHTML = `<label><input type="checkbox" checked disabled> ${nomLangue(LANGUE)} (sous-titres corrigés)</label>` +
+    trad.map(l => `<label><input type="checkbox" class="x-lg" value="${l}" checked> ${nomLangue(l)} (traduction)</label>`).join("") +
+    (trad.length ? "" : `<p class="note" style="margin:4px 0">Aucune traduction : voir « Traduire et enrichir ».</p>`);
+  const meta = E.metadonnees && E.metadonnees.titre, quiz = (E.quiz || []).length > 0;
+  $("#x-meta").checked = !!meta; $("#x-meta").disabled = !meta;
+  $("#x-quiz").checked = quiz; $("#x-quiz").disabled = !quiz;
+  $("#d-exporter").showModal();
+};
+$("#d-exporter").addEventListener("close", async () => {
+  if ($("#d-exporter").returnValue !== "oui") return;
+  const formats = [];
+  if ($("#x-vtt").checked) formats.push("vtt");
+  if ($("#x-srt").checked) formats.push("srt");
+  if (!formats.length){ toast("Cochez au moins un format."); return; }
+  const revoir = S.filter(s => alertes(s).length).length;
+  if (revoir && !confirm(`${revoir} sous-titre(s) ne respectent pas encore la norme. Exporter quand même ?`)) return;
+  await sauver(); await sauverEnrichissement();
+  const corps = {formats, sous_titres: S,
+    langues: [...document.querySelectorAll(".x-lg:checked")].map(x => x.value),
+    metadonnees: $("#x-meta").checked, quiz: $("#x-quiz").checked};
+  const r = await fetch(apiAction("exporter"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(corps)});
+  const d = await r.json();
+  if (!r.ok){ toast("Échec de l'export : " + d.erreur, 6000); return; }
+  toast(`${d.fichiers.length} fichier(s) créé(s) : ` + d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; "), 9000);
+  $("#etat").textContent = "Exporté à " + new Date().toLocaleTimeString("fr-FR");
+});
+
+/* ─────────── Vidéo et incrustation ─────────── */
+const video = $("#video");
+function trouver(t, A = S){
+  let g = 0, d = A.length - 1;
+  while (g <= d){ const m = (g+d) >> 1; if (A[m].end < t) g = m+1; else if (A[m].start > t) d = m-1; else return m; }
+  return -1;
+}
+function majIncruste(force){
+  const i = trouver(video.currentTime);
+  // Langue affichée dans l'aperçu : l'original ou une traduction.
+  const lg = $("#ap-langue").value, A = lg && lg !== LANGUE && E.traductions && E.traductions[lg] ? E.traductions[lg] : S;
+  const j = A === S ? i : trouver(video.currentTime, A);
+  $("#incruste span").textContent = j >= 0 ? A[j].text : "";
+  $("#incruste span").style.display = j >= 0 && A[j].text ? "" : "none";
+  if (ongletCourant === "tr") majActifTraduction(j);
+  if (i !== actif || force){
+    if (actif >= 0 && elSt(actif)) elSt(actif).classList.remove("actif");
+    actif = i;
+    if (i >= 0 && elSt(i)){
+      elSt(i).classList.add("actif");
+      const edition = document.activeElement && document.activeElement.closest && document.activeElement.closest(".st");
+      if ($("#suivre").checked && !video.paused && !edition) elSt(i).scrollIntoView({block:"center", behavior:"smooth"});
+    }
+  }
+  $("#temps").textContent = fmtCourt(video.currentTime) + (video.duration ? " / " + fmtCourt(video.duration) : "");
+}
+video.addEventListener("timeupdate", () => majIncruste());
+video.addEventListener("seeked", () => majIncruste());
+video.addEventListener("play", () => $("#b-lecture").textContent = "⏸ Pause");
+video.addEventListener("pause", () => $("#b-lecture").textContent = "▶ Lecture");
+function basculer(){ video.paused ? video.play() : video.pause(); }
+function allerA(i, jouer){
+  if (i < 0 || i >= S.length) return;
+  video.currentTime = S[i].start + 0.01;
+  elSt(i).scrollIntoView({block:"center"});
+  if (jouer) video.play();
+}
+$("#b-lecture").onclick = basculer;
+$("#b-prec").onclick = () => allerA(Math.max(0, (actif >= 0 ? actif : trouverApres(video.currentTime)) - 1), false);
+$("#b-suiv").onclick = () => allerA((actif >= 0 ? actif : trouverApres(video.currentTime) - 1) + 1, false);
+$("#vitesse").onchange = e => video.playbackRate = +e.target.value;
+function trouverApres(t){ const i = S.findIndex(s => s.start > t); return i < 0 ? S.length : i; }
+
+/* Raccourcis identiques sous Windows et macOS. Sur Mac, Ctrl+↑/↓ et Ctrl+Espace
+   sont pris par le système (Mission Control, changement de clavier) : on
+   propose donc Échap et Alt (⌥), et ⌘ remplace Ctrl. */
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+document.addEventListener("keydown", e => {
+  const mod = e.ctrlKey || e.metaKey, saisie = e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT";
+  if (e.key === "Escape" && !document.querySelector("dialog[open]")){ e.preventDefault(); basculer(); }
+  else if (e.ctrlKey && e.code === "Space"){ e.preventDefault(); basculer(); }
+  else if ((e.altKey || e.ctrlKey) && e.key === "ArrowUp"){ e.preventDefault(); $("#b-prec").click(); }
+  else if ((e.altKey || e.ctrlKey) && e.key === "ArrowDown"){ e.preventDefault(); $("#b-suiv").click(); }
+  else if (e.altKey && e.key === "ArrowLeft"){ e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 2); }
+  else if (e.altKey && e.key === "ArrowRight"){ e.preventDefault(); video.currentTime += 2; }
+  else if (mod && e.key.toLowerCase() === "s"){ e.preventDefault(); sauver(); }
+  else if (mod && e.key === "Enter" && e.target.tagName === "TEXTAREA"){
+    e.preventDefault(); couper(+e.target.closest(".st").dataset.i, e.target.selectionStart);
+  }
+  else if (mod && !e.shiftKey && e.key.toLowerCase() === "z" && !saisie){ e.preventDefault(); annuler(); }
+  else if (mod && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z")) && !saisie){ e.preventDefault(); retablir(); }
+});
+if (MAC){
+  document.querySelectorAll("kbd.mod").forEach(k => k.textContent = "⌘");
+  document.querySelectorAll("kbd.alt").forEach(k => k.textContent = "⌥");
+  document.querySelectorAll("[title]").forEach(el => el.title = el.title.replace(/Ctrl\+/g, "⌘").replace(/Alt\+/g, "⌥"));
+}
+$("#b-annuler").onclick = annuler;
+$("#b-retablir").onclick = retablir;
+
+/* ─────────── Rechercher / remplacer ─────────── */
+function motif(){
+  const q = $("#r-cherche").value; if (!q) return null;
+  let src = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if ($("#r-mot").checked) src = `(?<![\\p{L}\\p{N}])${src}(?![\\p{L}\\p{N}])`;
+  return new RegExp(src, "gu" + ($("#r-casse").checked ? "" : "i"));
+}
+function compter(){
+  const m = motif(); if (!m){ $("#r-compte").textContent = ""; return; }
+  let n = 0; S.forEach(s => n += (s.text.replace(/\n/g," ").match(m) || []).length);
+  $("#r-compte").textContent = n + " trouvé(s)";
+}
+["#r-cherche","#r-casse","#r-mot"].forEach(s => $(s).addEventListener("input", compter));
+let posRecherche = -1;
+$("#r-suivant").onclick = () => {
+  const m = motif(); if (!m) return;
+  for (let k = 1; k <= S.length; k++){
+    const i = (posRecherche + k) % S.length; m.lastIndex = 0;
+    if (m.test(S[i].text)){
+      posRecherche = i; const ta = elSt(i).querySelector("textarea");
+      elSt(i).classList.remove("cache"); ta.focus();
+      m.lastIndex = 0; const r = m.exec(ta.value); if (r) ta.setSelectionRange(r.index, r.index + r[0].length);
+      video.currentTime = S[i].start + 0.01; return;
+    }
+  }
+  toast("Aucune occurrence.");
+};
+$("#r-tout").onclick = () => {
+  const m = motif(); if (!m) return;
+  let n = 0; memoriser();
+  S.forEach(s => { const t = s.text.replace(m, () => { n++; return $("#r-remplace").value; }); s.text = t.split("\n").some(l => l.length > P.car_par_ligne) ? equilibrer(t) : t; });
+  rendre(); aSauver(); compter(); toast(n + " remplacement(s).");
+};
+
+/* ─────────── Contrôle global ─────────── */
+$("#seulement-alertes").onchange = filtrer;
+$("#b-equilibrer-tout").onclick = () => {
+  memoriser(); let n = 0;
+  S.forEach(s => { if (s.text.split("\n").some(l => l.length > P.car_par_ligne) || s.text.split("\n").length > P.lignes_max){ s.text = equilibrer(s.text); n++; } });
+  rendre(); aSauver(); toast(n + " sous-titre(s) rééquilibré(s).");
+};
+$("#b-redecouper").onclick = () => {
+  $("#p-cpl").value = P.car_par_ligne; $("#p-lignes").value = P.lignes_max; $("#p-dmax").value = P.duree_max;
+  $("#p-dmin").value = P.duree_min; $("#p-cps").value = P.cps_max;
+  $("#d-redecouper").showModal();
+};
+$("#d-redecouper").addEventListener("close", async () => {
+  if ($("#d-redecouper").returnValue !== "oui") return;
+  memoriser();
+  const parametres = {car_par_ligne: +$("#p-cpl").value, lignes_max: +$("#p-lignes").value,
+    duree_max: +$("#p-dmax").value, duree_min: +$("#p-dmin").value, cps_max: +$("#p-cps").value};
+  const r = await fetch(apiAction("redecouper"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({parametres})});
+  const d = await r.json();
+  if (!r.ok){ toast("Échec : " + d.erreur); return; }
+  S = d.sous_titres; P = d.parametres; modifie = false; rendre();
+  $("#etat").textContent = "Découpage refait (Annuler pour revenir en arrière)";
+});
+
+/* ═══════════ Onglets ═══════════ */
+let ongletCourant = "st";
+document.querySelectorAll("#onglets button").forEach(b => b.onclick = () => montrerOnglet(b.dataset.onglet));
+function montrerOnglet(o){
+  ongletCourant = o;
+  document.querySelectorAll("#onglets button").forEach(b => b.classList.toggle("choisi", b.dataset.onglet === o));
+  ["st","tr","meta","quiz"].forEach(x => $("#pan-" + x).hidden = x !== o);
+  if (o === "tr" && $("#ap-langue").value === LANGUE){ $("#ap-langue").value = langueTraduite(); majIncruste(true); }
+  if (o === "st" && $("#ap-langue").value !== LANGUE){ $("#ap-langue").value = LANGUE; majIncruste(true); }
+  document.querySelectorAll(".defile").forEach(d => d.scrollTop = 0);
+}
+
+/* ═══════════ Enrichissement : traduction, métadonnées, quiz ═══════════ */
+let E = {}, LANGUE = "fr", LANGUES = [], suiviEnr = null, minuterieEnr = null;
+const NOMS = {fr:"Français", en:"Anglais", pt:"Portugais", es:"Espagnol", de:"Allemand", it:"Italien"};
+const nomLangue = c => (LANGUES.find(l => l.code === c) || {}).name || NOMS[c] || c;
+const langueTraduite = () => Object.keys(E.traductions || {}).find(l => (E.traductions[l] || []).length) || "";
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function majCarteEnrichir(){
+  const el = $("#enr-etat"), cours = E.etat === "en_cours";
+  $("#b-enrichir").disabled = cours;
+  el.className = E.etat === "erreur" ? "erreur" : "";
+  if (cours) el.innerHTML = `<span class="roue"></span>${esc(E.detail || "En cours")}… Vous pouvez continuer à travailler.`;
+  else if (E.etat === "erreur") el.textContent = "Échec : " + (E.erreur || "cause inconnue");
+  else if (E.etat === "termine") el.textContent = "Terminé. Résultats dans les onglets " +
+    [langueTraduite() && "Traduction", E.metadonnees && E.metadonnees.titre && "Métadonnées", (E.quiz || []).length && "Quiz"].filter(Boolean).join(", ") + ".";
+  else el.textContent = "";
+  $("#enr-pastille").innerHTML = cours ? `<span class="roue"></span>Aristote : ${esc(E.detail || "en cours")}` : "";
+}
+$("#b-enrichir").onclick = async () => {
+  const traduire_vers = $("#enr-langue").value, metadonnees = $("#enr-meta").checked, quiz = $("#enr-quiz").checked;
+  if (!traduire_vers && !metadonnees && !quiz){ toast("Choisissez au moins une langue, les métadonnées ou le quiz."); return; }
+  const deja = (traduire_vers && (E.traductions || {})[traduire_vers]) || (metadonnees && E.metadonnees && E.metadonnees.titre) || (quiz && (E.quiz || []).length);
+  if (deja && !confirm("Les résultats précédents seront remplacés, y compris vos corrections dans ces onglets. Continuer ?")) return;
+  await sauver();
+  $("#b-enrichir").disabled = true;
+  const r = await fetch(apiAction("enrichir"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({traduire_vers, metadonnees, quiz})});
+  const d = await r.json();
+  if (!r.ok){ $("#b-enrichir").disabled = false; toast("Envoi refusé : " + d.erreur, 7000); return; }
+  E = d; majCarteEnrichir(); suivreEnrichissement();
+};
+function suivreEnrichissement(){
+  clearInterval(suiviEnr);
+  suiviEnr = setInterval(async () => {
+    const r = await fetch(apiAction("enrichissement")); if (!r.ok) return;
+    const d = await r.json();
+    if (d.etat === "en_cours"){ E.detail = d.detail; majCarteEnrichir(); return; }
+    clearInterval(suiviEnr); E = d; majCarteEnrichir(); afficherEnrichissement();
+    if (d.etat === "termine"){
+      // La fenêtre se ferme d'elle-même et l'on arrive sur les résultats.
+      if ($("#d-enrichir").open) $("#d-enrichir").close();
+      montrerOnglet(E.metadonnees && E.metadonnees.titre ? "meta" : langueTraduite() ? "tr" : (E.quiz || []).length ? "quiz" : "st");
+      toast("Aristote a terminé : relisez les résultats.", 5000);
+    }
+  }, 5000);
+}
+function aSauverEnrichissement(){ clearTimeout(minuterieEnr); minuterieEnr = setTimeout(sauverEnrichissement, 1200); $("#etat").textContent = "Modifications non enregistrées…"; }
+async function sauverEnrichissement(){
+  clearTimeout(minuterieEnr);
+  const r = await fetch(apiAction("enrichissement"), {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({metadonnees: E.metadonnees || {}, quiz: E.quiz || [], traductions: E.traductions || {}})});
+  if (r.ok) $("#etat").textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR");
+}
+function afficherEnrichissement(){
+  const lg = langueTraduite();
+  $("#o-tr").hidden = !lg;
+  if (lg) $("#o-tr").textContent = "Traduction : " + nomLangue(lg);
+  $("#ap-langue-l").hidden = !lg;
+  $("#ap-langue").innerHTML = [LANGUE, ...Object.keys(E.traductions || {})].map(l => `<option value="${l}">${nomLangue(l)}</option>`).join("");
+  rendreTraduction(); rendreMeta(); rendreQuiz();
+}
+
+/* ─────────── Onglet Traduction ─────────── */
+const listeTr = $("#liste-tr");
+function rendreTraduction(){
+  const lg = langueTraduite(), T = lg ? E.traductions[lg] : [];
+  listeTr.innerHTML = T.map((s, i) => `<div class="st" data-i="${i}">
+    <div class="num" title="Lire à partir d'ici">${i+1}</div>
+    <div>
+      <div class="entete-st"><span class="duree">${fmt(s.start)} → ${fmt(s.end)}</span>
+        <span class="actions"><button data-a="equilibrer" title="Recalculer les retours à la ligne">≡</button></span></div>
+      <p class="source">${esc(S.filter(o => o.start < s.end - 0.05 && o.end > s.start + 0.05).map(o => o.text.replace(/\n/g, " ")).join(" "))}</p>
+      <div class="corps-st"><textarea rows="2" lang="${lg}"></textarea><div class="compteurs"></div></div>
+      <div class="badges"></div>
+    </div></div>`).join("");
+  listeTr.querySelectorAll(".st").forEach((el, i) => { el.querySelector("textarea").value = T[i].text; majStTr(i); });
+}
+function majStTr(i){
+  const T = E.traductions[langueTraduite()], el = listeTr.children[i], s = T[i], a = alertes(s);
+  el.classList.toggle("alerte", a.length > 0);
+  el.querySelector(".compteurs").innerHTML = s.text.split("\n").map(l => `<span class="${l.length > P.car_par_ligne ? "trop" : ""}">${l.length}</span>`).join("");
+  el.querySelector(".badges").innerHTML = a.map(x => `<span class="badge">${x}</span>`).join("");
+}
+listeTr.addEventListener("input", e => {
+  if (e.target.tagName !== "TEXTAREA") return;
+  const i = +e.target.closest(".st").dataset.i;
+  E.traductions[langueTraduite()][i].text = e.target.value; majStTr(i); majIncruste(true); aSauverEnrichissement();
+});
+listeTr.addEventListener("click", e => {
+  const el = e.target.closest(".st"); if (!el) return;
+  const i = +el.dataset.i, T = E.traductions[langueTraduite()];
+  if (e.target.classList.contains("num")){ video.currentTime = T[i].start + 0.01; video.play(); }
+  if (e.target.dataset.a === "equilibrer"){ T[i].text = equilibrer(T[i].text); el.querySelector("textarea").value = T[i].text; majStTr(i); majIncruste(true); aSauverEnrichissement(); }
+});
+let actifTr = -1;
+function majActifTraduction(j){
+  if (j === actifTr) return;
+  if (listeTr.children[actifTr]) listeTr.children[actifTr].classList.remove("actif");
+  actifTr = j;
+  const el = listeTr.children[j]; if (!el) return;
+  el.classList.add("actif");
+  if ($("#suivre").checked && !video.paused && !(document.activeElement && document.activeElement.closest && document.activeElement.closest("#liste-tr")))
+    el.scrollIntoView({block:"center", behavior:"smooth"});
+}
+
+/* ─────────── Onglet Métadonnées ─────────── */
+let LISTES = {disciplines: [], types: []};
+/* Options d'une liste déroulante. Une valeur absente de la liste (proposée
+   par Aristote mais inconnue de Pod) est conservée, signalée comme telle. */
+function options(choix, valeur){
+  const liste = [...(choix || [])];
+  let html = `<option value="">(aucune)</option>`;
+  if (valeur && !liste.includes(valeur)) html += `<option value="${esc(valeur)}">${esc(valeur)} (hors liste)</option>`;
+  return html + liste.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+}
+function rendreMeta(){
+  const m = E.metadonnees || {}, p = $("#contenu-meta");
+  if (!m.titre && !m.description){
+    p.innerHTML = `<div class="vide-panneau">Pas encore de métadonnées. Aristote peut proposer un titre, une description et des mots-clés à partir de vos sous-titres corrigés.<br><button class="primaire" onclick="ouvrirEnrichir()">Traduire et enrichir…</button></div>`;
+    return;
+  }
+  p.innerHTML = `
+    <label class="champ"><span>Titre <small id="n-titre"></small></span><input type="text" data-m="titre"></label>
+    <label class="champ"><span>Description <small id="n-description"></small></span><textarea data-m="description" rows="7" style="font-size:14px"></textarea></label>
+    <label class="champ"><span>Mots-clés <small>un par ligne</small></span><textarea data-m="mots_cles" rows="6" style="font-size:14px"></textarea></label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <label class="champ"><span>Discipline</span><select data-m="discipline">${options(LISTES.disciplines, m.discipline)}</select></label>
+      <label class="champ"><span>Type</span><select data-m="type">${options(LISTES.types, m.type)}</select></label>
+    </div>
+    <div class="ligne-outil" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      ${POD ? `<button type="button" class="primaire" onclick="ouvrirMetaPod()">Publier les métadonnées sur Pod…</button>` : ""}
+      <button id="b-copier-meta">Copier le tout</button>
+      <span class="note" style="margin:0">${POD ? "Vous choisirez champ par champ ce qui change sur Pod." : "Pour coller dans Pod : titre, description et mots-clés de la vidéo."}</span></div>`;
+  p.querySelectorAll("[data-m]").forEach(el => {
+    const k = el.dataset.m; el.value = k === "mots_cles" ? (m.mots_cles || []).join("\n") : (m[k] || "");
+  });
+  compterMeta();
+  $("#b-copier-meta").onclick = async () => {
+    const t = `${m.titre}\n\n${m.description}\n\nMots-clés : ${(m.mots_cles || []).join(", ")}`;
+    try { await navigator.clipboard.writeText(t); toast("Copié dans le presse-papiers."); } catch { toast("Copie impossible : sélectionnez le texte à la main."); }
+  };
+}
+function compterMeta(){
+  const m = E.metadonnees || {};
+  if ($("#n-titre")) $("#n-titre").textContent = (m.titre || "").length + " caractères";
+  if ($("#n-description")) $("#n-description").textContent = (m.description || "").length + " caractères";
+}
+$("#pan-meta").addEventListener("input", e => {
+  const k = e.target.dataset.m; if (!k) return;
+  E.metadonnees[k] = k === "mots_cles" ? e.target.value.split("\n").map(x => x.trim()).filter(Boolean) : e.target.value;
+  compterMeta(); aSauverEnrichissement();
+});
+
+/* ─────────── Onglet Quiz ─────────── */
+function rendreQuiz(){
+  const Q = E.quiz || [], p = $("#contenu-quiz");
+  if (!Q.length){
+    p.innerHTML = `<div class="vide-panneau">Pas encore de quiz. Aristote peut rédiger des questions à partir de vos sous-titres corrigés, exportables vers Moodle.<br><button class="primaire" onclick="ouvrirEnrichir()">Traduire et enrichir…</button></div>`;
+    return;
+  }
+  p.innerHTML = Q.map((q, i) => `<div class="question" data-q="${i}">
+    <label class="champ"><span>Question ${i+1}<button data-a="suppr-q" title="Supprimer la question">✕</button></span>
+      <textarea data-c="question" rows="2" style="font-size:14px"></textarea></label>
+    <div class="champ"><span>Réponses <small>cochez la bonne réponse</small></span>
+      ${q.choix.map((c, k) => `<div class="choix ${c.correct ? "bon" : ""}" data-k="${k}">
+        <input type="radio" name="bon-${i}" ${c.correct ? "checked" : ""} title="Bonne réponse">
+        <input type="text" data-c="choix">
+        <button data-a="suppr-c" title="Supprimer cette réponse">✕</button></div>`).join("")}
+      <div><button data-a="ajout-c">+ Ajouter une réponse</button></div>
+    </div>
+    <label class="champ"><span>Explication <small>affichée après la réponse</small></span>
+      <textarea data-c="explication" rows="3" style="font-size:14px"></textarea></label>
+  </div>`).join("") + `<div class="ligne-outil"><button data-a="ajout-q">+ Ajouter une question</button>
+    <span class="note" style="margin:0">Export : fichier GIFT, à importer dans la banque de questions de Moodle.</span></div>`;
+  p.querySelectorAll(".question").forEach(el => {
+    const q = Q[+el.dataset.q];
+    el.querySelector('[data-c="question"]').value = q.question;
+    el.querySelector('[data-c="explication"]').value = q.explication || "";
+    el.querySelectorAll(".choix").forEach(c => c.querySelector('[data-c="choix"]').value = q.choix[+c.dataset.k].texte);
+  });
+}
+$("#pan-quiz").addEventListener("input", e => {
+  const qe = e.target.closest(".question"); if (!qe) return;
+  const q = E.quiz[+qe.dataset.q], c = e.target.dataset.c;
+  if (c === "question" || c === "explication") q[c] = e.target.value;
+  if (c === "choix") q.choix[+e.target.closest(".choix").dataset.k].texte = e.target.value;
+  if (e.target.type === "radio"){
+    const k = +e.target.closest(".choix").dataset.k;
+    q.choix.forEach((x, n) => x.correct = n === k);
+    qe.querySelectorAll(".choix").forEach((x, n) => x.classList.toggle("bon", n === k));
+  }
+  aSauverEnrichissement();
+});
+$("#pan-quiz").addEventListener("click", e => {
+  const a = e.target.dataset.a; if (!a) return;
+  e.preventDefault();
+  const qe = e.target.closest(".question"), q = qe && E.quiz[+qe.dataset.q];
+  if (a === "suppr-q" && confirm("Supprimer cette question ?")) E.quiz.splice(+qe.dataset.q, 1);
+  if (a === "suppr-c") q.choix.splice(+e.target.closest(".choix").dataset.k, 1);
+  if (a === "ajout-c") q.choix.push({texte: "", correct: false});
+  if (a === "ajout-q") E.quiz.push({question: "", explication: "", choix: [{texte: "", correct: true}, {texte: "", correct: false}]});
+  rendreQuiz(); aSauverEnrichissement();
+});
+
+/* ─────────── Apparence de l'aperçu (mémorisée dans ce navigateur) ─────────── */
+const AP = ["ap-fond", "ap-couleur", "ap-taille", "ap-bas"];
+function appliquerApparence(){
+  const inc = $("#incruste");
+  inc.className = [$("#ap-fond").value, $("#ap-couleur").value, $("#ap-taille").value].filter(Boolean).join(" ");
+  inc.style.setProperty("--st-bas", $("#ap-bas").value + "%");
+  try { localStorage.setItem("soustitreur-apparence", JSON.stringify(Object.fromEntries(AP.map(k => [k, $("#" + k).value])))); } catch {}
+}
+try { const m = JSON.parse(localStorage.getItem("soustitreur-apparence") || "{}"); AP.forEach(k => { if (m[k] !== undefined) $("#" + k).value = m[k]; }); } catch {}
+AP.forEach(k => $("#" + k).addEventListener("input", appliquerApparence));
+$("#ap-langue").addEventListener("change", () => majIncruste(true));
+appliquerApparence();
+
+/* ─────────── Publication sur Pod (étape 2) ─────────── */
+let POD = null, PISTES_POD = [];
+const TYPES_PISTE = {subtitles: "Sous-titres", captions: "Légendes (sourds et malentendants)"};
+function sourcesPubliables(){
+  // Rangement imposé (décision de Cédric) : l'original corrigé TOUJOURS en
+  // français, chaque traduction dans SA langue. Aucun choix de langue n'est
+  // proposé ; le serveur applique la même règle (editeur.publier_pod).
+  const s = [{source: "original", lang: "fr", libelle: "Sous-titres corrigés", n: S.length,
+              revoir: S.filter(x => alertes(x).length).length}];
+  Object.keys(E.traductions || {}).forEach(l => { const T = E.traductions[l] || []; if (T.length && l !== "fr")
+    s.push({source: l, lang: l, libelle: `Traduction en ${nomLangue(l).toLowerCase()}`, n: T.length, revoir: T.filter(x => alertes(x).length).length}); });
+  return s;
+}
+function ligneEtat(i){
+  // Selon le type choisi : nouvelle piste, ou piste déjà présente à remplacer ?
+  const src = sourcesPubliables()[i], kind = $(`#pub-kind-${i}`).value;
+  const existante = PISTES_POD.find(t => t.lang === src.lang && t.kind === kind);
+  const zone = $(`#pub-etat-${i}`);
+  if (!existante){ zone.innerHTML = `<span style="color:var(--ok)">Nouvelle piste.</span>`; zone.dataset.remplacer = ""; return; }
+  zone.innerHTML = `<span style="color:var(--alerte)">Une piste « ${esc(nomLangue(src.lang))}, ${TYPES_PISTE[kind].toLowerCase()} » existe déjà sur Pod.</span>
+    <select id="pub-action-${i}"><option value="">Ne pas la toucher</option><option value="${esc(existante.url)}">La remplacer (l'ancienne est sauvegardée sur le poste, puis effacée de Pod)</option></select>`;
+}
+async function ouvrirPublication(){
+  $("#pub-resultats").innerHTML = ""; $("#pub-alerte").textContent = ""; $("#pub-go").disabled = true; $("#pub-fermer").textContent = "Annuler";
+  $("#pub-video").innerHTML = `Vidéo Pod n° ${POD.id} : ${esc(POD.titre)} · <a href="${esc(POD.lien)}" target="_blank" rel="noopener">voir sur Pod ↗</a>`;
+  $("#pub-lignes").innerHTML = `<p class="note"><span class="roue"></span>Lecture des pistes présentes sur Pod…</p>`;
+  $("#d-publier").showModal();
+  await sauver(); await sauverEnrichissement();
+  const r = await fetch(apiAction("pod/pistes")); const d = await r.json();
+  if (!r.ok){ $("#pub-lignes").innerHTML = `<p class="note" style="color:var(--erreur)">${esc(d.erreur)}</p>`; return; }
+  PISTES_POD = d.pistes;
+  const srcs = sourcesPubliables();
+  $("#pub-lignes").innerHTML = (d.brouillon ? `<p class="note">La vidéo est en brouillon : les sous-titres ne seront visibles qu'à sa publication.</p>` : "") +
+    srcs.map((s, i) => `<fieldset><legend>${esc(s.libelle)} · ${s.n} sous-titres${s.revoir ? ` · <b style="color:var(--alerte)">${s.revoir} hors norme</b>` : ""}</legend>
+      <label style="justify-content:flex-start"><input type="checkbox" id="pub-oui-${i}" ${i === 0 ? "checked" : ""}> Publier</label>
+      <p class="note" style="margin:2px 0 4px">Rangé sur Pod dans : <b style="color:var(--texte)">${esc(nomLangue(s.lang))}</b></p>
+      <label>Type de piste <select id="pub-kind-${i}"><option value="subtitles">Sous-titres</option><option value="captions">Légendes (sourds et malentendants)</option></select></label>
+      <div id="pub-etat-${i}" class="note" style="display:flex;flex-direction:column;gap:6px"></div></fieldset>`).join("");
+  srcs.forEach((s, i) => { ligneEtat(i); $(`#pub-kind-${i}`).onchange = () => ligneEtat(i); });
+  const revoir = srcs.reduce((a, s) => a + s.revoir, 0);
+  if (revoir) $("#pub-alerte").textContent = `${revoir} sous-titre(s) ne respectent pas encore la norme. Vous pouvez publier quand même.`;
+  $("#pub-go").disabled = false;
+}
+$("#b-publier").onclick = ouvrirPublication;
+$("#pub-go").onclick = async () => {
+  const demandes = [], resume = [];
+  sourcesPubliables().forEach((s, i) => {
+    if (!$(`#pub-oui-${i}`).checked) return;
+    const kind = $(`#pub-kind-${i}`).value, existe = PISTES_POD.some(t => t.lang === s.lang && t.kind === kind);
+    const remplacer = existe ? $(`#pub-action-${i}`).value : "";
+    if (existe && !remplacer) return;                  // « Ne pas la toucher »
+    demandes.push({source: s.source, lang: s.lang, kind, remplacer: remplacer || null});
+    resume.push(`• ${nomLangue(s.lang)}, ${TYPES_PISTE[kind].toLowerCase()} : ${remplacer ? "REMPLACEMENT de la piste existante" : "nouvelle piste"}`);
+  });
+  if (!demandes.length){ toast("Rien à publier : cochez une piste, ou choisissez de remplacer la piste existante."); return; }
+  if (!confirm(`Publier sur Pod, vidéo n° ${POD.id} ?\n\n${resume.join("\n")}`)) return;
+  $("#pub-go").disabled = true;
+  $("#pub-resultats").innerHTML = `<p class="note"><span class="roue"></span>Publication en cours…</p>`;
+  const r = await fetch(apiAction("pod/publier"), {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({pistes: demandes})});
+  const d = await r.json();
+  if (!r.ok){ $("#pub-resultats").innerHTML = `<p class="note" style="color:var(--erreur)">Échec : ${esc(d.erreur)}</p>`; $("#pub-go").disabled = false; return; }
+  $("#pub-resultats").innerHTML = d.resultats.map(x => x.ok
+    ? `<p class="note" style="color:var(--ok)">✔ ${esc(nomLangue(x.lang))}, ${TYPES_PISTE[x.kind].toLowerCase()} : ${x.remplacee ? "piste remplacée (ancienne sauvegardée sur le poste, puis effacée de Pod)" : "piste ajoutée"}.</p>` +
+      (x.avertissement ? `<p class="note" style="color:var(--alerte)">⚠ ${esc(x.avertissement)}</p>` : "")
+    : `<p class="note" style="color:var(--erreur)">✘ ${esc(nomLangue(x.lang))}, ${TYPES_PISTE[x.kind].toLowerCase()} : ${esc(x.erreur)}</p>`).join("") +
+    `<p class="note"><a href="${esc(POD.lien)}" target="_blank" rel="noopener">Vérifier sur Pod ↗</a></p>`;
+  $("#pub-fermer").textContent = "Fermer";
+  const ok = d.resultats.filter(x => x.ok).length;
+  toast(ok ? `${ok} piste(s) publiée(s) sur Pod.` : "Aucune piste publiée.", 6000);
+};
+
+/* ─────────── Métadonnées sur Pod (étape 3) : écran avant/après ─────────── */
+let META_POD = null;
+const CHAMPS_META = [
+  {cle: "titre", nom: "Titre"},
+  {cle: "description", nom: "Description"},
+  {cle: "mots_cles", nom: "Mots-clés"},
+  {cle: "ajout_discipline", nom: "Discipline"},
+  {cle: "type", nom: "Type"},
+];
+function valeurAvant(c){ const a = META_POD.pod; return c.cle === "ajout_discipline" ? a.disciplines : a[c.cle]; }
+function valeurProposee(c){ const p = META_POD.propose; return c.cle === "ajout_discipline" ? p.discipline : p[c.cle]; }
+const vide = v => !v || (Array.isArray(v) && !v.length) || (typeof v === "string" && !v.trim());
+const montre = v => vide(v) ? `<div class="valeur vide">(vide)</div>`
+  : `<div class="valeur">${esc(Array.isArray(v) ? v.join(" · ") : v)}</div>`;
+async function ouvrirMetaPod(){
+  $("#meta-resultat").innerHTML = ""; $("#meta-go").disabled = true; $("#meta-fermer").textContent = "Annuler";
+  $("#meta-video").innerHTML = `Vidéo Pod n° ${POD.id} : ${esc(POD.titre)} · <a href="${esc(POD.lien)}" target="_blank" rel="noopener">voir sur Pod ↗</a>`;
+  $("#meta-tableau").innerHTML = `<p class="note"><span class="roue"></span>Lecture des métadonnées actuelles sur Pod…</p>`;
+  $("#d-meta").showModal();
+  await sauverEnrichissement();
+  const r = await fetch(apiAction("pod/metadonnees")); const d = await r.json();
+  if (!r.ok){ $("#meta-tableau").innerHTML = `<p class="note" style="color:var(--erreur)">${esc(d.erreur)}</p>`; return; }
+  META_POD = d;
+  let html = `<div class="avap"><span></span><span class="entete">Sur Pod aujourd'hui</span><span class="entete">Proposé (modifiable dans l'onglet)</span>`;
+  CHAMPS_META.forEach(c => {
+    const av = valeurAvant(c), pr = valeurProposee(c);
+    let possible = !vide(pr), info = "", defaut = false;
+    if (c.cle === "ajout_discipline"){
+      if (possible && av.includes(pr)){ possible = false; info = "Déjà présente sur Pod."; }
+      else if (possible) info = `« ${esc(pr)} » sera ajoutée ; les disciplines déjà présentes sont conservées.`;
+      if (possible && !LISTES.disciplines.includes(pr)) { possible = false; info = "Discipline hors liste : choisissez-en une dans l'onglet."; }
+      defaut = possible && vide(av);
+    } else if (JSON.stringify(av) === JSON.stringify(pr)){ possible = false; info = "Identique."; }
+    else defaut = possible && vide(av) && c.cle !== "titre";      // on ne remplit d'office que les champs vides
+    if (c.cle === "mots_cles" && d.mots_cles_ecartes.length)
+      info = `Pod limite les mots-clés à 255 caractères : ${d.mots_cles_ecartes.length} écarté(s) (${esc(d.mots_cles_ecartes.join(", "))}).`;
+    if (c.cle === "type" && possible && !LISTES.types.includes(pr)){ possible = false; info = "Type hors liste : choisissez-en un dans l'onglet."; }
+    html += `<label class="champ-nom"><input type="checkbox" class="meta-coche" data-cle="${c.cle}" ${possible ? "" : "disabled"} ${defaut ? "checked" : ""}> ${c.nom}</label>
+      ${montre(av).replace('class="valeur', 'class="valeur ancien')}${montre(c.cle === "ajout_discipline" && !vide(pr) ? [...av.filter(x => x !== pr), pr] : pr)}
+      ${info ? `<div class="info">${info}</div>` : ""}`;
+  });
+  $("#meta-tableau").innerHTML = html + `</div><p class="note">Seuls les champs cochés sont modifiés. Les champs vides sur Pod sont cochés d'office, jamais le titre.</p>`;
+  $("#meta-go").disabled = false;
+}
+$("#meta-go").onclick = async () => {
+  const nouveau = {}, noms = [];
+  document.querySelectorAll(".meta-coche:checked").forEach(x => {
+    const c = CHAMPS_META.find(c => c.cle === x.dataset.cle); nouveau[c.cle] = valeurProposee(c); noms.push(c.nom);
+  });
+  if (!noms.length){ toast("Cochez au moins un champ."); return; }
+  if (!confirm(`Modifier sur Pod, vidéo n° ${POD.id} :\n\n• ${noms.join("\n• ")}\n\nLes anciennes valeurs sont notées dans le journal.`)) return;
+  $("#meta-go").disabled = true;
+  $("#meta-resultat").innerHTML = `<p class="note"><span class="roue"></span>Publication en cours…</p>`;
+  const r = await fetch(apiAction("pod/metadonnees"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({avant: META_POD.pod, nouveau})});
+  const d = await r.json();
+  if (!r.ok){ $("#meta-resultat").innerHTML = `<p class="note" style="color:var(--erreur)">✘ ${esc(d.erreur)}</p>`; $("#meta-go").disabled = false; return; }
+  $("#meta-resultat").innerHTML = `<p class="note" style="color:var(--ok)">✔ Modifié sur Pod : ${esc(noms.join(", "))}. <a href="${esc(POD.lien)}" target="_blank" rel="noopener">Vérifier sur Pod ↗</a></p>`;
+  $("#meta-fermer").textContent = "Fermer";
+  toast("Métadonnées publiées sur Pod.", 5000);
+};
+
+/* ─────────── Fenêtres et menus ─────────── */
+function ouvrirEnrichir(){ majCarteEnrichir(); $("#d-enrichir").showModal(); }
+$("#b-ouvrir-enrichir").onclick = ouvrirEnrichir;
+$("#b-apparence").onclick = () => $("#d-apparence").showModal();
+$("#b-aide").onclick = () => $("#d-aide").showModal();
+$("#b-remplacer").onclick = () => {
+  const r = $("#remplacement"); r.classList.toggle("ouvert");
+  if (r.classList.contains("ouvert")) $("#r-remplace").focus();
+};
+// Le menu Outils se referme après un choix ou un clic ailleurs.
+document.querySelectorAll("details.menu .contenu button").forEach(b => b.addEventListener("click", () => b.closest("details").open = false));
+document.addEventListener("click", e => document.querySelectorAll("details.menu[open]").forEach(d => { if (!d.contains(e.target)) d.open = false; }));
+$("#r-cherche").addEventListener("keydown", e => { if (e.key === "Enter"){ e.preventDefault(); $("#r-suivant").click(); } });
+
+/* ─────────── Démarrage ─────────── */
+(async () => {
+  const r = await fetch(API);
+  if (!r.ok){ $("#titre").textContent = "Projet introuvable ou lien expiré. Rouvrez l'éditeur depuis SousTitreur."; return; }
+  const d = await r.json();
+  S = d.sous_titres; P = d.parametres;
+  LISTES = d.listes || LISTES;
+  POD = d.pod || null;                 // avant le rendu des onglets (bouton de publication)
+  if (d.theme === "dark" || d.theme === "light") document.documentElement.dataset.theme = d.theme;
+  $("#logo").src = `/ressources/logo_ut.png?t=${encodeURIComponent(JETON)}`;
+  LANGUE = d.langue || "fr"; LANGUES = d.langues_traduction || []; E = d.enrichissement || {};
+  E.traductions = E.traductions || {}; E.quiz = E.quiz || []; E.metadonnees = E.metadonnees || {};
+  $("#enr-langue").innerHTML = `<option value="">pas de traduction</option>` +
+    LANGUES.map(l => `<option value="${l.code}">${esc(l.name)}</option>`).join("");
+  document.title = d.nom + ", SousTitreur";
+  document.documentElement.lang = LANGUE;
+  $("#titre").textContent = d.nom;
+  $("#x-vtt").checked = d.formats.includes("vtt"); $("#x-srt").checked = d.formats.includes("srt");
+  afficherEnrichissement(); majCarteEnrichir();
+  if (E.etat === "en_cours") suivreEnrichissement();
+  $("#etat").textContent = d.etat === "corrige" ? "Déjà exporté une fois" : "";
+  const src = n => `/${n}/${PID}?t=${encodeURIComponent(JETON)}`;
+  const msg = $("#message-media");
+  const secours = () => {
+    if (d.audio && !video.src.includes("/audio/")){ video.src = src("audio"); msg.style.display = "flex"; msg.style.pointerEvents = "none";
+      msg.textContent = "Le navigateur ne sait pas lire cette vidéo : lecture du son seul."; }
+    else { msg.style.display = "flex"; msg.textContent = "Vidéo introuvable ou illisible. Vous pouvez tout de même corriger le texte."; }
+  };
+  video.addEventListener("error", secours);
+  if (d.video_distante) video.src = d.video_distante;      // vidéo Pod, lue en ligne
+  else if (d.video) video.src = src("media"); else secours();
+  if (d.pod){
+    POD = d.pod; $("#b-publier").hidden = false;
+    // Un seul bouton coloré par écran (charte PodAdmin) : pour une vidéo Pod,
+    // l'action principale est la publication ; l'export redevient secondaire.
+    $("#b-publier").classList.add("primaire"); $("#b-exporter").classList.remove("primaire");
+    // Rappel de la vidéo Pod d'origine, avec un lien vers sa page.
+    $("#titre").innerHTML = `${esc(d.nom)} <a href="${esc(d.pod.lien)}" target="_blank" rel="noopener" style="font-weight:400;font-size:12.5px;margin-left:8px">Pod n° ${d.pod.id} ↗</a>`;
+  }
+  rendre();
+})();
+</script>
+</body>
+</html>

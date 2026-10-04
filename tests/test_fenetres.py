@@ -556,21 +556,25 @@ class TestHierarchieVisuelle:
         """Bord haut de la rangée épinglée = fin de la zone défilante."""
         return app.nav_btns["help"].winfo_rooty()
 
-    def test_navigation_tient_sans_defilement(self, app):
-        """À la taille PAR DÉFAUT, le dernier onglet du flux doit être visible."""
-        # Le fixture `app` est partagé par tout le module : un test qui
-        # redimensionne la fenêtre fausserait celui-ci. On repose donc
-        # explicitement la taille PAR DÉFAUT — celle que l'utilisateur voit —
-        # et surtout pas une taille confortable choisie pour faire passer.
+    def test_tout_le_flux_est_dans_la_zone_defilante(self, app):
+        """DÉCISION DE CÉDRIC (2026-10-04) : à l'ajout d'« Enrichissement IA »,
+        la navigation peut défiler en 1180×760 plutôt que de fusionner des
+        sections. « Journal » passe alors sous le bord à la taille par défaut.
+
+        La règle « tient sans défilement » est donc abandonnée ; ce qui doit
+        rester vrai : chaque entrée du flux est DANS la zone défilante (donc
+        atteignable en faisant défiler), et Aide / À propos restent épinglés
+        en pied, toujours visibles (test suivant)."""
         app.geometry("1180x760")
         app.update()
         app.update_idletasks()
-        dernier = app.nav_btns["log"]      # dernier du flux défilant
-        bas = dernier.winfo_rooty() + dernier.winfo_height()
-        limite = self._limite_zone_defilante(app)
-        assert bas <= limite, (
-            f"« Journal » finit à {bas} px pour une zone s'arrêtant à {limite} : "
-            "la navigation déborde et défile dès l'ouverture.")
+        zone = app.nav_btns["upload"].master
+        for cle, bouton in app.nav_btns.items():
+            if cle in ("help", "about"):
+                continue
+            assert bouton.master is zone, (
+                f"« {cle} » est hors de la zone défilante : il serait inatteignable "
+                "quand la navigation déborde")
 
     def test_aide_et_a_propos_toujours_atteignables(self, app):
         """Épinglés en pied, ils ne doivent JAMAIS sortir de l'écran."""
@@ -1040,10 +1044,10 @@ class TestCoherenceDesIcones:
         # séparant l'icône du libellé — les douze entrées étaient devenues
         # invisibles au test, qui restait vert.
         # Le bloc lu va de NAVIGATION à `self.nav_btns`, ce qui englobe aussi
-        # EPINGLES : les 12 entrées sont donc bien toutes couvertes, 10 dans le
-        # flux défilant et 2 épinglées en pied.
-        assert len(entrees) == 13, (
-            f"{len(entrees)} entrées de navigation trouvées au lieu de 13 : "
+        # EPINGLES : les 14 entrées sont donc bien toutes couvertes, 12 dans le
+        # flux défilant (dont « Enrichissement IA ») et 2 épinglées en pied.
+        assert len(entrees) == 14, (
+            f"{len(entrees)} entrées de navigation trouvées au lieu de 14 : "
             "le format de NAVIGATION ou d'EPINGLES a changé, ces tests ne "
             "vérifient plus rien.")
         return entrees
@@ -2209,6 +2213,10 @@ class TestContratDesOngletsApresConnexion:
         "comptes":  ["comptes_results", "comptes_filter"],
         "groups":   ["groups_list", "groups_status"],
         "log":      ["log_box"],
+        # Construit à la PREMIÈRE ouverture : la connexion ne touche à aucun
+        # de ses widgets, son chargement (reprise du suivi Aristote) le
+        # construit lui-même au besoin (`_enrich_reprendre`).
+        "enrich":   [],
     }
 
     def test_tous_les_widgets_du_contrat_existent(self, app):

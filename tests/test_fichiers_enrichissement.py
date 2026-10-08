@@ -51,7 +51,7 @@ assert P.DOSSIER_PROJETS.startswith(os.environ["USERPROFILE"]), "vrai dossier de
 envoyes, ouvertures, avertissements = [], [], []
 class FauxServeur:
     def __init__(self, **kw): pass
-    def ouvrir(self, pid): ouvertures.append(pid)
+    def ouvrir(self, pid, partie="st"): ouvertures.append(pid); return False
     def reprendre(self, pid): pass
 class FauxAristote:
     def __init__(self, *a): pass

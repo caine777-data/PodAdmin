@@ -1,4 +1,4 @@
-"""Intégration de SousTitreur, étape 4 : l'onglet « Enrichissement IA ».
+"""Onglet « Enrichissement IA » (refonte 1.11.0, étape 4 : trois cartes).
 
 Le scénario tourne dans un PROCESSUS SÉPARÉ : une seule instance Tk, un dossier
 personnel temporaire (USERPROFILE / HOME), et des faux pour Aristote, le
@@ -51,7 +51,7 @@ def test_le_panneau_n_a_plus_de_journal_propre_ni_d_identifiants_a_saisir():
 
 
 SCENARIO = r'''
-import os, sys, time, json
+import os, sys, time, json, threading
 sys.path.insert(0, RACINE)
 import customtkinter as ctk
 import app as A
@@ -61,17 +61,21 @@ for nom in ("_auto_connect", "_verifier_maj", "_surveiller_blocage"):
 assert P.DOSSIER_PROJETS.startswith(os.environ["USERPROFILE"]), "vrai dossier de projets"
 
 # — Faux : serveur de l'éditeur, Aristote, messages —
-ouvertures, clients, avertissements = [], [], []
+ouvertures, demandes, clients, avertissements, questions = [], [], [], [], []
+porte_7 = threading.Event()
 class FauxServeur:
-    def __init__(self, **kw): ouvertures.append("demarre")
-    def ouvrir(self, pid): ouvertures.append(pid)
-    def reprendre(self, pid): ouvertures.append("reprise-" + pid)
+    def __init__(self, **kw): self.kw = kw
+    def ouvrir(self, pid, partie="st"): ouvertures.append((pid, partie)); return False
+    def reprendre(self, pid): ouvertures.append(("reprise", pid))
+    def lancer_demande(self, pid, cle): demandes.append((pid, cle))
 class FauxAristote:
     def __init__(self, cid, secret, url):
-        clients.append(url); self.url = url
+        clients.append(url)
     def envoyer_lien(self, mp3, langue, identifiant_utilisateur=None):
-        assert langue == "fr"; return "eid-nouveau"
-    def attendre(self, eid, rappel=None, **k): return {"initialVersionId": "v1"}
+        assert langue == "fr"; return "eid-" + identifiant_utilisateur.rsplit("-", 1)[1]
+    def attendre(self, eid, rappel=None, **k):
+        if eid == "eid-7": assert porte_7.wait(15), "porte de la vidéo 7 jamais ouverte"
+        return {"initialVersionId": "v1"}
     def transcription(self, eid, version):
         return {"language": "fr", "sentences": [{"text": "Bonjour à tous.", "start": 0.0, "end": 2.0,
                 "words": [{"word": "Bonjour", "start": 0.0, "end": 0.8},
@@ -80,7 +84,16 @@ class FauxAristote:
 A.ServeurEditeur = FauxServeur
 A.AristoteAPI = FauxAristote
 A.messagebox.showwarning = lambda *a, **k: avertissements.append(a[0])
-A.messagebox.askyesno = lambda *a, **k: True
+A.messagebox.showerror = lambda *a, **k: avertissements.append(a[0])
+A.messagebox.askyesno = lambda *a, **k: questions.append(a[0]) or True
+A.messagebox.askyesnocancel = lambda *a, **k: questions.append(a[0]) or True
+
+def attendre(cond, delai=8):
+    fin = time.time() + delai
+    while time.time() < fin and not cond():
+        a.update(); time.sleep(0.05)
+    a.update()
+    return cond()
 
 # — Projets laissés par une session précédente —
 p = P.nouveau("ancien cours.mp4", "fr"); p["etat"] = "a_corriger"
@@ -98,7 +111,7 @@ a._show_tab("enrich"); a.update()
 pan = a.enrich_panneau
 assert pan is not None and pan.winfo_manager() == "pack"
 assert set(pan.lignes) == {p["id"], q["id"], r["id"]}
-assert str(pan.lignes[p["id"]]["corriger"].cget("state")) == "normal"
+assert pan.depart.winfo_manager() and not pan.selection.winfo_manager(), "départ d'abord"
 assert not ouvertures and not clients, "réseau ou serveur sans connexion"
 pan.choisir_video_pod(); a.update()
 assert avertissements == ["Non connecté"]
@@ -106,33 +119,39 @@ assert avertissements == ["Non connecté"]
 # — Connexion : la reprise du suivi part —
 class FauxPod:
     def __init__(self):
-        self.video = {"id": 202, "url": "https://videos.exemple.fr/rest/videos/202/",
-                      "slug": "0202-les-metropoles", "title": "Les métropoles du Néolithique",
-                      "owner": "https://videos.exemple.fr/rest/users/1/", "duration": 3725,
-                      "is_draft": True, "date_added": "2026-09-25"}
-    def lien_public(self, v): return "https://videos.exemple.fr/video/0202-les-metropoles/"
+        self.videos = {
+            202: {"id": 202, "url": "https://videos.exemple.fr/rest/videos/202/",
+                  "slug": "0202-les-metropoles", "title": "Les métropoles du Néolithique",
+                  "owner": "https://videos.exemple.fr/rest/users/1/", "duration": 3725,
+                  "is_draft": True, "date_added": "2026-09-25"},
+            7: {"id": 7, "url": "https://videos.exemple.fr/rest/videos/7/", "slug": "0007-chimie",
+                "title": "Chimie organique", "owner": "https://videos.exemple.fr/rest/users/1/",
+                "duration": 600, "date_added": "2026-01-01"}}
+    def lien_public(self, v): return f"https://videos.exemple.fr/video/{v['slug']}/"
     def get_user(self, url): return {"first_name": "Cédric", "last_name": "Monna"}
-    def pistes(self, v): return [{"url": "https://videos.exemple.fr/rest/tracks/9/", "lang": "fr",
-                                  "kind": "subtitles", "src": "https://videos.exemple.fr/rest/files/9/"}]
-    def mp3(self, v): return "https://videos.exemple.fr/media/202.mp3"
-    def mp4(self, v): return "https://videos.exemple.fr/media/202.mp4"
+    def pistes(self, v):
+        return [{"url": "https://videos.exemple.fr/rest/tracks/9/", "lang": "fr", "kind": "subtitles",
+                 "src": "https://videos.exemple.fr/rest/files/9/"}] if v["id"] == 202 else []
+    def mp3(self, v): return f"https://videos.exemple.fr/media/{v['id']}.mp3"
+    def mp4(self, v): return f"https://videos.exemple.fr/media/{v['id']}.mp4"
     def references(self): return {"disciplines": {"Histoire": "u1"}, "types": {"Cours": "u2"}}
     def lire_piste(self, piste): return "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nTexte de Pod.\n"
-    def video(self, ident): return self.video
+    def video(self, ident): return self.videos[ident]
 api = FauxPod()
 a.api = api
-a.videos[:] = [api.video, {"id": 7, "title": "Chimie organique", "slug": "0007-chimie",
-                           "date_added": "2026-01-01"}]
+a.videos[:] = list(api.videos.values())
 a._on_connexion_etablie()
-fin = time.time() + 8
-while time.time() < fin and P.charger(q["id"])["etat"] != "a_corriger":
-    a.update(); time.sleep(0.05)
-a.update()
-assert P.charger(q["id"])["etat"] == "a_corriger", "suivi Aristote non repris"
+assert attendre(lambda: P.charger(q["id"])["etat"] == "a_corriger"), "suivi Aristote non repris"
 assert P.charger(r["id"])["etat"] == "erreur", "envoi coupé non signalé"
 assert clients and all(u == "https://stt.ilaas.fr/api" for u in clients)
 
-# — Choix d'une vidéo par le magasin partagé —
+def tous(w, acc):
+    for e in w.winfo_children():
+        if isinstance(e, ctk.CTkButton): acc.append(e)
+        tous(e, acc)
+    return acc
+
+# — La fenêtre de recherche CHOISIT la vidéo, rien de plus —
 avant = set(a.winfo_children())
 pan.choisir_video_pod(); a.update()
 fen = [w for w in a.winfo_children() if w not in avant and isinstance(w, ctk.CTkToplevel)][0]
@@ -140,49 +159,90 @@ for requete in ("metropoles neolithique", "Néolithique MÉTROPOLES"):   # accen
     fen.entree.delete(0, "end"); fen.entree.insert(0, requete)
     fen.chercher(); a.update()
     assert "1 vidéo" in fen.statut.cget("text"), (requete, fen.statut.cget("text"))
-fen.ouvrir_fiche(api.video)
-fin = time.time() + 5
-while time.time() < fin and fen.fiche is None:
-    a.update(); time.sleep(0.05)
-assert fen.fiche and fen.fiche["proprietaire"] == "Cédric Monna"
-boutons = []
-def tous(w):
-    for e in w.winfo_children():
-        if isinstance(e, ctk.CTkButton): boutons.append(e)
-        tous(e)
-tous(fen.cadre_fiche)
-colores = [b for b in boutons if b.cget("fg_color") == A.C_ACTION]
-assert len(colores) == 1, "une seule action colorée par fiche"
-depuis = [b for b in boutons if "existants" in b.cget("text")][0]
-depuis.invoke()
-fin = time.time() + 5
-while time.time() < fin and "pod202" not in pan.lignes:
-    a.update(); time.sleep(0.05)
-assert "pod202" in pan.lignes and "pod202" in ouvertures, "piste de Pod non reprise"
+fen.ouvrir_fiche(api.videos[202])
+assert attendre(lambda: fen.fiche is not None)
+colores = [b for b in tous(fen.cadre_fiche, []) if b.cget("fg_color") == A.C_ACTION]
+assert [b.cget("text") for b in colores] == ["Choisir cette vidéo"], [b.cget("text") for b in colores]
+fen.bouton_defaut.invoke(); a.update()
+assert not fen.winfo_exists(), "la fenêtre reste ouverte"
+assert pan.selection.winfo_manager() and not pan.depart.winfo_manager()
+assert pan.fiche["video"]["id"] == 202 and pan.pid_courant is None
+assert "Les métropoles du Néolithique" in pan.sel_titre.cget("text")
+
+def carte(nom):
+    w = pan.cartes[nom]
+    return {"pastille": w["pastille"].cget("text"), "action": w["action"]["action"],
+            "colore": w["bouton"].winfo_manager() != "" and w["bouton"].cget("fg_color") == A.C_ACTION,
+            "action2": w["action"]["action2"] if w["bouton2"].winfo_manager() else ""}
+c = {n: carte(n) for n in ("st", "meta", "quiz")}
+assert c["st"]["action"] == "transcrire" and c["st"]["colore"] and c["st"]["action2"] == "depuis_piste", c
+assert c["meta"]["action"] == "demander_meta" and not c["meta"]["colore"], c
+assert sum(x["colore"] for x in c.values()) == 1, "un seul bouton coloré"
+
+# — Partir des sous-titres de Pod (seconde action de la carte) —
+pan.cartes["st"]["bouton2"].invoke()
+assert attendre(lambda: "pod202" in pan.lignes), "piste de Pod non reprise"
 assert P.charger("pod202")["sous_titres"][0]["text"] == "Texte de Pod."
+assert ("pod202", "st") in ouvertures and pan.pid_courant == "pod202"
+c = {n: carte(n) for n in ("st", "meta", "quiz")}
+assert c["st"]["action"] == "relire_st" and c["st"]["colore"], c
 
-# — Fiche d'une vidéo DÉJÀ commencée : « Rouvrir » est la seule action colorée —
-avant = set(a.winfo_children())
-pan.choisir_video_pod(); a.update()
-fen = [w for w in a.winfo_children() if w not in avant and isinstance(w, ctk.CTkToplevel)][0]
-fen.ouvrir_fiche(api.video)
-fin = time.time() + 5
-while time.time() < fin and fen.fiche is None:
-    a.update(); time.sleep(0.05)
-boutons = []
-tous(fen.cadre_fiche)
-colores = [b.cget("text") for b in boutons if b.cget("fg_color") == A.C_ACTION]
-assert len(colores) == 1 and "Rouvrir" in colores[0], colores
-fen.destroy()
+# — Une carte ouvre SA partie de l'éditeur —
+pan.cartes["st"]["bouton"].invoke(); a.update()
+assert ouvertures[-1] == ("pod202", "st")
 
-# — Nouvelle transcription (même vidéo : remplace la correction) —
-fiche = {"video": api.video, "lien": "l", "mp4": "m", "mp3": "https://x/202.mp3",
-         "proprietaire": "C", "disciplines": [], "types": [], "pistes": []}
-pan.transcrire_pod(fiche)
-fin = time.time() + 5
-while time.time() < fin and P.charger("pod202").get("enrichment_id") != "eid-nouveau":
-    a.update(); time.sleep(0.05)
-assert P.charger("pod202")["enrichment_id"] == "eid-nouveau"
+# — Métadonnées demandées sur des sous-titres non relus : avertissement, sans blocage —
+n = len(questions)
+pan.cartes["meta"]["bouton"].invoke()
+assert attendre(lambda: ("pod202", "meta") in demandes)
+assert questions[n:] == ["Sous-titres non relus"], questions[n:]
+
+# — Résultat pendant qu'on est ailleurs : pastille sur la barre latérale —
+a._show_tab("browse"); a.update()
+pan.evenements.put(("resultat", "pod202", "meta", True))
+assert attendre(lambda: a.nav_btns["enrich"].cget("text").endswith("●"))
+a._show_tab("enrich"); a.update()
+assert not a.nav_btns["enrich"].cget("text").endswith("●"), "pastille non levée"
+pan.evenements.put(("resultat", "pod202", "meta", True))      # on est déjà sur l'onglet
+attendre(lambda: False, 0.5)
+assert not a.nav_btns["enrich"].cget("text").endswith("●"), "pastille alors qu'on regarde l'onglet"
+
+# — Vidéo sans sous-titres : la carte Quiz lance la transcription, puis le quiz —
+pan.selectionner_fiche({"video": api.videos[7], "lien": "l7", "mp4": "m7", "mp3": api.mp3(api.videos[7]),
+                        "proprietaire": "C", "disciplines": [], "types": [], "pistes": []})
+a.update()
+c = {n: carte(n) for n in ("st", "meta", "quiz")}
+assert c["st"]["action2"] == "", "pas de piste sur Pod : pas de seconde action"
+n = len(questions)
+pan.cartes["quiz"]["bouton"].invoke()
+assert questions[n:] == ["Transcrire d'abord"], questions[n:]
+assert attendre(lambda: P.existe("pod7") and P.charger("pod7").get("etat") == "attente")
+assert P.charger("pod7")["a_enchainer"] == ["quiz"]
+# Pendant la transcription, la carte Métadonnées propose « Demander après la transcription ».
+assert attendre(lambda: carte("meta")["action"] == "enchainer_meta"), carte("meta")
+pan.cartes["meta"]["bouton"].invoke(); a.update()
+assert P.charger("pod7")["a_enchainer"] == ["meta", "quiz"]
+assert carte("meta")["pastille"] == "demandé après la transcription"
+porte_7.set()
+assert attendre(lambda: ("pod7", "quiz") in demandes and ("pod7", "meta") in demandes), demandes
+assert "a_enchainer" not in P.charger("pod7"), "enchaînement rejoué au redémarrage"
+assert P.charger("pod7")["etat"] == "a_corriger"
+
+# — « Afficher » d'une ligne : la vidéo devient la vidéo choisie —
+pan.lignes[p["id"]]["afficher"].invoke(); a.update()
+assert pan.pid_courant == p["id"] and pan.fiche is None
+assert carte("meta")["action"] == "associer", "vidéo du poste : métadonnées après association"
+
+# — Bouton « Enrichir… » de l'onglet Vidéos : l'onglet s'ouvre sur cette vidéo —
+a._show_tab("browse"); a.update()
+a._enrichir_video(api.videos[202])
+assert attendre(lambda: pan.fiche is not None and pan.fiche["video"]["id"] == 202), "fiche non lue"
+assert a.onglet_courant == "enrich" and pan.pid_courant == "pod202", "projet existant non retrouvé"
+assert pan.fiche["proprietaire"] == "Cédric Monna" and pan.selection.winfo_manager()
+
+# — Changer de vidéo : retour au départ —
+pan.revenir_au_choix(); a.update()
+assert pan.depart.winfo_manager() and not pan.selection.winfo_manager()
 
 # — Réglages de l'onglet —
 avant = set(a.winfo_children())
@@ -195,7 +255,8 @@ prefs = json.load(open(os.path.join(os.environ["USERPROFILE"], ".soustitreur", "
 assert prefs["decoupage"]["car_par_ligne"] == 40
 
 # — Le journal de PodAdmin a bien reçu les messages du panneau —
-assert "Reprise du suivi" in a.log_box.get("1.0", "end")
+journal = a.log_box.get("1.0", "end")
+assert "Reprise du suivi" in journal and "reçus d'Aristote" in journal
 print("SCENARIO OK")
 a.destroy()
 '''

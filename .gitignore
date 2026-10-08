@@ -22,3 +22,7 @@ inventaire_pod_*.xlsx
 # OS
 .DS_Store
 Thumbs.db
+
+# Résultats des sondes et fichiers d'essai (lancés sur le poste de Cédric)
+sonde_aristote_demandes*.json
+essai_moodle.gift.txt

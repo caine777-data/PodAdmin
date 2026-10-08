@@ -72,6 +72,31 @@ class TestPublicationDesPistes:
         assert r[0]["erreur"].startswith("Instance injoignable"), r[0]["erreur"]
 
 
+class TestMarquagePublie:
+    """Refonte 1.11.0 : une publication réussie fait passer la partie à
+    « fait » ; un refus ne la marque pas."""
+
+    def test_sous_titres_publies(self, banc):
+        from enrichissement import projet
+        banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
+        assert projet.etat_partie(projet.charger(banc.pid), "sous_titres")["etat"] == "fait"
+
+    def test_refus_non_marque(self, banc):
+        from enrichissement import projet
+        banc.api.session.ajouter_piste("fr", "subtitles")
+        banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
+        assert projet.etat_partie(projet.charger(banc.pid), "sous_titres")["etat"] != "fait"
+
+    def test_metadonnees_publiees(self, banc):
+        from enrichissement import projet
+        p = projet.charger(banc.pid)
+        projet.enrichissement(p)["metadonnees"] = {"titre": "Nouveau titre"}
+        projet.enregistrer(p)
+        avant = banc.srv.metadonnees_pod(banc.pid)["pod"]
+        banc.srv.publier_metadonnees(banc.pid, avant, {"titre": "Nouveau titre"})
+        assert projet.etat_partie(projet.charger(banc.pid), "meta")["etat"] == "fait"
+
+
 class TestPublicationDesMetadonnees:
     def test_journal_et_liste_des_videos_mis_a_jour(self, banc):
         avant = banc.srv.metadonnees_pod(banc.pid)["pod"]

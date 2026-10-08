@@ -24,7 +24,7 @@ expliquent le POURQUOI (surtout les pièges), pas le quoi.**
 | `config.py` | réglages, seuils, compte DEPOT et identifiants Aristote **embarqués en clair** |
 | `maj.py` | lecture de `version.json` et `etat.json` (dépôt public) |
 | `__version__.py` | source UNIQUE de la version |
-| `tests/` | ~470 tests pytest |
+| `tests/` | ~530 tests pytest |
 | `verifier_*.py` | sondes autonomes, lecture seule, lancées par Cédric sur l'instance |
 
 ## Méthode (établie par l'expérience — s'y tenir)
@@ -118,7 +118,7 @@ PYTHONUTF8=1 python -m pytest tests/test_logique.py -q
 - « Encodage non lancé … HTTP 404 » après un envoi par morceaux : constaté dès
   août 2026, non élucidé.
 
-## Enrichissement IA (SousTitreur fusionné en 1.10.0)
+## Enrichissement IA (SousTitreur fusionné en 1.10.0, refondu en 1.11.0)
 
 Détail dans le README, rubrique « Enrichissement IA ».
 
@@ -131,6 +131,14 @@ Détail dans le README, rubrique « Enrichissement IA ».
   métadonnées champ par champ, discipline jamais retirée, quiz en GIFT.
 - Erreurs vers la page de l'éditeur : `message_editeur(e)` ; chaque écriture
   sur Pod va au Journal (`journal_hote`) et à `journal_pod.jsonl`.
+- Trois parties, UNE demande Aristote par partie (`lancer_demande`). Ne pas
+  revenir à une demande groupée. Les notes de cours d'Aristote sont écartées
+  (gabarit « réunion ») : décision de Cédric.
+- Page de l'éditeur : un résultat se repère à sa VERSION (`versions`), et la
+  page n'écrase jamais ce qu'Aristote a livré (`fusionner_page`). Un banc
+  Node exécute les vraies fonctions de la page (`test_page_editeur.py`).
+- Onglet : `cartes_ia` (fonction pure) décide pastilles et boutons ; un seul
+  bouton coloré par écran (`carte_principale_ia`).
 - SousTitreur autonome (Téléchargements\SousTitreur) est GELÉ en 0.6.1 : les
   corrections se font ici, plus là-bas.
 

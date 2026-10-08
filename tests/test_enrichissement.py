@@ -37,7 +37,8 @@ class TestTraduction(unittest.TestCase):
         p = pj.nouveau("video.mp4", "fr")
         p["sous_titres"] = [{"start": 0, "end": 3, "text": "Bonjour à tous."}]
         e = pj.enrichissement(p)
-        e["groupes"] = [{"start": 0, "end": 3, "text": "Bonjour à tous."}]
+        pj.nouvelle_demande(p, "groupe", "eid", ["meta", "quiz", "trad:en"],
+                            groupes=[{"start": 0, "end": 3, "text": "Bonjour à tous."}])
         version = {
             "enrichmentVersionMetadata": {"title": "T", "description": "D",
                                           "topics": ["a", "b"], "discipline": "Arts"},
@@ -46,11 +47,11 @@ class TestTraduction(unittest.TestCase):
                                                      {"optionText": "non"}]}],
             "transcript": {"translatedSentences": [{"start": 0, "end": 3, "text": "Hello everyone."}]},
         }
-        pj.appliquer_enrichissement(p, version, "en", st.Parametres())
+        pj.appliquer_demande(p, "groupe", version, st.Parametres())
         self.assertEqual(e["metadonnees"]["mots_cles"], ["a", "b"])
         self.assertEqual(e["quiz"][0]["choix"][0], {"texte": "oui", "correct": True})
         self.assertEqual(e["traductions"]["en"][0]["text"], "Hello everyone.")
-        self.assertEqual(e["etat"], "termine")
+        self.assertEqual(e["demandes"]["groupe"]["etat"], "termine")
 
 
 class TestGift(unittest.TestCase):
@@ -59,7 +60,8 @@ class TestGift(unittest.TestCase):
                  "choix": [{"texte": "4", "correct": True}, {"texte": "5 ~ 6", "correct": False}]}]
         g = pj.quiz_vers_gift(quiz, "Mon cours")
         self.assertIn("$CATEGORY: $course$/Mon cours", g)
-        self.assertIn(r"::Q1:: Combien font 2+2 \= ? {", g)
+        # Nom lisible dans la banque Moodle (elle n'affiche que le nom).
+        self.assertIn(r"::Mon cours 01, Combien font 2+2 \= ?:: Combien font 2+2 \= ? {", g)
         self.assertIn("\t=4", g)
         self.assertIn(r"	~5 \~ 6", g)
         self.assertIn(r"####Voir \{cours\}.", g)

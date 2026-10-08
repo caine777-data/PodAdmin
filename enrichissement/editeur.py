@@ -95,7 +95,8 @@ class ServeurEditeur:
                  pod: callable = lambda: None,
                  message_erreur: callable = str,
                  journal_hote: callable | None = None,
-                 sur_video_modifiee: callable | None = None):
+                 sur_video_modifiee: callable | None = None,
+                 sur_resultat: callable | None = None):
         """`client()` renvoie un AristoteAPI prêt à l'emploi (ou None) ;
         `reglages()` renvoie la configuration (disciplines, types de média) ;
         `pod()` renvoie un PodAPI (ou None).
@@ -117,8 +118,14 @@ class ServeurEditeur:
         self.message_erreur = message_erreur
         self.journal_hote = journal_hote
         self.sur_video_modifiee = sur_video_modifiee
+        # sur_resultat(pid, cle, ok) : une demande Aristote vient de se
+        # terminer. Distinct de sur_enregistrement, appelé à chaque saisie dans
+        # la page : l'onglet ne signale à l'utilisateur que les vrais résultats.
+        self.sur_resultat = sur_resultat
         self.verrou = threading.Lock()
         self._langues: list[dict] | None = None
+        self.vues: dict[str, float] = {}       # dernière interrogation de chaque page
+        self.commandes: dict[str, str] = {}    # partie à afficher, pour une page déjà ouverte
         serveur = self
 
         class Gestionnaire(_Gestionnaire):
@@ -128,26 +135,42 @@ class ServeurEditeur:
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
-    def url(self, pid: str) -> str:
-        return f"http://127.0.0.1:{self.port}/p/{pid}?t={self.jeton}"
+    PARTIES_PAGE = ("st", "meta", "quiz")
+    # La page interroge le serveur toutes les 3 s : au-delà de ce délai sans
+    # nouvelles, sa fenêtre est considérée comme fermée.
+    DELAI_PAGE_VIVANTE = 8.0
 
-    def ouvrir(self, pid: str) -> None:
-        """Ouvre l'éditeur dans une fenêtre à part, sans barre d'adresse.
+    def url(self, pid: str, partie: str = "st") -> str:
+        return f"http://127.0.0.1:{self.port}/p/{pid}?t={self.jeton}&partie={partie}"
 
-        Edge (toujours présent sous Windows) ou Chrome, en mode « application ».
-        À défaut, le navigateur par défaut, dans un onglet.
-        """
-        url = self.url(pid)
+    def page_ouverte(self, pid: str) -> bool:
+        import time
+        return time.time() - self.vues.get(pid, 0) < self.DELAI_PAGE_VIVANTE
+
+    def ouvrir(self, pid: str, partie: str = "st") -> bool:
+        """Ouvre l'éditeur sur une partie, dans une fenêtre à part, sans barre
+        d'adresse : Edge (toujours présent sous Windows) ou Chrome, en mode
+        « application », à défaut le navigateur par défaut.
+
+        UNE fenêtre par vidéo : si la page de ce projet est déjà ouverte, elle
+        reçoit l'ordre de changer de partie à sa prochaine interrogation, et
+        aucune fenêtre n'est ajoutée. Renvoie True dans ce cas."""
+        partie = partie if partie in self.PARTIES_PAGE else "st"
+        if self.page_ouverte(pid):
+            self.commandes[pid] = partie
+            return True
+        url = self.url(pid, partie)
         for exe in _navigateurs_app():
             try:
                 subprocess.Popen([exe, f"--app={url}", "--window-size=1440,900",
                                   "--new-window"],
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  **({"creationflags": 0x08000000} if sys.platform == "win32" else {}))
-                return
+                return False
             except OSError:
                 continue
         webbrowser.open(url)
+        return False
 
     def arreter(self) -> None:
         self.httpd.shutdown()
@@ -164,36 +187,82 @@ class ServeurEditeur:
             self._langues = self._langues or [{"code": "en", "name": "Anglais"}]
         return [l for l in self._langues if l.get("code") != source]
 
-    def _maj_enrichissement(self, pid: str, **champs) -> dict:
-        """Relit le projet sur disque, modifie SEULEMENT l'enrichissement,
-        puis enregistre : les corrections faites entre-temps sont préservées."""
-        with self.verrou:
-            p = pj.charger(pid)
-            pj.enrichissement(p).update(champs)
-            pj.enregistrer(p)
-            return p
-
-    def lancer_enrichissement(self, pid: str, traduire_vers: str,
-                              metadonnees: bool, quiz: bool) -> None:
+    def lancer_demande(self, pid: str, cle: str) -> dict:
+        """Une demande Aristote pour UNE partie : « meta », « quiz » ou
+        « trad:<langue> ». Relancer « quiz » demande d'autres questions, qui
+        s'ajoutent aux existantes. Refusée si la même partie est déjà chez
+        Aristote."""
         client = self.client()
         if client is None:
-            raise ValueError("Identifiants Aristote manquants (voir Réglages).")
+            raise ValueError("Identifiants Aristote manquants (voir Configuration).")
         p = pj.charger(pid)
+        source = p.get("langue") or "fr"
+        if cle.startswith("trad:"):
+            codes = {l.get("code") for l in self.langues_traduction(source)}
+            if cle[5:] not in codes:
+                raise ValueError(f"Aristote ne traduit pas vers « {cle[5:]} ».")
+        elif cle not in ("meta", "quiz"):
+            raise ValueError(f"Demande inconnue : « {cle} ».")
+        if not p.get("sous_titres"):
+            raise ValueError("Pas encore de sous-titres : Aristote n'aurait aucun texte.")
+        if any(d["cle"] == cle or cle in d.get("parties", []) for d in pj.demandes_en_cours(p)):
+            raise ValueError("Cette demande est déjà chez Aristote : attendez son résultat.")
         # Phrases entières : la traduction a besoin du contexte complet.
         groupes = st.regrouper_phrases([st.SousTitre.depuis_dict(d) for d in p["sous_titres"]])
         r = self.reglages()
         eid = client.enrichir_sous_titres(
-            st.vers_vtt(groupes), p["nom"], p.get("langue") or "fr",
-            traduire_vers or None, metadonnees, quiz,
+            st.vers_vtt(groupes), p["nom"], source,
+            traduire_vers=cle[5:] if cle.startswith("trad:") else None,
+            metadonnees=cle == "meta", quiz=cle == "quiz",
             # Vidéo Pod : listes réelles de l'instance ; sinon, celles des réglages.
-            (p.get("pod") or {}).get("disciplines") or r.get("disciplines"),
-            (p.get("pod") or {}).get("types") or r.get("types_media"))
-        self._maj_enrichissement(pid, etat="en_cours", eid=eid, erreur="",
-                                 detail="Envoyé à Aristote",
-                                 traduire_vers=traduire_vers or "",
-                                 groupes=[g.en_dict() for g in groupes])
-        threading.Thread(target=self._suivre, args=(pid, client, eid, traduire_vers),
-                         daemon=True).start()
+            disciplines=(p.get("pod") or {}).get("disciplines") or r.get("disciplines"),
+            types_media=(p.get("pod") or {}).get("types") or r.get("types_media"))
+        with self.verrou:
+            p = pj.charger(pid)
+            d = pj.nouvelle_demande(p, cle, eid, [cle], [g.en_dict() for g in groupes])
+            pj.enregistrer(p)
+        threading.Thread(target=self._suivre, args=(pid, client, cle, eid), daemon=True).start()
+        return d
+
+    def lancer_enrichissement(self, pid: str, traduire_vers: str,
+                              metadonnees: bool, quiz: bool) -> None:
+        """Ancienne demande groupée de la page (jusqu'à l'étape 3) : envoyée
+        désormais en demandes séparées, une par partie cochée."""
+        cles = ([f"trad:{traduire_vers}"] if traduire_vers else []) \
+            + (["meta"] if metadonnees else []) + (["quiz"] if quiz else [])
+        if not cles:
+            raise ValueError("Choisissez au moins une langue, les métadonnées ou le quiz.")
+        for cle in cles:
+            self.lancer_demande(pid, cle)
+
+    def vue_enrichissement(self, p: dict) -> dict:
+        """Bloc enrichissement tel que la page le lit, avec l'état de chaque
+        partie et un état d'ensemble (« etat », « detail », « erreur ») pour
+        la page actuelle, qui suit encore une seule demande."""
+        e = pj.enrichissement(p)
+        demandes = sorted(e["demandes"].values(), key=lambda d: d.get("demande_le") or "")
+        en_cours = [d for d in demandes if d.get("etat") == "en_cours"]
+        derniere = demandes[-1] if demandes else {}
+        etat = ("en_cours" if en_cours else derniere.get("etat", "")) if demandes else ""
+        return {**e, "etat": etat,
+                "detail": (en_cours[0] if en_cours else derniere).get("detail", "") if demandes else "",
+                "erreur": derniere.get("erreur", "") if etat == "erreur" else "",
+                "parties": self.etats_parties(p)}
+
+    def etats_parties(self, p: dict) -> dict:
+        """État de chaque partie, pour les cartes et la page."""
+        parties = ["sous_titres", "meta", "quiz"] + [
+            f"trad:{l['code']}" for l in self.langues_traduction(p.get("langue") or "fr")]
+        return {partie: pj.etat_partie(p, partie) for partie in parties}
+
+    def marquer_relu(self, pid: str) -> dict:
+        with self.verrou:
+            p = pj.charger(pid)
+            pj.marquer_relu(p)
+            pj.enregistrer(p)
+        if self.sur_enregistrement:
+            self.sur_enregistrement(pid)
+        return pj.etat_partie(p, "sous_titres")
 
     # ── Publication sur Pod (étape 2) ───────────────────────────────────
     def _journal(self, texte: str) -> None:
@@ -230,7 +299,7 @@ class ServeurEditeur:
         api, video = self._pod_et_video(p)
         actuelles = {t["url"]: t for t in api.pistes(video)}
         e = p.get("enrichissement") or {}
-        resultats = []
+        resultats, faites = [], []
         for d in demandes:
             # Rangement imposé (décision de Cédric, 2026-10-04) : l'original
             # corrigé va TOUJOURS dans « fr », une traduction dans SA langue.
@@ -260,6 +329,7 @@ class ServeurEditeur:
                               ancien_fichier=(remplacer or {}).get("src", ""),
                               ancien_fichier_supprime=r["fichier_supprime"],
                               sauvegarde=r["sauvegarde"], avertissement=r["avertissement"])
+                faites.append("sous_titres" if source == "original" else f"trad:{source}")
                 resultats.append({"lang": lang, "kind": kind, "ok": True,
                                   "remplacee": bool(remplacer), "sauvegarde": r["sauvegarde"],
                                   "avertissement": r["avertissement"]})
@@ -279,6 +349,8 @@ class ServeurEditeur:
             p = pj.charger(pid)
             p.setdefault("publications", []).append(
                 {"date": datetime.now().isoformat(timespec="seconds"), "resultats": resultats})
+            for partie in faites:
+                pj.marquer_fait(p, partie)
             pj.enregistrer(p)
         return resultats
 
@@ -312,6 +384,10 @@ class ServeurEditeur:
                       avant={k: r["avant"].get("disciplines" if k == "ajout_discipline" else k) for k in nouveau},
                       apres={k: r["apres"].get("disciplines" if k == "ajout_discipline" else k) for k in nouveau})
         self._journal(f"✏ Vidéo n° {video.get('id')} : métadonnées modifiées sur Pod ({champs}).")
+        with self.verrou:
+            p = pj.charger(pid)
+            pj.marquer_fait(p, "meta")
+            pj.enregistrer(p)
         # La vidéo a changé sur Pod : on prévient l'hôte, pour que ses listes
         # (onglet Vidéos de PodAdmin) ne gardent pas l'ancien titre.
         if self.sur_video_modifiee:
@@ -321,31 +397,49 @@ class ServeurEditeur:
                 self._journal(f"Vidéo n° {video.get('id')} : liste non rafraîchie ({ex}).")
         return r
 
-    def reprendre(self, pid: str) -> None:
-        """Relance le suivi d'un enrichissement resté en cours (redémarrage)."""
-        e = (pj.charger(pid).get("enrichissement") or {})
+    def reprendre(self, pid: str) -> int:
+        """Relance le suivi des demandes restées chez Aristote (application
+        fermée entre-temps). Renvoie le nombre de demandes reprises."""
         client = self.client()
-        if e.get("etat") == "en_cours" and e.get("eid") and client:
-            threading.Thread(target=self._suivre,
-                             args=(pid, client, e["eid"], e.get("traduire_vers", "")),
+        demandes = pj.demandes_en_cours(pj.charger(pid)) if client else []
+        for d in demandes:
+            threading.Thread(target=self._suivre, args=(pid, client, d["cle"], d["eid"]),
                              daemon=True).start()
+        return len(demandes)
 
-    def _suivre(self, pid: str, client, eid: str, traduire_vers: str) -> None:
+    def _maj_demande(self, pid: str, cle: str, eid: str, **champs) -> None:
+        """Modifie une demande, relue sur disque : les corrections faites
+        entre-temps dans l'éditeur sont préservées."""
+        with self.verrou:
+            p = pj.charger(pid)
+            d = pj.enrichissement(p)["demandes"].get(cle)
+            if d and d.get("eid") == eid:
+                d.update(champs)
+                pj.enregistrer(p)
+
+    def _suivre(self, pid: str, client, cle: str, eid: str) -> None:
         from .aristote_api import ETATS
+        ok = False
         try:
             client.attendre(eid, intervalle=5, jusqu_au_bout=True,
-                            rappel=lambda s, _d: self._maj_enrichissement(
-                                pid, detail=ETATS.get(s, s)))
+                            rappel=lambda s, _d: self._maj_demande(
+                                pid, cle, eid, detail=ETATS.get(s, s)))
             version = client.version_finale(eid)
             with self.verrou:
                 p = pj.charger(pid)
-                params = st.Parametres.depuis_dict(p.get("parametres"))
-                pj.appliquer_enrichissement(p, version, traduire_vers, params)
-                pj.enregistrer(p)
+                d = pj.enrichissement(p)["demandes"].get(cle)
+                if d and d.get("eid") == eid:        # pas remplacée entre-temps
+                    pj.appliquer_demande(p, cle, version,
+                                         st.Parametres.depuis_dict(p.get("parametres")))
+                    pj.enregistrer(p)
+            ok = True
         except Exception as e:                                  # noqa: BLE001
-            self._maj_enrichissement(pid, etat="erreur", detail="", erreur=str(e))
+            self._maj_demande(pid, cle, eid, etat="erreur", detail="",
+                              erreur=self.message_erreur(e))
         if self.sur_enregistrement:
             self.sur_enregistrement(pid)
+        if self.sur_resultat:
+            self.sur_resultat(pid, cle, ok)
 
 
 class _Gestionnaire(BaseHTTPRequestHandler):
@@ -422,7 +516,7 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                 "audio": bool(p.get("audio")) and os.path.exists(p["audio"]),
                 "formats": self.srv.formats_defaut(),
                 "version": __version__,
-                "enrichissement": pj.enrichissement(p),
+                "enrichissement": self.srv.vue_enrichissement(p),
                 "langues_traduction": self.srv.langues_traduction(p.get("langue") or "fr"),
             })
         # État des pistes sur Pod, lu juste avant d'ouvrir la fenêtre de publication.
@@ -445,7 +539,11 @@ class _Gestionnaire(BaseHTTPRequestHandler):
             p = self._projet(parts[1])
             if p is None:
                 return self._json(404, {"erreur": "projet introuvable"})
-            return self._json(200, pj.enrichissement(p))
+            import time
+            self.srv.vues[parts[1]] = time.time()
+            vue = self.srv.vue_enrichissement(p)
+            vue["commande"] = self.srv.commandes.pop(parts[1], "")
+            return self._json(200, vue)
         if parts == ["ressources", "logo_ut.png"]:      # logo de l'en-tête de l'éditeur
             return self._envoyer_fichier(_ressource("assets/logo_ut.png"))
         if len(parts) == 2 and parts[0] in ("media", "audio"):
@@ -534,7 +632,21 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                     bool(d.get("metadonnees")), bool(d.get("quiz")))
             except Exception as e:                              # noqa: BLE001
                 return self._json(400, {"erreur": self.srv.message_erreur(e)})
-            return self._json(200, pj.enrichissement(pj.charger(parts[1])))
+            return self._json(200, self.srv.vue_enrichissement(pj.charger(parts[1])))
+        # Une demande pour UNE partie (« meta », « quiz », « trad:en »…).
+        if len(parts) == 3 and parts[2] == "demander":
+            if self._projet(parts[1]) is None:
+                return self._json(404, {"erreur": "projet introuvable"})
+            d = self._lire_json()
+            try:
+                self.srv.lancer_demande(parts[1], str(d.get("cle") or ""))
+            except Exception as e:                              # noqa: BLE001
+                return self._json(400, {"erreur": self.srv.message_erreur(e)})
+            return self._json(200, self.srv.vue_enrichissement(pj.charger(parts[1])))
+        if len(parts) == 3 and parts[2] == "relu":
+            if self._projet(parts[1]) is None:
+                return self._json(404, {"erreur": "projet introuvable"})
+            return self._json(200, self.srv.marquer_relu(parts[1]))
         with self.srv.verrou:
             p = self._projet(parts[1])
             if p is None:
@@ -552,13 +664,17 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                     reponse = {"ok": True}
                 elif action == "exporter":
                     formats = [f for f in d.get("formats", ["vtt"]) if f in ("vtt", "srt")]
+                    meta, quiz = bool(d.get("metadonnees")), bool(d.get("quiz"))
+                    # Depuis la 1.11.0, chaque partie exporte seule : les
+                    # sous-titres ne partent que si un format est demandé.
+                    if not (formats or meta or quiz):
+                        formats = ["vtt"]
                     if "sous_titres" in d:
                         p["sous_titres"] = d["sous_titres"]
-                    ecrits = pj.exporter(p, formats or ["vtt"],
-                                         langues=d.get("langues") or [],
-                                         metadonnees=bool(d.get("metadonnees")),
-                                         quiz=bool(d.get("quiz")))
-                    p["etat"] = "corrige"
+                    ecrits = pj.exporter(p, formats, langues=d.get("langues") or [],
+                                         metadonnees=meta, quiz=quiz)
+                    if formats:
+                        p["etat"] = "corrige"
                     pj.enregistrer(p)
                     reponse = {"ok": True, "fichiers": ecrits}
                 elif action == "redecouper":
@@ -572,11 +688,10 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                     # Corrections faites dans les onglets Traduction,
                     # Métadonnées et Quiz.
                     e = pj.enrichissement(p)
-                    for cle in ("metadonnees", "quiz", "traductions"):
-                        if cle in d:
-                            e[cle] = d[cle]
+                    ignorees = pj.fusionner_page(e, d)
                     pj.enregistrer(p)
-                    reponse = {"ok": True}
+                    reponse = {"ok": True, "ignorees": ignorees, "quiz": e["quiz"],
+                               "versions": e["versions"]}
                 else:
                     return self._json(404, {"erreur": "action inconnue"})
             except (KeyError, ValueError, TypeError, OSError) as e:

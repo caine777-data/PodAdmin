@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SousTitreur, correction</title>
+<title>Enrichissement IA, PodAdmin</title>
 <style>
 /* Couleurs = charte de PodAdmin (voir charte.py) : une couleur = un sens.
    --accent  C_ACTION, le SEUL bouton coloré de l'écran ;
@@ -86,12 +86,6 @@ main{display:grid;grid-template-columns:minmax(0,3fr) minmax(400px,2fr);gap:20px
 /* ── Colonne de droite ── */
 #droite{display:flex;flex-direction:column;min-height:0;background:var(--carte);
   border:1px solid var(--bord);border-radius:12px;overflow:hidden}
-#onglets{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--bord);flex-wrap:wrap}
-#onglets button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;
-  padding:8px 12px;color:var(--doux);font-weight:500}
-#onglets button:hover{color:var(--texte)}
-#onglets button.choisi{color:var(--texte);border-bottom-color:var(--accent)}
-#onglets button[hidden]{display:none}
 .barre{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--bord);flex-wrap:wrap}
 .barre input[type=text]{flex:1;min-width:140px}
 .barre .resume{font-size:12.5px;color:var(--doux);white-space:nowrap}
@@ -202,21 +196,59 @@ a{color:var(--lien)}
 header .logo{background:#fff;border-radius:6px;padding:4px 8px;display:flex;align-items:center}
 header .logo img{height:22px;display:block}
 header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px solid var(--bord)}
+/* ── Parties (1.11.0) : sous-titres et traduction, métadonnées, quiz ── */
+[hidden]{display:none!important}
+#parties{display:flex;gap:4px;margin-left:6px;flex:none}
+#parties button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;border-color:transparent;
+  background:none;padding:5px 12px;border-radius:8px;line-height:1.2;text-align:left}
+#parties button span{font-weight:600;font-size:13.5px}
+#parties button small{font-size:11.5px;color:var(--doux);white-space:nowrap}
+#parties button:hover{border-color:var(--bord)}
+#parties button.choisi{background:var(--actif);border-color:var(--actif-bord)}
+#parties button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
+small.s-alerte{color:var(--alerte)!important} small.s-ok{color:var(--ok)!important}
+small.s-cours{color:var(--lien)!important} small.s-erreur{color:var(--erreur)!important}
+/* Actions d'une partie : groupées à droite, l'action principale en dernier. */
+.actions-partie{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}
+.actions-partie .primaire{order:9}
+main.pleine{grid-template-columns:minmax(0,1fr)}
+main.pleine #gauche{display:none}
+main.pleine .formulaire{max-width:920px;margin:0 auto;width:100%;box-sizing:border-box}
+.segments{display:inline-flex;border:1px solid var(--bord);border-radius:8px;overflow:hidden}
+.segments button{border:none;border-radius:0;padding:6px 12px;background:var(--carte);display:flex;
+  flex-direction:column;align-items:flex-start;line-height:1.2}
+.segments button+button{border-left:1px solid var(--bord)}
+.segments button.choisi{background:var(--actif);font-weight:600}
+.segments small{font-size:11px;color:var(--doux);font-weight:400;min-height:13px}
+.bandeau{margin:10px 12px 0;padding:9px 12px;border-radius:8px;background:var(--alerte-doux);color:var(--alerte);
+  font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.bandeau.info{background:var(--accent-doux);color:var(--texte)}
+.question .tete{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.question .tete b{font-size:13.5px}
+.etiquette{font-size:11.5px;padding:1px 8px;border-radius:10px;background:var(--fond);color:var(--doux)}
+.etiquette.nouvelle{background:var(--accent-doux);color:var(--texte)}
+.question.ecartee{opacity:.62}
+.question.cible{outline:2px solid var(--accent);outline-offset:2px}
+.retenir{display:inline-flex;gap:6px;align-items:center;font-size:13px;margin-left:auto;cursor:pointer}
+.ressemble{font-size:12.5px;color:var(--alerte);margin:-2px 0 10px}
+.vide-panneau .boutons{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
+.vide-panneau .boutons button{margin-top:0}
+.poubelle:hover{border-color:var(--erreur)!important;color:var(--erreur)!important}
 </style>
 </head>
 <body>
 <header>
   <span class="logo"><img id="logo" alt="Université de Toulouse"></span>
-  <span class="appli">SousTitreur</span>
+  <span class="appli">PodAdmin</span>
   <h1 id="titre">Chargement…</h1>
-  <span id="etat"></span>
+  <nav id="parties" aria-label="Parties de l'enrichissement">
+    <button type="button" data-partie="st"><span>Sous-titres et traduction</span><small></small></button>
+    <button type="button" data-partie="meta"><span>Métadonnées</span><small></small></button>
+    <button type="button" data-partie="quiz"><span>Quiz</span><small></small></button>
+  </nav>
   <span class="espace"></span>
   <span id="enr-pastille"></span>
-  <button class="discret" id="b-annuler" title="Annuler (Ctrl+Z hors zone de texte)" disabled>↶ Annuler</button>
-  <button class="discret" id="b-retablir" title="Rétablir" disabled>↷ Rétablir</button>
-  <button id="b-ouvrir-enrichir">Traduire et enrichir…</button>
-  <button id="b-publier" hidden title="Déposer les sous-titres sur la vidéo déjà présente sur Pod. La vidéo elle-même n'est pas modifiée.">Publier les sous-titres sur Pod…</button>
-  <button class="primaire" id="b-exporter">Exporter…</button>
+  <span id="etat"></span>
 </header>
 
 <main>
@@ -232,7 +264,6 @@ header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px
       <button id="b-suiv" title="Sous-titre suivant (Alt+↓)">⏭</button>
       <span id="temps">00:00</span>
       <select id="vitesse" title="Vitesse de lecture"><option value="0.75">× 0,75</option><option value="1" selected>× 1</option><option value="1.25">× 1,25</option><option value="1.5">× 1,5</option></select>
-      <label id="ap-langue-l" hidden><select id="ap-langue" title="Langue affichée sur la vidéo"></select></label>
       <span class="espace"></span>
       <button class="discret" id="b-apparence" title="Apparence des sous-titres sur la vidéo">Aa Apparence</button>
       <button class="discret" id="b-aide" title="Raccourcis clavier">? Raccourcis</button>
@@ -240,18 +271,23 @@ header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px
   </section>
 
   <section id="droite">
-    <nav id="onglets">
-      <button data-onglet="st" class="choisi">Sous-titres</button>
-      <button data-onglet="tr" id="o-tr" hidden>Traduction</button>
-      <button data-onglet="meta">Métadonnées</button>
-      <button data-onglet="quiz">Quiz</button>
-    </nav>
+    <div class="barre" id="barre-st">
+      <div class="segments" id="langues-vue" role="tablist" aria-label="Langue relue"></div>
+      <div class="actions-partie">
+        <button type="button" id="b-traduire" hidden></button>
+        <button type="button" id="b-relu" hidden>Relecture terminée</button>
+        <button type="button" id="b-publier" hidden title="Déposer les sous-titres sur la vidéo Pod. La vidéo elle-même n'est pas modifiée.">Publier sur Pod…</button>
+        <button type="button" id="b-exporter">Exporter…</button>
+      </div>
+    </div>
 
     <div class="panneau" id="pan-st">
       <div class="barre">
         <input type="text" id="r-cherche" placeholder="Rechercher dans le texte">
         <button class="discret" id="b-remplacer" title="Rechercher et remplacer">Remplacer…</button>
         <label class="puce" title="N'afficher que les sous-titres hors norme"><input type="checkbox" id="seulement-alertes"> À revoir</label>
+        <button class="discret" id="b-annuler" title="Annuler (Ctrl+Z hors zone de texte)" disabled>↶</button>
+        <button class="discret" id="b-retablir" title="Rétablir" disabled>↷</button>
         <details class="menu">
           <summary>Outils ▾</summary>
           <div class="contenu">
@@ -272,26 +308,17 @@ header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px
       <div class="barre" style="padding:6px 12px"><div class="resume" id="resume"></div></div>
       <div class="defile"><div id="liste"></div></div>
     </div>
-    <div class="panneau" id="pan-tr" hidden><div class="defile"><div id="liste-tr"></div></div></div>
+    <div class="panneau" id="pan-tr" hidden>
+      <div class="bandeau info" id="bandeau-tr" hidden></div>
+      <div class="defile"><div id="liste-tr"></div></div>
+    </div>
     <div class="panneau" id="pan-meta" hidden><div class="defile formulaire" id="contenu-meta"></div></div>
-    <div class="panneau" id="pan-quiz" hidden><div class="defile formulaire" id="contenu-quiz"></div></div>
+    <div class="panneau" id="pan-quiz" hidden>
+      <div class="barre" id="barre-quiz"></div>
+      <div class="defile formulaire" id="contenu-quiz"></div>
+    </div>
   </section>
 </main>
-
-<dialog id="d-enrichir">
-  <form method="dialog">
-    <h3>Traduire et enrichir avec Aristote</h3>
-    <p class="note" style="margin-top:0">Aristote travaille sur vos sous-titres tels qu'ils sont maintenant. Terminez la relecture avant l'envoi : la traduction et le quiz profitent de vos corrections.</p>
-    <label>Traduire en <select id="enr-langue"><option value="">pas de traduction</option></select></label>
-    <label style="justify-content:flex-start"><input type="checkbox" id="enr-meta" checked> Titre, description et mots-clés</label>
-    <label style="justify-content:flex-start"><input type="checkbox" id="enr-quiz" checked> Quiz (exportable vers Moodle)</label>
-    <div id="enr-etat"></div>
-    <div class="pied">
-      <button value="fermer">Fermer</button>
-      <button type="button" class="primaire" id="b-enrichir">Envoyer</button>
-    </div>
-  </form>
-</dialog>
 
 <dialog id="d-publier" style="width:min(560px,94vw)">
   <form method="dialog">
@@ -377,11 +404,7 @@ header .appli{font-weight:700;font-size:14px;padding-right:10px;border-right:1px
       <label><input type="checkbox" id="x-srt"> SRT (montage, YouTube)</label>
     </fieldset>
     <fieldset><legend>Langues</legend><div id="x-langues"></div></fieldset>
-    <fieldset id="x-autres"><legend>Enrichissements</legend>
-      <label><input type="checkbox" id="x-meta"> Métadonnées (fichier texte)</label>
-      <label><input type="checkbox" id="x-quiz"> Quiz au format Moodle (GIFT)</label>
-    </fieldset>
-    <p class="note">Les fichiers sont écrits à côté de la vidéo. Un fichier que SousTitreur n'a pas créé n'est jamais écrasé.</p>
+    <p class="note">Les fichiers sont écrits à côté de la vidéo. Un fichier que PodAdmin n'a pas créé n'est jamais écrasé.</p>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
       <button value="non">Annuler</button>
       <button value="oui" class="primaire">Exporter</button>
@@ -402,6 +425,7 @@ const apiAction = a => `/api/${PID}/${a}?t=${encodeURIComponent(JETON)}`;
 let S = [];            // sous-titres [{start,end,text}]
 let P = {};            // paramètres de découpage
 let actif = -1;
+let langueVue = "fr", partieCourante = "st";   // langue relue, partie affichée
 let pile = [], pileRetablir = [];
 let minuterieSauvegarde = null, modifie = false;
 
@@ -615,10 +639,7 @@ $("#b-exporter").onclick = () => {
   const trad = Object.keys(E.traductions || {}).filter(l => (E.traductions[l] || []).length);
   $("#x-langues").innerHTML = `<label><input type="checkbox" checked disabled> ${nomLangue(LANGUE)} (sous-titres corrigés)</label>` +
     trad.map(l => `<label><input type="checkbox" class="x-lg" value="${l}" checked> ${nomLangue(l)} (traduction)</label>`).join("") +
-    (trad.length ? "" : `<p class="note" style="margin:4px 0">Aucune traduction : voir « Traduire et enrichir ».</p>`);
-  const meta = E.metadonnees && E.metadonnees.titre, quiz = (E.quiz || []).length > 0;
-  $("#x-meta").checked = !!meta; $("#x-meta").disabled = !meta;
-  $("#x-quiz").checked = quiz; $("#x-quiz").disabled = !quiz;
+    (trad.length ? "" : `<p class="note" style="margin:4px 0">Aucune traduction : choisissez une langue au-dessus de la liste.</p>`);
   $("#d-exporter").showModal();
 };
 $("#d-exporter").addEventListener("close", async () => {
@@ -632,12 +653,13 @@ $("#d-exporter").addEventListener("close", async () => {
   await sauver(); await sauverEnrichissement();
   const corps = {formats, sous_titres: S,
     langues: [...document.querySelectorAll(".x-lg:checked")].map(x => x.value),
-    metadonnees: $("#x-meta").checked, quiz: $("#x-quiz").checked};
+    metadonnees: false, quiz: false};
   const r = await fetch(apiAction("exporter"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(corps)});
   const d = await r.json();
   if (!r.ok){ toast("Échec de l'export : " + d.erreur, 6000); return; }
   toast(`${d.fichiers.length} fichier(s) créé(s) : ` + d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; "), 9000);
   $("#etat").textContent = "Exporté à " + new Date().toLocaleTimeString("fr-FR");
+  interroger();
 });
 
 /* ─────────── Vidéo et incrustation ─────────── */
@@ -649,12 +671,12 @@ function trouver(t, A = S){
 }
 function majIncruste(force){
   const i = trouver(video.currentTime);
-  // Langue affichée dans l'aperçu : l'original ou une traduction.
-  const lg = $("#ap-langue").value, A = lg && lg !== LANGUE && E.traductions && E.traductions[lg] ? E.traductions[lg] : S;
+  // Langue affichée sur la vidéo : celle que l'on relit (original ou traduction).
+  const T = langueVue !== LANGUE ? (E.traductions || {})[langueVue] : null, A = T && T.length ? T : S;
   const j = A === S ? i : trouver(video.currentTime, A);
   $("#incruste span").textContent = j >= 0 ? A[j].text : "";
   $("#incruste span").style.display = j >= 0 && A[j].text ? "" : "none";
-  if (ongletCourant === "tr") majActifTraduction(j);
+  if (langueVue !== LANGUE) majActifTraduction(j);
   if (i !== actif || force){
     if (actif >= 0 && elSt(actif)) elSt(actif).classList.remove("actif");
     actif = i;
@@ -768,83 +790,223 @@ $("#d-redecouper").addEventListener("close", async () => {
   $("#etat").textContent = "Découpage refait (Annuler pour revenir en arrière)";
 });
 
-/* ═══════════ Onglets ═══════════ */
-let ongletCourant = "st";
-document.querySelectorAll("#onglets button").forEach(b => b.onclick = () => montrerOnglet(b.dataset.onglet));
-function montrerOnglet(o){
-  ongletCourant = o;
-  document.querySelectorAll("#onglets button").forEach(b => b.classList.toggle("choisi", b.dataset.onglet === o));
-  ["st","tr","meta","quiz"].forEach(x => $("#pan-" + x).hidden = x !== o);
-  if (o === "tr" && $("#ap-langue").value === LANGUE){ $("#ap-langue").value = langueTraduite(); majIncruste(true); }
-  if (o === "st" && $("#ap-langue").value !== LANGUE){ $("#ap-langue").value = LANGUE; majIncruste(true); }
+/* ═══════════ Parties (1.11.0) : sous-titres et traduction, métadonnées, quiz ═══════════ */
+document.querySelectorAll("#parties button").forEach(b => b.onclick = () => {
+  if (b.getAttribute("aria-disabled") === "true"){ toast(b.title, 6000); return; }
+  montrerPartie(b.dataset.partie);
+});
+function montrerPartie(o){
+  if (!["st", "meta", "quiz"].includes(o) || (o === "meta" && !POD)) o = "st";
+  partieCourante = o;
+  document.querySelectorAll("#parties button").forEach(b => {
+    b.classList.toggle("choisi", b.dataset.partie === o);
+    b.setAttribute("aria-current", b.dataset.partie === o ? "page" : "false");
+  });
+  // Métadonnées et quiz prennent toute la largeur : la vidéo n'y sert pas.
+  $("main").classList.toggle("pleine", o !== "st");
+  if (o !== "st" && !video.paused) video.pause();
+  $("#barre-st").hidden = o !== "st";
+  $("#pan-st").hidden = !(o === "st" && langueVue === LANGUE);
+  $("#pan-tr").hidden = !(o === "st" && langueVue !== LANGUE);
+  $("#pan-meta").hidden = o !== "meta";
+  $("#pan-quiz").hidden = o !== "quiz";
+  if (/[?&]partie=/.test(location.search))
+    history.replaceState(null, "", location.pathname + location.search.replace(/([?&]partie=)[^&]*/, "$1" + o));
   document.querySelectorAll(".defile").forEach(d => d.scrollTop = 0);
 }
+function choisirLangue(lg){
+  langueVue = lg;
+  if (partieCourante === "st"){ $("#pan-st").hidden = lg !== LANGUE; $("#pan-tr").hidden = lg === LANGUE; }
+  rendreTraduction(); majLangues(); majActionsSt(); majIncruste(true);
+}
 
-/* ═══════════ Enrichissement : traduction, métadonnées, quiz ═══════════ */
-let E = {}, LANGUE = "fr", LANGUES = [], suiviEnr = null, minuterieEnr = null;
+/* ═══════════ Enrichissement : une demande Aristote par partie ═══════════ */
+let E = {}, LANGUE = "fr", LANGUES = [], minuterieEnr = null, VERSIONS = {}, QUIZ_VUS = new Set();
 const NOMS = {fr:"Français", en:"Anglais", pt:"Portugais", es:"Espagnol", de:"Allemand", it:"Italien"};
 const nomLangue = c => (LANGUES.find(l => l.code === c) || {}).name || NOMS[c] || c;
-const langueTraduite = () => Object.keys(E.traductions || {}).find(l => (E.traductions[l] || []).length) || "";
 const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const partieDeCle = cle => cle.startsWith("trad:") ? "st" : cle;
+const libelleCle = cle => cle === "meta" ? "métadonnées" : cle === "quiz" ? "quiz"
+  : "traduction en " + nomLangue(cle.slice(5)).toLowerCase();
+const etatDe = p => (E.parties || {})[p] || {etat: "vide", detail: "", perime: false};
+const nouvelId = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random())).replace(/[^0-9a-f]/g, "").slice(0, 8);
+const ATTENTE = "de quelques secondes à un quart d'heure";
 
-function majCarteEnrichir(){
-  const el = $("#enr-etat"), cours = E.etat === "en_cours";
-  $("#b-enrichir").disabled = cours;
-  el.className = E.etat === "erreur" ? "erreur" : "";
-  if (cours) el.innerHTML = `<span class="roue"></span>${esc(E.detail || "En cours")}… Vous pouvez continuer à travailler.`;
-  else if (E.etat === "erreur") el.textContent = "Échec : " + (E.erreur || "cause inconnue");
-  else if (E.etat === "termine") el.textContent = "Terminé. Résultats dans les onglets " +
-    [langueTraduite() && "Traduction", E.metadonnees && E.metadonnees.titre && "Métadonnées", (E.quiz || []).length && "Quiz"].filter(Boolean).join(", ") + ".";
-  else el.textContent = "";
-  $("#enr-pastille").innerHTML = cours ? `<span class="roue"></span>Aristote : ${esc(E.detail || "en cours")}` : "";
+/* Pastille sous chaque partie de l'en-tête : [texte, teinte]. */
+function resumePartie(p){
+  const e = etatDe(p);
+  if (p === "sous_titres") return ({vide: ["aucun", ""], en_cours: ["transcription en cours", "s-cours"],
+    erreur: ["échec", "s-erreur"], a_relire: ["à relire", "s-alerte"], relu: ["relus", "s-ok"],
+    fait: ["publiés", "s-ok"]})[e.etat] || ["", ""];
+  if (e.etat === "en_cours") return ["chez Aristote", "s-cours"];
+  if (e.etat === "erreur") return ["échec", "s-erreur"];
+  if (e.perime) return ["à revoir : sous-titres modifiés", "s-alerte"];
+  if (e.etat === "vide") return ["pas encore demandé", ""];
+  if (p === "quiz") return [e.etat === "fait" ? "exporté" : (e.detail.startsWith("dernière") ? "à relire" : e.detail),
+                            e.etat === "fait" ? "s-ok" : "s-alerte"];
+  return e.etat === "fait" ? ["publiées", "s-ok"] : ["proposées, non publiées", "s-alerte"];
 }
-$("#b-enrichir").onclick = async () => {
-  const traduire_vers = $("#enr-langue").value, metadonnees = $("#enr-meta").checked, quiz = $("#enr-quiz").checked;
-  if (!traduire_vers && !metadonnees && !quiz){ toast("Choisissez au moins une langue, les métadonnées ou le quiz."); return; }
-  const deja = (traduire_vers && (E.traductions || {})[traduire_vers]) || (metadonnees && E.metadonnees && E.metadonnees.titre) || (quiz && (E.quiz || []).length);
-  if (deja && !confirm("Les résultats précédents seront remplacés, y compris vos corrections dans ces onglets. Continuer ?")) return;
-  await sauver();
-  $("#b-enrichir").disabled = true;
-  const r = await fetch(apiAction("enrichir"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({traduire_vers, metadonnees, quiz})});
+function majParties(){
+  const st = resumePartie("sous_titres");
+  const trad = LANGUES.filter(l => ((E.traductions || {})[l.code] || []).length).length;
+  const pastilles = {st: [st[0] + (trad ? ` · ${trad} traduction${trad > 1 ? "s" : ""}` : ""), st[1]],
+                     meta: resumePartie("meta"), quiz: resumePartie("quiz")};
+  document.querySelectorAll("#parties button").forEach(b => {
+    const [t, c] = pastilles[b.dataset.partie], sm = b.querySelector("small");
+    sm.textContent = t; sm.className = c;
+  });
+  // Vidéo du poste : les métadonnées se publient sur la fiche Pod (décision de Cédric).
+  const bm = $('#parties [data-partie="meta"]');
+  bm.setAttribute("aria-disabled", POD ? "false" : "true");
+  bm.title = POD ? "" : "Disponible une fois la vidéo sur Pod : les métadonnées se publient sur sa fiche.";
+  if (!POD){ bm.querySelector("small").textContent = "disponible une fois la vidéo sur Pod"; bm.querySelector("small").className = ""; }
+  const cours = Object.entries(E.parties || {}).filter(([k, v]) => k !== "sous_titres" && v.etat === "en_cours").map(([k]) => libelleCle(k));
+  $("#enr-pastille").innerHTML = cours.length ? `<span class="roue"></span>Chez Aristote : ${esc(cours.join(", "))}` : "";
+  majLangues(); majActionsSt();
+}
+
+/* Une demande pour UNE partie. Avertit, sans bloquer, si le texte n'a pas été relu. */
+async function demander(cle){
+  if (etatDe("sous_titres").etat === "a_relire" && !confirm(
+      "Les sous-titres n'ont pas encore été relus : Aristote travaillera sur le texte tel qu'il est.\n\nDemander quand même ?")) return;
+  await sauver(); await sauverEnrichissement();
+  const r = await fetch(apiAction("demander"), {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({cle})});
   const d = await r.json();
-  if (!r.ok){ $("#b-enrichir").disabled = false; toast("Envoi refusé : " + d.erreur, 7000); return; }
-  E = d; majCarteEnrichir(); suivreEnrichissement();
-};
-function suivreEnrichissement(){
-  clearInterval(suiviEnr);
-  suiviEnr = setInterval(async () => {
-    const r = await fetch(apiAction("enrichissement")); if (!r.ok) return;
-    const d = await r.json();
-    if (d.etat === "en_cours"){ E.detail = d.detail; majCarteEnrichir(); return; }
-    clearInterval(suiviEnr); E = d; majCarteEnrichir(); afficherEnrichissement();
-    if (d.etat === "termine"){
-      // La fenêtre se ferme d'elle-même et l'on arrive sur les résultats.
-      if ($("#d-enrichir").open) $("#d-enrichir").close();
-      montrerOnglet(E.metadonnees && E.metadonnees.titre ? "meta" : langueTraduite() ? "tr" : (E.quiz || []).length ? "quiz" : "st");
-      toast("Aristote a terminé : relisez les résultats.", 5000);
-    }
-  }, 5000);
+  if (!r.ok){ toast("Demande refusée : " + d.erreur, 7000); return; }
+  E.parties = d.parties; majParties(); rendrePartie(partieDeCle(cle));
+  toast(`Demande envoyée à Aristote (${libelleCle(cle)}). Résultat ${ATTENTE} : vous pouvez continuer à travailler.`, 7000);
 }
+
+/* Interrogation toutes les 3 s : état des parties, résultats arrivés, et
+   ordre de PodAdmin (une seule fenêtre par vidéo : « affiche le quiz »).
+   Un résultat se repère à sa VERSION, plus récente sur le serveur que dans
+   la page : guetter le passage « en cours » → « terminé » en manquait un si
+   une autre action avait rafraîchi l'état entre deux interrogations. */
+async function interroger(){
+  let r;
+  try { r = await fetch(apiAction("enrichissement")); } catch { return; }
+  if (!r.ok) return;
+  let d = await r.json();
+  if (d.commande){ montrerPartie(d.commande); window.focus(); }
+  const plusRecentes = v => Object.keys(v.versions || {}).filter(k => (v.versions[k] || 0) > (VERSIONS[k] || 0));
+  if (plusRecentes(d).length && minuterieEnr){
+    // Saisie en attente : on l'enregistre d'abord, puis on relit.
+    await sauverEnrichissement();
+    const r2 = await fetch(apiAction("enrichissement")); if (r2.ok) d = await r2.json();
+  }
+  const avant = E.parties || {}, nouveautes = plusRecentes(d);
+  nouveautes.forEach(k => recevoir(k, d));
+  Object.keys(d.parties || {}).forEach(k => {
+    if (k === "sous_titres" || (avant[k] || {}).etat !== "en_cours" || d.parties[k].etat === "en_cours" || nouveautes.includes(k)) return;
+    if (d.parties[k].etat === "erreur") toast(`Échec de la demande (${libelleCle(k)}) : ${d.parties[k].detail}`, 9000);
+    else toast(`Aristote a terminé (${libelleCle(k)}) sans rien proposer de nouveau.`, 7000);
+  });
+  const changees = Object.keys(d.parties || {}).filter(k => (avant[k] || {}).etat !== d.parties[k].etat || nouveautes.includes(k));
+  E.parties = d.parties; majParties();
+  new Set(changees.filter(k => k !== "sous_titres").map(partieDeCle)).forEach(rendrePartie);
+}
+function recevoir(k, d){
+  if (k === "meta") E.metadonnees = d.metadonnees || {};
+  if (k.startsWith("trad:")) E.traductions[k.slice(5)] = (d.traductions || {})[k.slice(5)] || [];
+  if (k === "quiz"){
+    const n = (d.quiz || []).filter(q => !QUIZ_VUS.has(q.id)).length;
+    E.quiz = d.quiz || []; E.quiz.forEach(q => QUIZ_VUS.add(q.id));
+    toast(n ? `Aristote a terminé : ${n} question${n > 1 ? "s" : ""} ajoutée${n > 1 ? "s" : ""} au quiz.`
+            : "Aristote n'a proposé aucune nouvelle question.", 7000);
+  } else toast(`Aristote a terminé : ${libelleCle(k)}. Relisez le résultat.`, 6000);
+  VERSIONS[k] = (d.versions || {})[k] || 0;
+}
+setInterval(interroger, 3000);
+
 function aSauverEnrichissement(){ clearTimeout(minuterieEnr); minuterieEnr = setTimeout(sauverEnrichissement, 1200); $("#etat").textContent = "Modifications non enregistrées…"; }
 async function sauverEnrichissement(){
-  clearTimeout(minuterieEnr);
-  const r = await fetch(apiAction("enrichissement"), {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({metadonnees: E.metadonnees || {}, quiz: E.quiz || [], traductions: E.traductions || {}})});
-  if (r.ok) $("#etat").textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR");
+  clearTimeout(minuterieEnr); minuterieEnr = null;
+  const r = await fetch(apiAction("enrichissement"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({metadonnees: E.metadonnees || {}, quiz: E.quiz || [], traductions: E.traductions || {},
+                          versions: VERSIONS, quiz_vus: [...QUIZ_VUS]})});
+  if (!r.ok){ $("#etat").textContent = "Échec de l'enregistrement"; return; }
+  const d = await r.json();
+  $("#etat").textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR");
+  // Questions arrivées pendant la saisie : le serveur les a gardées.
+  const nouvelles = (d.quiz || []).filter(q => !QUIZ_VUS.has(q.id));
+  if (nouvelles.length){ E.quiz = d.quiz; nouvelles.forEach(q => QUIZ_VUS.add(q.id)); rendreQuiz(); }
+  // Aristote a livré une version plus récente : la saisie faite sur l'ancienne est ignorée.
+  if ((d.ignorees || []).length){
+    const r2 = await fetch(apiAction("enrichissement")); if (!r2.ok) return;
+    const v = await r2.json();
+    d.ignorees.forEach(k => {
+      if (k === "meta") E.metadonnees = v.metadonnees || {};
+      else E.traductions[k.slice(5)] = (v.traductions || {})[k.slice(5)] || [];
+      VERSIONS[k] = (v.versions || {})[k] || 0; rendrePartie(partieDeCle(k));
+    });
+    toast("Aristote a livré une version plus récente : vos dernières modifications de cette partie n'ont pas été gardées.", 8000);
+  }
 }
-function afficherEnrichissement(){
-  const lg = langueTraduite();
-  $("#o-tr").hidden = !lg;
-  if (lg) $("#o-tr").textContent = "Traduction : " + nomLangue(lg);
-  $("#ap-langue-l").hidden = !lg;
-  $("#ap-langue").innerHTML = [LANGUE, ...Object.keys(E.traductions || {})].map(l => `<option value="${l}">${nomLangue(l)}</option>`).join("");
-  rendreTraduction(); rendreMeta(); rendreQuiz();
+function rendrePartie(p){
+  if (p === "st"){ rendreTraduction(); majActionsSt(); majIncruste(true); }
+  if (p === "meta") rendreMeta();
+  if (p === "quiz") rendreQuiz();
 }
+function rendreTout(){ majParties(); rendreTraduction(); rendreMeta(); rendreQuiz(); }
+
+/* ─────────── Partie Sous-titres et traduction : langue relue et actions ─────────── */
+function majLangues(){
+  const etiquette = l => {
+    if (l === LANGUE) return resumePartie("sous_titres")[0];
+    const e = etatDe("trad:" + l);
+    return e.etat === "en_cours" ? "en cours" : e.etat === "vide" ? "" : e.etat === "erreur" ? "échec"
+      : e.perime ? "à revoir" : e.etat === "fait" ? "publiée" : "à relire";
+  };
+  $("#langues-vue").innerHTML = [LANGUE, ...LANGUES.map(l => l.code)].map(l =>
+    `<button type="button" role="tab" data-lg="${esc(l)}" class="${l === langueVue ? "choisi" : ""}" aria-selected="${l === langueVue}">${esc(nomLangue(l))}<small>${esc(etiquette(l))}</small></button>`).join("");
+}
+$("#langues-vue").onclick = e => { const b = e.target.closest("button"); if (b) choisirLangue(b.dataset.lg); };
+function majActionsSt(){
+  const orig = langueVue === LANGUE, e = orig ? etatDe("sous_titres") : etatDe("trad:" + langueVue);
+  const T = orig ? S : ((E.traductions || {})[langueVue] || []);
+  const relu = ["relu", "fait"].includes(etatDe("sous_titres").etat), nom = nomLangue(langueVue).toLowerCase();
+  const bt = $("#b-traduire"), br = $("#b-relu"), bp = $("#b-publier"), bx = $("#b-exporter");
+  [bt, br, bp, bx].forEach(b => b.classList.remove("primaire"));
+  br.hidden = !orig || !S.length;
+  br.textContent = relu ? "✓ Relus" : "Relecture terminée";
+  br.title = relu ? "Relecture marquée terminée" : "Marque les sous-titres comme relus : traduction, métadonnées et quiz partiront d'un texte vérifié.";
+  bt.hidden = orig || e.etat === "en_cours";
+  bt.textContent = T.length ? "Redemander la traduction…" : `Traduire en ${nom} avec Aristote`;
+  bp.hidden = !POD || (!orig && !T.length);
+  bx.hidden = !orig && !T.length;
+  // Une seule action colorée : l'étape suivante.
+  const principal = !orig && !T.length ? bt : orig && !relu ? br : POD ? bp : bx;
+  if (!principal.hidden) principal.classList.add("primaire");
+  const bd = $("#bandeau-tr");
+  bd.className = "bandeau info"; bd.hidden = orig;
+  if (orig) return;
+  if (e.etat === "en_cours") bd.innerHTML = `<span class="roue"></span>Traduction en ${esc(nom)} chez Aristote, ${ATTENTE} : vous pouvez continuer à travailler.`;
+  else if (e.etat === "erreur") { bd.className = "bandeau"; bd.textContent = "Échec de la demande : " + e.detail; }
+  else if (!T.length) bd.textContent = `Pas encore de traduction en ${nom}. Aristote traduit les sous-titres français phrase par phrase ; PodAdmin la redécoupe ensuite aux normes, sur le même minutage.`;
+  else if (e.perime){ bd.className = "bandeau"; bd.textContent = "Les sous-titres français ont changé depuis cette traduction : relisez-la, ou redemandez-la à Aristote."; }
+  else if (e.detail){ bd.className = "bandeau"; bd.textContent = e.detail; }
+  else bd.hidden = true;
+}
+$("#b-traduire").onclick = () => {
+  const T = (E.traductions || {})[langueVue] || [];
+  if (T.length && !confirm(`Redemander la traduction en ${nomLangue(langueVue).toLowerCase()} ?\n\nLa nouvelle traduction remplacera celle-ci, y compris vos corrections.`)) return;
+  demander("trad:" + langueVue);
+};
+$("#b-relu").onclick = async () => {
+  if (["relu", "fait"].includes(etatDe("sous_titres").etat)) return;
+  const revoir = S.filter(s => alertes(s).length).length;
+  if (revoir && !confirm(`${revoir} sous-titre(s) ne respectent pas encore la norme.\n\nMarquer la relecture terminée quand même ?`)) return;
+  await sauver();
+  const r = await fetch(apiAction("relu"), {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+  if (!r.ok){ toast("Échec : la relecture n'a pas été enregistrée."); return; }
+  E.parties.sous_titres = await r.json(); majParties();
+  toast(POD ? "Relecture terminée. Étape suivante : publier sur Pod." : "Relecture terminée. Étape suivante : exporter les sous-titres.", 6000);
+};
 
 /* ─────────── Onglet Traduction ─────────── */
 const listeTr = $("#liste-tr");
 function rendreTraduction(){
-  const lg = langueTraduite(), T = lg ? E.traductions[lg] : [];
+  const lg = langueVue, T = lg !== LANGUE ? ((E.traductions || {})[lg] || []) : [];
   listeTr.innerHTML = T.map((s, i) => `<div class="st" data-i="${i}">
     <div class="num" title="Lire à partir d'ici">${i+1}</div>
     <div>
@@ -857,7 +1019,7 @@ function rendreTraduction(){
   listeTr.querySelectorAll(".st").forEach((el, i) => { el.querySelector("textarea").value = T[i].text; majStTr(i); });
 }
 function majStTr(i){
-  const T = E.traductions[langueTraduite()], el = listeTr.children[i], s = T[i], a = alertes(s);
+  const T = E.traductions[langueVue], el = listeTr.children[i], s = T[i], a = alertes(s);
   el.classList.toggle("alerte", a.length > 0);
   el.querySelector(".compteurs").innerHTML = s.text.split("\n").map(l => `<span class="${l.length > P.car_par_ligne ? "trop" : ""}">${l.length}</span>`).join("");
   el.querySelector(".badges").innerHTML = a.map(x => `<span class="badge">${x}</span>`).join("");
@@ -865,11 +1027,11 @@ function majStTr(i){
 listeTr.addEventListener("input", e => {
   if (e.target.tagName !== "TEXTAREA") return;
   const i = +e.target.closest(".st").dataset.i;
-  E.traductions[langueTraduite()][i].text = e.target.value; majStTr(i); majIncruste(true); aSauverEnrichissement();
+  E.traductions[langueVue][i].text = e.target.value; majStTr(i); majIncruste(true); aSauverEnrichissement();
 });
 listeTr.addEventListener("click", e => {
   const el = e.target.closest(".st"); if (!el) return;
-  const i = +el.dataset.i, T = E.traductions[langueTraduite()];
+  const i = +el.dataset.i, T = E.traductions[langueVue];
   if (e.target.classList.contains("num")){ video.currentTime = T[i].start + 0.01; video.play(); }
   if (e.target.dataset.a === "equilibrer"){ T[i].text = equilibrer(T[i].text); el.querySelector("textarea").value = T[i].text; majStTr(i); majIncruste(true); aSauverEnrichissement(); }
 });
@@ -895,23 +1057,29 @@ function options(choix, valeur){
   return html + liste.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
 }
 function rendreMeta(){
-  const m = E.metadonnees || {}, p = $("#contenu-meta");
+  const m = E.metadonnees || {}, p = $("#contenu-meta"), e = etatDe("meta"), cours = e.etat === "en_cours";
+  const bandeau = cours ? `<div class="bandeau info" style="margin:0 0 14px"><span class="roue"></span>Métadonnées demandées à Aristote, ${ATTENTE} : vous pouvez travailler ailleurs.</div>`
+    : e.perime ? `<div class="bandeau" style="margin:0 0 14px">Les sous-titres ont changé depuis cette proposition : vérifiez-la, ou redemandez-la à Aristote.</div>`
+    : e.detail ? `<div class="bandeau" style="margin:0 0 14px">${esc(e.detail)}</div>` : "";
   if (!m.titre && !m.description){
-    p.innerHTML = `<div class="vide-panneau">Pas encore de métadonnées. Aristote peut proposer un titre, une description et des mots-clés à partir de vos sous-titres corrigés.<br><button class="primaire" onclick="ouvrirEnrichir()">Traduire et enrichir…</button></div>`;
+    p.innerHTML = bandeau + (cours ? "" : `<div class="vide-panneau">Aristote peut proposer un titre, une description, des mots-clés, une discipline et un type, à partir des sous-titres. Vous relirez tout avant de publier, champ par champ.
+      <div class="boutons"><button type="button" class="primaire" onclick="demander('meta')">Demander à Aristote</button></div></div>`);
     return;
   }
-  p.innerHTML = `
+  p.innerHTML = bandeau + `
     <label class="champ"><span>Titre <small id="n-titre"></small></span><input type="text" data-m="titre"></label>
     <label class="champ"><span>Description <small id="n-description"></small></span><textarea data-m="description" rows="7" style="font-size:14px"></textarea></label>
     <label class="champ"><span>Mots-clés <small>un par ligne</small></span><textarea data-m="mots_cles" rows="6" style="font-size:14px"></textarea></label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <label class="champ"><span>Discipline</span><select data-m="discipline">${options(LISTES.disciplines, m.discipline)}</select></label>
+      <label class="champ"><span>Discipline <small>ajoutée sur Pod, jamais retirée</small></span><select data-m="discipline">${options(LISTES.disciplines, m.discipline)}</select></label>
       <label class="champ"><span>Type</span><select data-m="type">${options(LISTES.types, m.type)}</select></label>
     </div>
     <div class="ligne-outil" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      ${POD ? `<button type="button" class="primaire" onclick="ouvrirMetaPod()">Publier les métadonnées sur Pod…</button>` : ""}
-      <button id="b-copier-meta">Copier le tout</button>
-      <span class="note" style="margin:0">${POD ? "Vous choisirez champ par champ ce qui change sur Pod." : "Pour coller dans Pod : titre, description et mots-clés de la vidéo."}</span></div>`;
+      ${POD ? `<button type="button" class="primaire" onclick="ouvrirMetaPod()">Publier sur Pod…</button>` : ""}
+      <button type="button" id="b-copier-meta">Copier le tout</button>
+      <button type="button" onclick="exporterPartie('meta')">Exporter en fichier texte</button>
+      ${cours ? "" : `<button type="button" onclick="redemanderMeta()">Redemander à Aristote…</button>`}
+      <span class="note" style="margin:0">${POD ? "Vous choisirez champ par champ ce qui change sur Pod." : ""}</span></div>`;
   p.querySelectorAll("[data-m]").forEach(el => {
     const k = el.dataset.m; el.value = k === "mots_cles" ? (m.mots_cles || []).join("\n") : (m[k] || "");
   });
@@ -920,6 +1088,9 @@ function rendreMeta(){
     const t = `${m.titre}\n\n${m.description}\n\nMots-clés : ${(m.mots_cles || []).join(", ")}`;
     try { await navigator.clipboard.writeText(t); toast("Copié dans le presse-papiers."); } catch { toast("Copie impossible : sélectionnez le texte à la main."); }
   };
+}
+function redemanderMeta(){
+  if (confirm("Redemander les métadonnées à Aristote ?\n\nLa nouvelle proposition remplacera celle-ci, y compris vos corrections. Ce qui est déjà publié sur Pod ne change pas.")) demander("meta");
 }
 function compterMeta(){
   const m = E.metadonnees || {};
@@ -932,37 +1103,65 @@ $("#pan-meta").addEventListener("input", e => {
   compterMeta(); aSauverEnrichissement();
 });
 
-/* ─────────── Onglet Quiz ─────────── */
-function rendreQuiz(){
-  const Q = E.quiz || [], p = $("#contenu-quiz");
+/* ─────────── Partie Quiz ─────────── */
+const retenue = q => q.retenue !== false;
+function rendreQuiz(cible){
+  const Q = E.quiz || [], p = $("#contenu-quiz"), e = etatDe("quiz"), cours = e.etat === "en_cours";
+  const n = Q.filter(retenue).length, pl = x => x > 1 ? "s" : "";
+  const barre = $("#barre-quiz");
+  barre.hidden = !Q.length;
+  barre.innerHTML = `<span class="resume"><b>${Q.length}</b> question${pl(Q.length)} · <b>${n}</b> retenue${pl(n)} pour Moodle</span>
+    <span class="espace"></span>
+    <button type="button" data-a="rediger">Rédiger une question</button>
+    ${cours ? `<span class="note" style="margin:0"><span class="roue"></span>Questions demandées à Aristote…</span>`
+            : `<button type="button" data-a="demander">Demander d'autres questions</button>`}
+    <button type="button" data-a="exporter" class="primaire">Exporter ${n} question${pl(n)} pour Moodle</button>`;
+  const bandeau = e.perime ? `<div class="bandeau" style="margin:0 0 12px">Les sous-titres ont changé depuis les questions d'Aristote : vérifiez qu'elles sont toujours justes.</div>`
+    : /^(dernière|Aristote)/.test(e.detail || "") ? `<div class="bandeau" style="margin:0 0 12px">${esc(e.detail)}</div>` : "";
   if (!Q.length){
-    p.innerHTML = `<div class="vide-panneau">Pas encore de quiz. Aristote peut rédiger des questions à partir de vos sous-titres corrigés, exportables vers Moodle.<br><button class="primaire" onclick="ouvrirEnrichir()">Traduire et enrichir…</button></div>`;
+    p.innerHTML = bandeau + (cours
+      ? `<div class="vide-panneau"><span class="roue"></span>Aristote rédige des questions à partir des sous-titres, ${ATTENTE}.<div class="boutons"><button type="button" data-a="rediger">Rédiger une question en attendant</button></div></div>`
+      : `<div class="vide-panneau">Pas encore de quiz. Aristote peut proposer des questions à choix multiple à partir des sous-titres, et vous pouvez rédiger les vôtres. Le tout s'exporte vers la banque de questions de Moodle.
+          <div class="boutons"><button type="button" class="primaire" data-a="demander">Demander à Aristote</button><button type="button" data-a="rediger">Rédiger une question</button></div></div>`);
     return;
   }
-  p.innerHTML = Q.map((q, i) => `<div class="question" data-q="${i}">
-    <label class="champ"><span>Question ${i+1}<button data-a="suppr-q" title="Supprimer la question">✕</button></span>
-      <textarea data-c="question" rows="2" style="font-size:14px"></textarea></label>
+  p.innerHTML = bandeau + Q.map((q, i) => `<div class="question ${retenue(q) ? "" : "ecartee"}" data-q="${i}">
+    <div class="tete"><b>Question ${i+1}</b>
+      <span class="etiquette">${q.origine === "redigee" ? "rédigée" : "IA"}</span>
+      ${q.nouvelle ? `<span class="etiquette nouvelle">nouvelle</span>` : ""}
+      <label class="retenir"><input type="checkbox" data-c="retenue" ${retenue(q) ? "checked" : ""}> Retenir pour Moodle</label>
+      <button type="button" class="discret poubelle" data-a="suppr-q" title="Supprimer la question" aria-label="Supprimer la question ${i+1}">🗑</button></div>
+    ${q.ressemble_a && !retenue(q) ? `<p class="ressemble">Ressemble beaucoup à la question ${q.ressemble_a} : écartée d'office. Cochez « Retenir pour Moodle » pour la garder quand même.</p>` : ""}
+    <label class="champ"><span>Énoncé</span><textarea data-c="question" rows="2" style="font-size:14px"></textarea></label>
     <div class="champ"><span>Réponses <small>cochez la bonne réponse</small></span>
       ${q.choix.map((c, k) => `<div class="choix ${c.correct ? "bon" : ""}" data-k="${k}">
-        <input type="radio" name="bon-${i}" ${c.correct ? "checked" : ""} title="Bonne réponse">
-        <input type="text" data-c="choix">
-        <button data-a="suppr-c" title="Supprimer cette réponse">✕</button></div>`).join("")}
-      <div><button data-a="ajout-c">+ Ajouter une réponse</button></div>
+        <input type="radio" name="bon-${i}" ${c.correct ? "checked" : ""} title="Bonne réponse" aria-label="Bonne réponse">
+        <input type="text" data-c="choix" aria-label="Réponse ${k+1}">
+        <button type="button" class="discret poubelle" data-a="suppr-c" title="Supprimer cette réponse" aria-label="Supprimer la réponse ${k+1}">✕</button></div>`).join("")}
+      <div><button type="button" data-a="ajout-c">+ Ajouter une réponse</button></div>
     </div>
-    <label class="champ"><span>Explication <small>affichée après la réponse</small></span>
-      <textarea data-c="explication" rows="3" style="font-size:14px"></textarea></label>
-  </div>`).join("") + `<div class="ligne-outil"><button data-a="ajout-q">+ Ajouter une question</button>
-    <span class="note" style="margin:0">Export : fichier GIFT, à importer dans la banque de questions de Moodle.</span></div>`;
+    <label class="champ"><span>Explication <small>facultative, affichée dans Moodle après la réponse</small></span>
+      <textarea data-c="explication" rows="2" style="font-size:14px"></textarea></label>
+  </div>`).join("");
   p.querySelectorAll(".question").forEach(el => {
     const q = Q[+el.dataset.q];
     el.querySelector('[data-c="question"]').value = q.question;
     el.querySelector('[data-c="explication"]').value = q.explication || "";
     el.querySelectorAll(".choix").forEach(c => c.querySelector('[data-c="choix"]').value = q.choix[+c.dataset.k].texte);
   });
+  // Question ajoutée ou à compléter : elle défile à l'écran et reçoit le curseur.
+  if (cible !== undefined && p.children.length){
+    const el = p.querySelector(`.question[data-q="${cible}"]`);
+    if (el){ el.classList.add("cible"); el.scrollIntoView({block: "center", behavior: "smooth"});
+             el.querySelector('[data-c="question"]').focus({preventScroll: true});
+             setTimeout(() => el.classList.remove("cible"), 2500); }
+  }
 }
 $("#pan-quiz").addEventListener("input", e => {
   const qe = e.target.closest(".question"); if (!qe) return;
   const q = E.quiz[+qe.dataset.q], c = e.target.dataset.c;
+  q.nouvelle = false;
+  if (c === "retenue"){ q.retenue = e.target.checked; aSauverEnrichissement(); rendreQuiz(); return; }
   if (c === "question" || c === "explication") q[c] = e.target.value;
   if (c === "choix") q.choix[+e.target.closest(".choix").dataset.k].texte = e.target.value;
   if (e.target.type === "radio"){
@@ -973,15 +1172,45 @@ $("#pan-quiz").addEventListener("input", e => {
   aSauverEnrichissement();
 });
 $("#pan-quiz").addEventListener("click", e => {
-  const a = e.target.dataset.a; if (!a) return;
+  const b = e.target.closest("[data-a]"); if (!b) return;
+  const a = b.dataset.a;
   e.preventDefault();
-  const qe = e.target.closest(".question"), q = qe && E.quiz[+qe.dataset.q];
-  if (a === "suppr-q" && confirm("Supprimer cette question ?")) E.quiz.splice(+qe.dataset.q, 1);
-  if (a === "suppr-c") q.choix.splice(+e.target.closest(".choix").dataset.k, 1);
+  if (a === "demander"){ demander("quiz"); return; }
+  if (a === "exporter"){ exporterPartie("quiz"); return; }
+  if (a === "rediger"){
+    const q = {id: nouvelId(), question: "", explication: "", origine: "redigee", retenue: true, nouvelle: false,
+               ressemble_a: 0, choix: [{texte: "", correct: true}, {texte: "", correct: false}]};
+    E.quiz.push(q); QUIZ_VUS.add(q.id); aSauverEnrichissement(); rendreQuiz(E.quiz.length - 1); return;
+  }
+  const qe = b.closest(".question"), q = qe && E.quiz[+qe.dataset.q];
+  if (a === "suppr-q"){ if (!confirm(`Supprimer la question ${+qe.dataset.q + 1} ?`)) return; E.quiz.splice(+qe.dataset.q, 1); }
+  if (a === "suppr-c") q.choix.splice(+b.closest(".choix").dataset.k, 1);
   if (a === "ajout-c") q.choix.push({texte: "", correct: false});
-  if (a === "ajout-q") E.quiz.push({question: "", explication: "", choix: [{texte: "", correct: true}, {texte: "", correct: false}]});
   rendreQuiz(); aSauverEnrichissement();
 });
+
+/* Export d'une partie seule : métadonnées (texte) ou quiz (GIFT). */
+async function exporterPartie(kind){
+  if (kind === "quiz"){
+    // Une question incomplète ferait échouer l'import dans Moodle : on la montre plutôt.
+    const mauvaise = (E.quiz || []).findIndex(q => retenue(q) && (!q.question.trim()
+      || q.choix.filter(c => c.texte.trim()).length < 2 || q.choix.filter(c => c.correct && c.texte.trim()).length !== 1));
+    if (mauvaise >= 0){
+      rendreQuiz(mauvaise);
+      toast(`Question ${mauvaise + 1} incomplète : il faut un énoncé, au moins deux réponses et une bonne réponse. Complétez-la, ou décochez « Retenir pour Moodle ».`, 9000);
+      return;
+    }
+    if (!(E.quiz || []).some(retenue)){ toast("Aucune question retenue pour Moodle."); return; }
+  }
+  await sauver(); await sauverEnrichissement();
+  const r = await fetch(apiAction("exporter"), {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({formats: [], metadonnees: kind === "meta", quiz: kind === "quiz"})});
+  const d = await r.json();
+  if (!r.ok){ toast("Échec de l'export : " + d.erreur, 6000); return; }
+  toast(`Fichier créé : ${d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; ")}` +
+        (kind === "quiz" ? ". Dans Moodle : Banque de questions, Importer, format GIFT." : ""), 10000);
+  interroger();
+}
 
 /* ─────────── Apparence de l'aperçu (mémorisée dans ce navigateur) ─────────── */
 const AP = ["ap-fond", "ap-couleur", "ap-taille", "ap-bas"];
@@ -993,7 +1222,6 @@ function appliquerApparence(){
 }
 try { const m = JSON.parse(localStorage.getItem("soustitreur-apparence") || "{}"); AP.forEach(k => { if (m[k] !== undefined) $("#" + k).value = m[k]; }); } catch {}
 AP.forEach(k => $("#" + k).addEventListener("input", appliquerApparence));
-$("#ap-langue").addEventListener("change", () => majIncruste(true));
 appliquerApparence();
 
 /* ─────────── Publication sur Pod (étape 2) ─────────── */
@@ -1030,7 +1258,7 @@ async function ouvrirPublication(){
   const srcs = sourcesPubliables();
   $("#pub-lignes").innerHTML = (d.brouillon ? `<p class="note">La vidéo est en brouillon : les sous-titres ne seront visibles qu'à sa publication.</p>` : "") +
     srcs.map((s, i) => `<fieldset><legend>${esc(s.libelle)} · ${s.n} sous-titres${s.revoir ? ` · <b style="color:var(--alerte)">${s.revoir} hors norme</b>` : ""}</legend>
-      <label style="justify-content:flex-start"><input type="checkbox" id="pub-oui-${i}" ${i === 0 ? "checked" : ""}> Publier</label>
+      <label style="justify-content:flex-start"><input type="checkbox" id="pub-oui-${i}" ${s.source === (langueVue === LANGUE ? "original" : langueVue) ? "checked" : ""}> Publier</label>
       <p class="note" style="margin:2px 0 4px">Rangé sur Pod dans : <b style="color:var(--texte)">${esc(nomLangue(s.lang))}</b></p>
       <label>Type de piste <select id="pub-kind-${i}"><option value="subtitles">Sous-titres</option><option value="captions">Légendes (sourds et malentendants)</option></select></label>
       <div id="pub-etat-${i}" class="note" style="display:flex;flex-direction:column;gap:6px"></div></fieldset>`).join("");
@@ -1065,6 +1293,7 @@ $("#pub-go").onclick = async () => {
   $("#pub-fermer").textContent = "Fermer";
   const ok = d.resultats.filter(x => x.ok).length;
   toast(ok ? `${ok} piste(s) publiée(s) sur Pod.` : "Aucune piste publiée.", 6000);
+  interroger();
 };
 
 /* ─────────── Métadonnées sur Pod (étape 3) : écran avant/après ─────────── */
@@ -1127,11 +1356,10 @@ $("#meta-go").onclick = async () => {
   $("#meta-resultat").innerHTML = `<p class="note" style="color:var(--ok)">✔ Modifié sur Pod : ${esc(noms.join(", "))}. <a href="${esc(POD.lien)}" target="_blank" rel="noopener">Vérifier sur Pod ↗</a></p>`;
   $("#meta-fermer").textContent = "Fermer";
   toast("Métadonnées publiées sur Pod.", 5000);
+  interroger();
 };
 
 /* ─────────── Fenêtres et menus ─────────── */
-function ouvrirEnrichir(){ majCarteEnrichir(); $("#d-enrichir").showModal(); }
-$("#b-ouvrir-enrichir").onclick = ouvrirEnrichir;
 $("#b-apparence").onclick = () => $("#d-apparence").showModal();
 $("#b-aide").onclick = () => $("#d-aide").showModal();
 $("#b-remplacer").onclick = () => {
@@ -1146,7 +1374,7 @@ $("#r-cherche").addEventListener("keydown", e => { if (e.key === "Enter"){ e.pre
 /* ─────────── Démarrage ─────────── */
 (async () => {
   const r = await fetch(API);
-  if (!r.ok){ $("#titre").textContent = "Projet introuvable ou lien expiré. Rouvrez l'éditeur depuis SousTitreur."; return; }
+  if (!r.ok){ $("#titre").textContent = "Projet introuvable ou lien expiré. Rouvrez l'éditeur depuis PodAdmin, onglet Enrichissement IA."; return; }
   const d = await r.json();
   S = d.sous_titres; P = d.parametres;
   LISTES = d.listes || LISTES;
@@ -1155,14 +1383,12 @@ $("#r-cherche").addEventListener("keydown", e => { if (e.key === "Enter"){ e.pre
   $("#logo").src = `/ressources/logo_ut.png?t=${encodeURIComponent(JETON)}`;
   LANGUE = d.langue || "fr"; LANGUES = d.langues_traduction || []; E = d.enrichissement || {};
   E.traductions = E.traductions || {}; E.quiz = E.quiz || []; E.metadonnees = E.metadonnees || {};
-  $("#enr-langue").innerHTML = `<option value="">pas de traduction</option>` +
-    LANGUES.map(l => `<option value="${l.code}">${esc(l.name)}</option>`).join("");
-  document.title = d.nom + ", SousTitreur";
+  VERSIONS = E.versions || {}; E.quiz.forEach(q => QUIZ_VUS.add(q.id));
+  langueVue = LANGUE;
+  document.title = d.nom + ", Enrichissement IA";
   document.documentElement.lang = LANGUE;
   $("#titre").textContent = d.nom;
   $("#x-vtt").checked = d.formats.includes("vtt"); $("#x-srt").checked = d.formats.includes("srt");
-  afficherEnrichissement(); majCarteEnrichir();
-  if (E.etat === "en_cours") suivreEnrichissement();
   $("#etat").textContent = d.etat === "corrige" ? "Déjà exporté une fois" : "";
   const src = n => `/${n}/${PID}?t=${encodeURIComponent(JETON)}`;
   const msg = $("#message-media");
@@ -1175,14 +1401,12 @@ $("#r-cherche").addEventListener("keydown", e => { if (e.key === "Enter"){ e.pre
   if (d.video_distante) video.src = d.video_distante;      // vidéo Pod, lue en ligne
   else if (d.video) video.src = src("media"); else secours();
   if (d.pod){
-    POD = d.pod; $("#b-publier").hidden = false;
-    // Un seul bouton coloré par écran (charte PodAdmin) : pour une vidéo Pod,
-    // l'action principale est la publication ; l'export redevient secondaire.
-    $("#b-publier").classList.add("primaire"); $("#b-exporter").classList.remove("primaire");
     // Rappel de la vidéo Pod d'origine, avec un lien vers sa page.
     $("#titre").innerHTML = `${esc(d.nom)} <a href="${esc(d.pod.lien)}" target="_blank" rel="noopener" style="font-weight:400;font-size:12.5px;margin-left:8px">Pod n° ${d.pod.id} ↗</a>`;
   }
   rendre();
+  rendreTout();
+  montrerPartie(new URLSearchParams(location.search).get("partie") || "st");
 })();
 </script>
 </body>

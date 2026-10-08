@@ -21,7 +21,7 @@ de vidéos par lot et y ajoute des modules d'administration.
 | **Réaffectation** | Transférer en masse les vidéos d'un compte vers un autre (départ d'un agent), avec aperçu *dry-run* et option de conserver l'ancien propriétaire en co-propriétaire. |
 | **Nettoyage / Modération** | Détecter (jamais encodées, brouillons, vieux brouillons, doublons de titre) puis agir par lot : mettre en brouillon, publier, restreindre, lever la restriction, **supprimer** (double confirmation). |
 | **Inventaire / Stats** | Volumétrie, durées, répartition par utilisateur / type / chaîne, **export Excel** (`.xlsx`). |
-| **Enrichissement IA** | Transcription par Aristote (ILaaS), découpage aux normes, éditeur de relecture, publication des sous-titres, traductions et métadonnées sur Pod, quiz GIFT pour Moodle. Repris de SousTitreur. |
+| **Enrichissement IA** | Une vidéo, trois parties (sous-titres et traduction, métadonnées, quiz), une demande Aristote (ILaaS) par partie, relecture dans un éditeur avant publication sur Pod ou export GIFT pour Moodle. Repris de SousTitreur, refondu en 1.11.0. |
 | **Chaînes & thèmes** | Créer, renommer, basculer la visibilité et supprimer chaînes et thèmes. |
 | **Configuration** | Connexion à l'instance, stockage chiffré du token. |
 | **Journal** | Historique horodaté de toutes les actions. |
@@ -633,7 +633,45 @@ panneau et ses fenêtres sont en fin d'`app.py` (`PanneauEnrichissement`,
   des pistes remplacées, `journal_pod.jsonl`, préférences. Aucune migration.
 - **Onglet paresseux** : rien n'est construit au démarrage ; la reprise du
   suivi Aristote attend la connexion (`_auto_loaders`) ; le serveur local de
-  l'éditeur ne démarre qu'au premier « Corriger ».
+  l'éditeur ne démarre qu'à la première ouverture d'une partie.
+
+### Refonte en trois parties (1.11.0)
+
+Décisions de Cédric (octobre 2026), éprouvées par la sonde
+`verifier_aristote_demandes.py` :
+
+- **Une demande Aristote par partie** (`meta`, `quiz`, `trad:en`, `trad:pt`) :
+  une demande séparée ne renvoie que ce qu'on lui demande, deux demandes
+  simultanées ne se gênent pas. Une demande est ponctuelle : refaire, c'est
+  redemander. Durée très variable (41 s à 13 min pour un quiz), d'où
+  « de quelques secondes à un quart d'heure ». Langues ILaaS : fr, en, pt
+  (lues chez Aristote, jamais écrites en dur).
+- **Modèle** (`enrichissement/projet.py`) : `etat_partie` donne l'état de
+  chaque partie (vide, en cours, erreur, à relire, relu, prêt, fait) et
+  signale un contenu PÉRIMÉ (sous-titres modifiés depuis la demande,
+  empreinte texte et minutage). « Relecture terminée » est un vrai marqueur
+  (`relu`), distinct de l'ancien état `corrige` (= exporté).
+- **Quiz** : les questions d'Aristote s'AJOUTENT, celles rédigées par
+  l'enseignant ne sont jamais touchées ; une question trop proche d'une autre
+  (taux 0,75) arrive décochée. Seules les questions « retenues » partent en
+  GIFT, nommées d'après la vidéo (la banque Moodle n'affiche que le nom ;
+  import vérifié sur moodle.utoulouse.fr). Les notes de cours d'Aristote ne
+  sont PAS intégrées : leur gabarit est celui d'un compte rendu de réunion.
+- **Page / serveur** : la page enregistre sans écraser ce qu'Aristote livre
+  entre-temps (identifiant par question, numéro de version par partie) et
+  repère un résultat à sa version, jamais à un passage « en cours → fini »
+  (manqué si une autre action avait rafraîchi l'état). Une seule fenêtre par
+  vidéo : une page vivante reçoit l'ordre de changer de partie.
+- **Onglet** : vidéo choisie (fenêtre de recherche ou bouton « Enrichir… »
+  de l'onglet Vidéos), puis trois cartes dont l'unique bouton suit l'état
+  (`cartes_ia`, fonction pure) ; un seul bouton coloré, l'étape recommandée.
+  Sans sous-titres, Métadonnées ou Quiz lancent la transcription puis la
+  demande (`a_enchainer`, relu sur disque à la fin de la transcription).
+  Pastille « ● » sur la navigation quand Aristote a fini ailleurs.
+- **Écritures concurrentes** : `projet.enregistrer` utilise un fichier
+  temporaire PROPRE à chaque écriture (un nom commun faisait perdre des
+  écritures entre fils), et `charger` réessaie une lecture tombée pendant un
+  remplacement de fichier (Windows).
 
 
 ```
@@ -650,7 +688,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.10.0**
+Version : **1.11.0**
 
 ---
 

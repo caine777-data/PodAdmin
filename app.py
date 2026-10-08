@@ -259,6 +259,7 @@ T_DISCRET      = ("gray36", "gray70")     # 4,62 clair / 4,74 sombre
 T_SUCCES       = ("#166534", "#4ade80")   # 4,92 clair / 5,74 sombre
 T_ALERTE       = ("#92400e", "#f59e0b")   # 4,89 clair / 4,66 sombre
 T_ERREUR       = ("#991b1b", "#fca5a5")   # 5,73 clair / 5,27 sombre
+T_EN_COURS     = ("#1d4ed8", "#93c5fd")   # travail en cours (Aristote) : bleu, pas une alerte
 
 # — Tailles de police ——————————————————————————————————————————————————
 # Les tailles allaient de 9 à 26 px sans échelle. Cinq niveaux suffisent.
@@ -1219,6 +1220,7 @@ class App(_AppBase):
 
         for k, b in self.nav_btns.items():
             b.configure(fg_color=S_SELECTION if k == key else "transparent")
+        self._signaler_onglet(key, False)       # l'utilisateur est arrivé : pastille levée
         # Chargement paresseux à la première ouverture de l'onglet Groupes
         if key == "groups":
             self._show_groups_tab_hook()
@@ -1236,6 +1238,18 @@ class App(_AppBase):
         if key == "enrich":
             self._enrich_construire()
         self._auto_charger(key)
+
+    def _signaler_onglet(self, key: str, actif: bool = True) -> None:
+        """Pastille « ● » au bout d'une entrée de la barre latérale : un
+        résultat attend dans un onglet que l'utilisateur ne regarde pas
+        (Enrichissement IA : Aristote a fini). Levée à l'ouverture de l'onglet."""
+        b = getattr(self, "nav_btns", {}).get(key)
+        if b is None:
+            return
+        base = getattr(b, "_texte_sans_pastille", None)
+        if base is None:
+            base = b._texte_sans_pastille = b.cget("text")
+        b.configure(text=base + ("   ●" if actif else ""))
 
     def _widget_empilable(self, widget):
         """Remonte jusqu'au widget effectivement placé dans `self.content`.
@@ -1284,6 +1298,12 @@ class App(_AppBase):
         if self.enrich_panneau is None:
             self.enrich_panneau = PanneauEnrichissement(self.tabs["enrich"], self)
             self.enrich_panneau.pack(fill="both", expand=True)
+
+    def _enrichir_video(self, video: dict):
+        """Bouton « Enrichir… » de l'onglet Vidéos : ouvre l'onglet
+        Enrichissement IA, la vidéo déjà choisie."""
+        self._show_tab("enrich")
+        self.enrich_panneau.enrichir_video(video)
 
     def _enrich_reprendre(self):
         """Chargement automatique (PodAdmin connecté, onglet ouvert) : reprise
@@ -6080,10 +6100,18 @@ class App(_AppBase):
 
         # Prévisualisation : PodAdmin (Tkinter) n'a pas de lecteur vidéo intégré,
         # on délègue la lecture au navigateur (page publique Pod de la vidéo).
-        ctk.CTkButton(self.browse_detail, text="▶  Ouvrir dans le navigateur",
+        rangee = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
+        rangee.pack(anchor="w", padx=4, pady=(0, 10))
+        ctk.CTkButton(rangee, text="▶  Ouvrir dans le navigateur",
                       width=210, height=28, fg_color="#0f766e", hover_color="#115e59",
-                      command=lambda s=slug: self._open_video_in_browser(s)).pack(
-            anchor="w", padx=4, pady=(0, 10))
+                      command=lambda s=slug: self._open_video_in_browser(s)).pack(side="left")
+        # Raccourci vers l'onglet Enrichissement IA, sur CETTE vidéo (décision
+        # de Cédric, refonte 1.11.0). Neutre : ce n'est pas l'action de l'écran.
+        b_enr = ctk.CTkButton(rangee, text="🤖  Enrichir…", width=120, height=28,
+                              fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                              command=lambda vid=v: self._enrichir_video(vid))
+        b_enr.pack(side="left", padx=(8, 0))
+        ajouter_infobulle(b_enr, "Sous-titres, traduction, métadonnées et quiz par Aristote")
 
         # — Renommer —
         ren = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
@@ -9593,35 +9621,48 @@ class App(_AppBase):
         limite_ia = f"{reglages_ia.LIMITE_ENVOI_OCTETS // (1024 * 1024)} Mo"
         section(
             "🤖  Enrichissement IA : sous-titres, traductions, métadonnées, quiz",
-            "L'onglet Enrichissement IA fait transcrire une vidéo par Aristote (le "
-            "service d'IA d'ILaaS), découpe le texte aux normes de sous-titrage, puis "
-            "ouvre un éditeur de relecture dans une fenêtre à part.\n\n"
-            "Point de départ :\n"
-            "• « 🎞️ Vidéo sur Pod… » : collez le lien de la vidéo ou tapez un mot du "
-            "titre. La fiche propose une nouvelle transcription par Aristote, ou de "
-            "partir des sous-titres déjà présents sur Pod, sans transcription. Une "
-            "correction commencée sur le poste peut aussi être associée à la vidéo.\n"
+            "Aristote (le service d'IA d'ILaaS) prépare les sous-titres, leurs traductions, "
+            "les métadonnées et un quiz ; vous relisez tout dans un éditeur avant de publier.\n\n"
+            "1. Choisir la vidéo\n"
+            "• « 🎞️ Vidéo sur Pod… » : collez le lien ou tapez un mot du titre, puis "
+            "« Choisir cette vidéo ». Depuis l'onglet Vidéos, le bouton « 🤖 Enrichir… » "
+            "d'une vidéo fait la même chose.\n"
             "• « 📂 Fichiers du poste… » ou glisser-déposer : une vidéo ou un son part "
             f"ENTIER chez Aristote, jusqu'à {limite_ia}. Au-delà, déposez d'abord la "
-            "vidéo sur Pod et partez de « Vidéo sur Pod ». Un fichier VTT ou SRT est "
-            "simplement importé et redécoupé, sans rien envoyer.\n\n"
-            "Dans l'éditeur (« ✏️ Corriger ») :\n"
-            "• les sous-titres corrigés sont publiés en français (« fr ») ; chaque "
-            "traduction est publiée dans sa propre langue ;\n"
-            "• une piste déjà présente sur Pod n'est remplacée que si vous le "
-            "demandez : l'ancienne est d'abord sauvegardée sur le poste, puis effacée "
-            "de Pod ;\n"
-            "• « Traduire et enrichir » demande à Aristote traductions, métadonnées et "
-            "quiz. Les métadonnées se publient champ par champ, après un écran "
-            "avant / après ; une discipline est ajoutée, jamais retirée ;\n"
-            "• le quiz s'exporte au format GIFT, à importer dans la banque de questions "
-            "de Moodle.\n\n"
+            "vidéo sur Pod. Un fichier VTT ou SRT est importé et redécoupé, sans rien envoyer.\n\n"
+            "2. Trois cartes, une par partie\n"
+            "Sous-titres et traduction, Métadonnées, Quiz. Chaque carte dit où en est sa "
+            "partie et n'a qu'un bouton, qui suit l'étape : « Transcrire avec Aristote », "
+            "« Relire… », « Ouvrir », « Réessayer ». Le seul bouton bleu de l'onglet est "
+            "l'étape recommandée. Chaque carte ouvre l'éditeur sur SA partie ; s'il est déjà "
+            "ouvert, il change de partie au lieu d'ouvrir une autre fenêtre.\n"
+            "• Vidéo sans sous-titres : Métadonnées ou Quiz lancent d'abord la transcription, "
+            "puis leur demande dès qu'elle est finie (c'est annoncé avant).\n"
+            "• Une demande prend de quelques secondes à un quart d'heure : vous pouvez "
+            "travailler ailleurs. Un point « ● » sur l'entrée Enrichissement IA de la "
+            "barre latérale signale qu'Aristote a fini.\n"
+            "• Relisez les sous-titres d'abord (« Relecture terminée ») : traduction, "
+            "métadonnées et quiz partent de ce texte. Si les sous-titres changent ensuite, "
+            "ces parties sont marquées « à revoir ».\n"
+            "• Vidéo du poste : les métadonnées se publient sur la fiche Pod, il faut donc "
+            "d'abord « Associer à une vidéo Pod… ».\n\n"
+            "3. Relire et publier, dans l'éditeur\n"
+            "• Sous-titres : publiés en français (« fr ») ; chaque traduction (anglais, "
+            "portugais) dans sa propre langue. Une piste déjà présente sur Pod n'est "
+            "remplacée que si vous le demandez : l'ancienne est sauvegardée sur le poste, "
+            "puis effacée de Pod.\n"
+            "• Métadonnées : publiées champ par champ, après un écran avant / après ; une "
+            "discipline est ajoutée, jamais retirée.\n"
+            "• Quiz : « Demander d'autres questions » ajoute des questions sans toucher aux "
+            "vôtres (« Rédiger une question ») ; une question trop proche d'une autre arrive "
+            "décochée. Seules les questions cochées « Retenir pour Moodle » partent dans le "
+            "fichier GIFT : dans Moodle, Banque de questions, Importer, format GIFT. "
+            "Attention, Moodle transforme « :) » en émoticône à l'affichage.\n\n"
             "Chaque écriture sur Pod est notée dans le Journal. La connexion à Aristote "
             "est fournie avec l'application ; la carte « Aristote » de l'onglet "
-            "Configuration permet de la tester ou d'en changer. Les projets restent "
-            "sur le poste (dossier .soustitreur, bouton 📁 de chaque ligne), et le "
-            "suivi d'une transcription reprend tout seul si PodAdmin a été fermé "
-            "entre-temps.")
+            "Configuration permet de la tester ou d'en changer. Les travaux restent sur le "
+            "poste (dossier .soustitreur, bouton 📁 de chaque ligne) et leur suivi reprend "
+            "tout seul si PodAdmin a été fermé entre-temps.")
 
         section(
             "⚠️  Message « LISTE INCOMPLÈTE »",
@@ -11160,6 +11201,11 @@ MESSAGE_TROP_LOURD_IA = ("fichier trop lourd pour un envoi direct à Aristote. D
                          "enrichissez-la depuis Pod : Aristote télécharge alors son son "
                          "lui-même, sans limite de taille.")
 
+# Parties d'une demande Aristote, pour le Journal ; « trad:xx » est composé
+# à la volée (« traduction en », « traduction pt »…).
+LIBELLES_PARTIE_IA = {"meta": "métadonnées", "quiz": "quiz", "groupe": "demande groupée",
+                      "trad:en": "traduction anglaise", "trad:pt": "traduction portugaise"}
+
 LIBELLES_ETAT_IA = {
     "envoi": "Préparation",
     "attente": "Chez Aristote",
@@ -11199,6 +11245,170 @@ def _ouvrir_dossier_systeme(chemin: str) -> None:
         subprocess.Popen(["xdg-open", chemin])
 
 
+# ── Les trois cartes de l'onglet (1.11.0) ───────────────────────────────────
+#
+# Chaque carte n'a qu'UNE action, dont le libellé suit l'état (décision de
+# Cédric, 2026-10-08) ; une seconde action neutre, parfois. Le calcul est une
+# fonction pure, testée sans Tk : l'interface ne fait qu'afficher.
+
+NOMS_LANGUES_IA = {"en": "anglais", "pt": "portugais", "es": "espagnol", "de": "allemand",
+                   "it": "italien"}
+ATTENTE_IA = "de quelques secondes à un quart d'heure"
+
+# Action recommandée, dans cet ordre : c'est le seul bouton coloré de l'onglet.
+# « Ouvrir » et « Demander après la transcription » ne le sont jamais.
+PRIORITE_ACTIONS_IA = ("reessayer_st", "transcrire", "relire_st", "relire_meta", "relire_quiz",
+                       "demander_meta", "demander_quiz")
+
+
+def _heure_ia(iso: str) -> str:
+    return iso[11:16] if len(iso or "") >= 16 else ""
+
+
+def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) -> dict:
+    """État des cartes « st », « meta », « quiz ».
+
+    p : le projet, ou None si la vidéo Pod choisie n'en a pas encore.
+    pod : vidéo sur Pod (False : fichier du poste).
+    pistes_pod : langues des sous-titres déjà présents sur Pod.
+
+    Chaque carte : {pastille, teinte, detail, action, libelle, action2, libelle2}
+    (teinte : ok | alerte | cours | erreur | "" ; action : code, ou "").
+    """
+    def carte(pastille, teinte="", detail="", action="", libelle="", action2="", libelle2=""):
+        return dict(pastille=pastille, teinte=teinte, detail=detail, action=action,
+                    libelle=libelle, action2=action2, libelle2=libelle2)
+
+    pistes_pod = pistes_pod or []
+    cartes = {}
+    transcription = (p or {}).get("etat")
+    a_enchainer = (p or {}).get("a_enchainer") or []
+
+    # ── Sous-titres et traduction ──
+    if p is None:
+        detail = (f"Pod en a déjà ({', '.join(pistes_pod)}) : vous pouvez en partir, sans "
+                  "transcription. Ou faire transcrire la vidéo par Aristote."
+                  if pistes_pod else
+                  "Aristote transcrit la vidéo, puis PodAdmin découpe le texte aux normes.")
+        cartes["st"] = carte("pas encore de sous-titres", "", detail, "transcrire",
+                             "Transcrire avec Aristote",
+                             "depuis_piste" if pistes_pod else "",
+                             "Partir des sous-titres de Pod" if pistes_pod else "")
+    else:
+        e = projets_ia.etat_partie(p, "sous_titres")
+        enrich = projets_ia.enrichissement(p)
+        trad = []
+        for lg in sorted(set(enrich["traductions"]) | {c[5:] for c in enrich["demandes"]
+                                                        if c.startswith("trad:")}):
+            et = projets_ia.etat_partie(p, f"trad:{lg}")
+            if et["etat"] != "vide":
+                trad.append(f"{NOMS_LANGUES_IA.get(lg, lg)} ("
+                            + {"en_cours": "en cours", "erreur": "échec", "fait": "publiée"}.get(
+                                et["etat"], "à revoir" if et["perime"] else "prête") + ")")
+        suite = ("Traductions : " + ", ".join(trad) + ".") if trad else \
+            "Traduction en anglais ou en portugais : depuis l'éditeur."
+        if e["etat"] == "en_cours":
+            cartes["st"] = carte("transcription en cours", "cours",
+                                 f"Aristote transcrit la vidéo, {ATTENTE_IA} ou davantage selon sa "
+                                 "durée. Vous pouvez travailler ailleurs.")
+        elif e["etat"] == "erreur":
+            cartes["st"] = carte("échec", "erreur", e["detail"], "reessayer_st", "Réessayer")
+        elif e["etat"] == "vide":
+            cartes["st"] = carte("pas encore de sous-titres", "", "", "reessayer_st",
+                                 "Transcrire avec Aristote")
+        else:
+            prm = soustitres_ia.Parametres.depuis_dict(p.get("parametres"))
+            n = len(p["sous_titres"])
+            revoir = sum(1 for d in p["sous_titres"]
+                         if soustitres_ia.verifier(soustitres_ia.SousTitre.depuis_dict(d), prm))
+            compte = (f"{n} sous-titre{'s' if n > 1 else ''}"
+                      + (f", {revoir} hors norme" if revoir else "") + ". ")
+            if e["etat"] == "a_relire":
+                cartes["st"] = carte("à relire", "alerte", compte + suite, "relire_st",
+                                     "Relire les sous-titres", "repartir", "Repartir de zéro…")
+            else:
+                relu = (p.get("relu") or {}).get("le", "")
+                quand = f"Relus le {relu[8:10]}/{relu[5:7]}. " if relu else ""
+                pastille = "publiés" if e["etat"] == "fait" else "relus"
+                if e["detail"]:
+                    pastille += ", " + e["detail"]
+                cartes["st"] = carte(pastille, "alerte" if e["detail"] else "ok",
+                                     compte + quand + suite, "ouvrir_st", "Ouvrir",
+                                     "repartir", "Repartir de zéro…")
+
+    # ── Métadonnées et quiz : même logique, sauf la vidéo du poste ──
+    textes = {
+        "meta": ("Aristote propose titre, description, mots-clés, discipline et type.",
+                 "proposées, non publiées", "Relire et publier…", "publiées"),
+        "quiz": ("Aristote propose des questions à choix multiple ; vous pouvez aussi "
+                 "rédiger les vôtres. Le tout s'exporte vers Moodle.",
+                 "", "Relire et exporter…", "exporté"),
+    }
+    for cle, (presentation, a_publier, relire, fait) in textes.items():
+        if cle == "meta" and not pod:
+            cartes[cle] = carte("disponible une fois la vidéo sur Pod", "",
+                                "Les métadonnées se publient sur la fiche Pod de la vidéo. "
+                                "Associez cette correction à la vidéo une fois déposée.",
+                                "associer", "Associer à une vidéo Pod…")
+            continue
+        if p is None or transcription in ("envoi", "attente") or not (p or {}).get("sous_titres"):
+            if p is not None and transcription == "erreur":
+                cartes[cle] = carte("pas encore demandé", "", "Il faut d'abord des sous-titres.")
+            elif cle in a_enchainer:
+                cartes[cle] = carte("demandé après la transcription", "cours",
+                                    "La demande partira dès la fin de la transcription.")
+            elif p is None:
+                cartes[cle] = carte("pas encore demandé", "",
+                                    presentation + " Aristote transcrira d'abord la vidéo.",
+                                    f"demander_{cle}", "Demander à Aristote…")
+            else:
+                cartes[cle] = carte("pas encore demandé", "", presentation,
+                                    f"enchainer_{cle}", "Demander après la transcription")
+            continue
+        e = projets_ia.etat_partie(p, cle)
+        if e["etat"] == "en_cours":
+            heure = _heure_ia(e.get("demande_le", ""))
+            cartes[cle] = carte("chez Aristote", "cours",
+                                (f"Demandé à {heure}. " if heure else "")
+                                + f"Réponse {ATTENTE_IA} : vous pouvez travailler ailleurs.")
+        elif e["etat"] == "erreur":
+            cartes[cle] = carte("échec", "erreur", e["detail"], f"demander_{cle}", "Réessayer")
+        elif e["etat"] == "vide":
+            cartes[cle] = carte("pas encore demandé", "",
+                                (e["detail"] + ". " if e["detail"] else "") + presentation,
+                                f"demander_{cle}", "Demander à Aristote…")
+        else:
+            perime = "Les sous-titres ont changé depuis : à vérifier. " if e["perime"] else ""
+            if cle == "quiz":
+                pastille = e["detail"] if e["etat"] == "pret" and not e["detail"].startswith("dernière") \
+                    else (fait if e["etat"] == "fait" else "à relire")
+            else:
+                pastille = a_publier if e["etat"] == "pret" else fait
+            if e["etat"] == "pret":
+                cartes[cle] = carte(pastille, "alerte", perime + (
+                    "Relisez, puis publiez champ par champ." if cle == "meta"
+                    else "Relisez, cochez les questions à garder, puis exportez."),
+                    f"relire_{cle}", relire,
+                    "demander_quiz" if cle == "quiz" else "",
+                    "Demander d'autres questions" if cle == "quiz" else "")
+            else:
+                cartes[cle] = carte(pastille + (", à revoir" if e["perime"] else ""),
+                                    "alerte" if e["perime"] else "ok", perime.strip(),
+                                    f"ouvrir_{cle}", "Ouvrir",
+                                    "demander_quiz" if cle == "quiz" else "",
+                                    "Demander d'autres questions" if cle == "quiz" else "")
+    return cartes
+
+
+def carte_principale_ia(cartes: dict) -> str:
+    """Carte dont l'action est l'étape recommandée (seul bouton coloré)."""
+    for action in PRIORITE_ACTIONS_IA:
+        for nom in ("st", "meta", "quiz"):
+            if cartes[nom]["action"] == action:
+                return nom
+    return ""
+
+
 class PanneauEnrichissement(ctk.CTkFrame):
     """Contenu de l'onglet : point de départ, travaux en cours, réglages.
 
@@ -11220,6 +11430,11 @@ class PanneauEnrichissement(ctk.CTkFrame):
         self.envois = threading.Semaphore(2)      # fichiers du poste : 2 envois à la fois au plus
         self._serveur = None             # éditeur : démarré au premier besoin
         self._refs = None                # disciplines et types de Pod (cache)
+        # Vidéo choisie : un projet (`pid_courant`), et pour une vidéo Pod sa
+        # fiche (`fiche`, lue sur Pod : son, pistes, listes). Une vidéo Pod
+        # choisie mais jamais traitée a une fiche et pas encore de projet.
+        self.pid_courant: str | None = None
+        self.fiche: dict | None = None
         self._construire()
         self._charger_projets()
         self.after(200, self._traiter_evenements)
@@ -11239,7 +11454,8 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 message_erreur=message_editeur,
                 # Appelé depuis les fils du serveur : retour au fil principal.
                 journal_hote=lambda texte: self.hote._ui(self.hote._log, texte),
-                sur_video_modifiee=self._video_modifiee)
+                sur_video_modifiee=self._video_modifiee,
+                sur_resultat=lambda pid, cle, ok: self.evenements.put(("resultat", pid, cle, ok)))
         return self._serveur
 
     def _video_modifiee(self, video: dict) -> None:
@@ -11259,25 +11475,26 @@ class PanneauEnrichissement(ctk.CTkFrame):
         ctk.CTkButton(haut, text="⚙  Réglages", width=120, height=H_NORMAL,
                       fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
                       command=self.ouvrir_reglages).pack(side="right")
-        ctk.CTkLabel(self, text="Transcription par Aristote, découpage aux normes et relecture, "
-                                "puis traduction, métadonnées et quiz, et publication sur Pod.",
+        ctk.CTkLabel(self, text="Sous-titres et traduction, métadonnées, quiz : une vidéo, "
+                                "trois parties, chacune relue dans l'éditeur avant publication.",
                      font=ctk.CTkFont(size=T_PETIT), text_color=T_SECONDAIRE,
                      anchor="w").pack(fill="x", pady=(0, 10))
+        self.haut_zone = ctk.CTkFrame(self, fg_color="transparent")
+        self.haut_zone.pack(fill="x")
 
         # Carte de départ : UNE action principale, colorée.
-        zone = ctk.CTkFrame(self, fg_color=S_CARTE, corner_radius=8)
+        self.depart = zone = ctk.CTkFrame(self.haut_zone, fg_color=S_CARTE, corner_radius=8)
         zone.pack(fill="x", pady=(0, 10))
         gauche = ctk.CTkFrame(zone, fg_color="transparent")
         gauche.pack(side="left", fill="both", expand=True, padx=16, pady=14)
-        ctk.CTkLabel(gauche, text="Nouvelle vidéo à enrichir", anchor="w",
+        ctk.CTkLabel(gauche, text="Choisir une vidéo", anchor="w",
                      font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(fill="x")
         consigne = ctk.CTkLabel(
             gauche, justify="left", anchor="w", font=ctk.CTkFont(size=T_CORPS),
             text_color=T_SECONDAIRE, wraplength=520,
-            text="Choisissez une vidéo déjà sur Pod, ou déposez ici une vidéo, un son, ou "
-                 "des sous-titres (VTT, SRT) du poste. Aristote transcrit, vous corrigez "
-                 "dans l'éditeur, puis vous demandez traduction, métadonnées et quiz. Les "
-                 "vidéos sont en français : la correction est rangée en français sur Pod.")
+            text="Une vidéo déjà sur Pod, ou déposez ici une vidéo, un son ou des "
+                 "sous-titres (VTT, SRT) du poste. Les vidéos sont en français : la "
+                 "correction est rangée en français sur Pod.")
         consigne.pack(fill="x", pady=(4, 0))
         boutons = ctk.CTkFrame(zone, fg_color="transparent")
         boutons.pack(side="right", padx=16, pady=14)
@@ -11298,6 +11515,56 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 except Exception:
                     pass        # glisser-déposer indisponible : le bouton reste
 
+        # Vidéo choisie : bandeau, puis les trois cartes. Construits une fois,
+        # mis à jour par `_maj_cartes` (jamais reconstruits à chaque événement).
+        self.selection = ctk.CTkFrame(self.haut_zone, fg_color="transparent")
+        bandeau = ctk.CTkFrame(self.selection, fg_color=S_CARTE, corner_radius=8)
+        bandeau.pack(fill="x", pady=(0, 8))
+        bandeau.grid_columnconfigure(0, weight=1)
+        self.sel_titre = ctk.CTkLabel(bandeau, text="", anchor="w",
+                                      font=ctk.CTkFont(size=T_SOUS, weight="bold"))
+        self.sel_titre.grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 0))
+        self.sel_infos = ctk.CTkLabel(bandeau, text="", anchor="w", text_color=T_SECONDAIRE,
+                                      font=ctk.CTkFont(size=T_PETIT))
+        self.sel_infos.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+        ctk.CTkButton(bandeau, text="Changer de vidéo", width=150, height=H_NORMAL,
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      command=self.revenir_au_choix).grid(row=0, column=1, rowspan=2, padx=14)
+        grille = ctk.CTkFrame(self.selection, fg_color="transparent")
+        grille.pack(fill="x", pady=(0, 10))
+        self.cartes = {}
+        for i, (nom, titre) in enumerate((("st", "🎬  Sous-titres et traduction"),
+                                          ("meta", "🏷️  Métadonnées"), ("quiz", "✅  Quiz"))):
+            grille.grid_columnconfigure(i, weight=1, uniform="cartes")
+            c = ctk.CTkFrame(grille, fg_color=S_CARTE, corner_radius=8)
+            c.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 5, 0 if i == 2 else 5))
+            c.grid_columnconfigure(0, weight=1)
+            c.grid_rowconfigure(2, weight=1)
+            ctk.CTkLabel(c, text=titre, anchor="w", font=ctk.CTkFont(size=T_CORPS, weight="bold")
+                         ).grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 0))
+            pastille = ctk.CTkLabel(c, text="", anchor="w", font=ctk.CTkFont(size=T_PETIT, weight="bold"))
+            pastille.grid(row=1, column=0, sticky="ew", padx=12)
+            detail = ctk.CTkLabel(c, text="", anchor="nw", justify="left", wraplength=250,
+                                  text_color=T_SECONDAIRE, font=ctk.CTkFont(size=T_PETIT))
+            detail.grid(row=2, column=0, sticky="new", padx=12, pady=(2, 6))
+            # Neutre à la création ; `_maj_cartes` colore la seule étape recommandée.
+            bouton = ctk.CTkButton(c, text="", height=H_NORMAL, fg_color=C_NEUTRE,
+                                   hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                                   command=lambda n=nom: self._action_carte(n, "action"))
+            bouton.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 6))
+            bouton2 = ctk.CTkButton(c, text="", height=H_COMPACT, fg_color=C_NEUTRE,
+                                    hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                                    command=lambda n=nom: self._action_carte(n, "action2"))
+            bouton2.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 10))
+            # Place réservée quand il n'y a pas de seconde action : les boutons
+            # principaux restent alignés d'une carte à l'autre.
+            cale = ctk.CTkFrame(c, height=H_COMPACT, fg_color="transparent")
+            cale.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 10))
+            cale.grid_remove()
+            self.cartes[nom] = dict(pastille=pastille, detail=detail, bouton=bouton, bouton2=bouton2,
+                                    cale=cale)
+        self._bind_largeur_cartes(grille)
+
         ctk.CTkLabel(self, text="Vidéos en cours", anchor="w",
                      font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(fill="x", pady=(4, 4))
         self.liste = ctk.CTkScrollableFrame(self, fg_color=S_CARTE, corner_radius=8)
@@ -11308,6 +11575,276 @@ class PanneauEnrichissement(ctk.CTkFrame):
         self.vide = ctk.CTkFrame(self.liste, fg_color="transparent")
         etat_vide(self.vide, "🤖", "Aucune vidéo en cours.",
                   "Commencez par « Vidéo sur Pod… », dans la carte ci-dessus.")
+
+    def _bind_largeur_cartes(self, grille):
+        """Le texte des cartes suit leur largeur (fenêtre agrandie ou non)."""
+        def ajuster(_e=None):
+            largeur = max(160, grille.winfo_width() // 3 - 40)
+            for c in self.cartes.values():
+                c["detail"].configure(wraplength=largeur)
+        grille.bind("<Configure>", ajuster, add="+")
+
+    # ── Vidéo choisie et cartes ─────────────────────────────────────────────
+    def selectionner_fiche(self, fiche: dict) -> None:
+        """Vidéo Pod choisie dans la fenêtre de recherche."""
+        self.fiche = fiche
+        pid = projets_ia.id_pod(fiche["video"]["id"])
+        self.pid_courant = pid if projets_ia.existe(pid) else None
+        self._montrer_selection()
+
+    def selectionner_projet(self, pid: str) -> None:
+        """Vidéo choisie dans la liste « Vidéos en cours »."""
+        if not projets_ia.existe(pid):
+            return
+        p = projets_ia.charger(pid)
+        if not (self.fiche and p.get("pod") and self.fiche["video"]["id"] == p["pod"]["id"]):
+            self.fiche = None              # relue sur Pod au premier besoin
+        self.pid_courant = pid
+        self._montrer_selection()
+
+    def revenir_au_choix(self) -> None:
+        self.pid_courant, self.fiche = None, None
+        self.selection.pack_forget()
+        self.depart.pack(fill="x", pady=(0, 10))
+
+    def _montrer_selection(self) -> None:
+        self.depart.pack_forget()
+        self.selection.pack(fill="x")
+        self._maj_cartes()
+
+    def _projet_courant(self) -> dict | None:
+        if self.pid_courant and projets_ia.existe(self.pid_courant):
+            return projets_ia.charger(self.pid_courant)
+        return None
+
+    def _maj_cartes(self) -> None:
+        """Bandeau et cartes de la vidéo choisie. Ne fait que configurer des
+        widgets existants : appelé à chaque enregistrement de l'éditeur."""
+        if not self.selection.winfo_manager():
+            return
+        p = self._projet_courant()
+        pod = bool((p or {}).get("pod") or self.fiche)
+        if p is not None:
+            titre = p["nom"]
+            if p.get("pod"):
+                infos = f"Pod n° {p['pod']['id']}  ·  {p['pod'].get('proprietaire') or 'propriétaire inconnu'}"
+                duree = int(p["pod"].get("duree") or 0)
+            else:
+                infos, duree = "Fichier du poste", 0
+        else:
+            v = self.fiche["video"]
+            titre, duree = v.get("title", ""), int(v.get("duration") or 0)
+            infos = f"Pod n° {v.get('id')}  ·  {self.fiche.get('proprietaire') or 'propriétaire inconnu'}"
+        if duree:
+            infos += f"  ·  {duree // 60} min {duree % 60:02d}"
+        # Pas d'icône : 🎞️ est mal rendu par Tk à cette taille, et la ligne
+        # du dessous dit déjà « Pod n° … » ou « Fichier du poste ».
+        self.sel_titre.configure(text=titre)
+        self.sel_infos.configure(text=infos)
+        pistes = sorted({t.get("lang", "") for t in (self.fiche or {}).get("pistes") or []} - {""})
+        etats = cartes_ia(p, pod, pistes)
+        principale = carte_principale_ia(etats)
+        teintes = {"ok": T_SUCCES, "alerte": T_ALERTE, "cours": T_EN_COURS, "erreur": T_ERREUR}
+        for nom, w in self.cartes.items():
+            e = etats[nom]
+            w["pastille"].configure(text=e["pastille"], text_color=teintes.get(e["teinte"], T_SECONDAIRE))
+            w["detail"].configure(text=e["detail"])
+            w["action"] = e
+            if e["action"]:
+                colore = nom == principale
+                w["bouton"].configure(
+                    text=e["libelle"],
+                    fg_color=C_ACTION if colore else C_NEUTRE,
+                    hover_color=C_ACTION_SURV if colore else C_NEUTRE_SURV,
+                    text_color=("white", "white") if colore else T_SUR_NEUTRE,
+                    font=ctk.CTkFont(size=T_CORPS, weight="bold" if colore else "normal"))
+                w["bouton"].grid()
+            else:
+                w["bouton"].grid_remove()
+            if e["action2"]:
+                w["bouton2"].configure(text=e["libelle2"])
+                w["bouton2"].grid()
+                w["cale"].grid_remove()
+            else:
+                w["bouton2"].grid_remove()
+                w["cale"].grid()
+
+    def _action_carte(self, nom: str, champ: str) -> None:
+        e = self.cartes[nom].get("action") or {}
+        action = e.get(champ, "")
+        if not action:
+            return
+        p = self._projet_courant()
+        if action.startswith(("relire_", "ouvrir_")):
+            self.ouvrir_editeur(self.pid_courant, action.split("_", 1)[1])
+        elif action in ("transcrire", "reessayer_st"):
+            if p is not None and not p.get("pod"):
+                self.transcrire_fichier(p["media"]) if p.get("media") else None
+            else:
+                self._avec_fiche(lambda f: self.transcrire_pod(f))
+        elif action == "depuis_piste":
+            self._avec_fiche(self._partir_de_la_piste_fr)
+        elif action == "repartir":
+            self._repartir(p)
+        elif action == "associer":
+            api = self.pod()
+            if api is not None:
+                FenetreVideoPod(self, api, associer=self.pid_courant)
+        elif action.startswith("enchainer_"):
+            self._enchainer(action.split("_", 1)[1])
+        elif action.startswith("demander_"):
+            cle = action.split("_", 1)[1]
+            if p is None:
+                self._transcrire_puis(cle)
+            else:
+                self.demander(self.pid_courant, cle)
+
+    def lire_fiche(self, api, video: dict) -> dict:
+        """(Fil) Fiche d'une vidéo Pod : lien, propriétaire, pistes, son, image,
+        et listes de Pod où Aristote choisira discipline et type."""
+        refs = self.references(api)
+        return {"video": video, "lien": api.lien_public(video),
+                "proprietaire": self._nom_proprietaire(api, video.get("owner", "")),
+                "pistes": api.pistes(video), "mp3": api.mp3(video), "mp4": api.mp4(video),
+                "disciplines": list(refs["disciplines"]), "types": list(refs["types"])}
+
+    def _nom_proprietaire(self, api, url: str) -> str:
+        """Nom du propriétaire : d'abord la liste des comptes déjà chargée."""
+        cible = str(url or "").rstrip("/")
+        for u in getattr(self.hote, "all_users", None) or []:
+            if str(u.get("url", "")).rstrip("/") == cible:
+                nom = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
+                return nom or u.get("username", "")
+        try:
+            u = api.get_user(url)
+            return f"{u.get('first_name', '')} {u.get('last_name', '')}".strip() or u.get("username", "")
+        except Exception:
+            return ""
+
+    def enrichir_video(self, video: dict) -> None:
+        """Vidéo venue de l'onglet Vidéos : elle devient la vidéo choisie."""
+        api = self.pod()
+        if api is None:
+            return
+        titre = video.get("title", "")
+        self.journal(f"Enrichissement IA : lecture de la fiche de « {titre} »…")
+
+        def ensuite(r):
+            if isinstance(r, Exception):
+                self.hote._log(f"❌ Fiche Pod de « {titre} » : {type(r).__name__} : {r}")
+                messagebox.showerror("Fiche illisible", message_utilisateur(r), parent=self.winfo_toplevel())
+                return
+            self.selectionner_fiche(r)
+        self._fond(lambda: self.lire_fiche(api, video), ensuite)
+
+    def _avec_fiche(self, suite) -> None:
+        """Exécute `suite(fiche)` ; la fiche Pod est relue au besoin (vidéo
+        choisie dans la liste : seul son projet est connu)."""
+        if self.fiche is not None:
+            suite(self.fiche)
+            return
+        p = self._projet_courant()
+        api = self.pod()
+        if api is None or not (p and p.get("pod")):
+            return
+        ident = p["pod"]["id"]
+        self.journal(f"Lecture de la fiche Pod n° {ident}…")
+
+        def charger():
+            return self.lire_fiche(api, api.video(ident))
+
+        def ensuite(r):
+            if isinstance(r, Exception):
+                self.hote._log(f"❌ Fiche Pod n° {ident} : {type(r).__name__} : {r}")
+                messagebox.showerror("Fiche illisible", message_utilisateur(r), parent=self.winfo_toplevel())
+                return
+            self.fiche = r
+            self._maj_cartes()
+            suite(r)
+        self._fond(charger, ensuite)
+
+    def _partir_de_la_piste_fr(self, fiche: dict) -> None:
+        pistes = fiche.get("pistes") or []
+        if not pistes:
+            messagebox.showinfo("Aucun sous-titre", "Cette vidéo n'a pas de sous-titres sur Pod.",
+                                parent=self.winfo_toplevel())
+            return
+        # Les vidéos sont en français : la piste française d'abord, sous-titres avant légendes.
+        piste = sorted(pistes, key=lambda t: (t.get("lang") != "fr", t.get("kind") != "subtitles"))[0]
+        self.partir_de_piste_pod(fiche, piste)
+
+    def _repartir(self, p: dict | None) -> None:
+        """Nouvelle transcription, ou reprise des sous-titres de Pod : les
+        corrections faites sont perdues, d'où la confirmation."""
+        if p is None:
+            return
+        if not p.get("pod"):
+            if messagebox.askyesno("Repartir de zéro", f"Renvoyer « {p['nom']} » à Aristote ?\n\n"
+                                   "Les corrections faites seront perdues.", parent=self.winfo_toplevel()):
+                self.transcrire_fichier(p["media"])
+            return
+
+        def choisir(fiche):
+            pistes = fiche.get("pistes") or []
+            if pistes:
+                rep_ = messagebox.askyesnocancel(
+                    "Repartir de zéro",
+                    f"Repartir de zéro pour « {p['nom']} » ? Les corrections faites seront perdues.\n\n"
+                    "Oui : nouvelle transcription par Aristote.\n"
+                    "Non : partir des sous-titres déjà sur Pod.", parent=self.winfo_toplevel())
+                if rep_ is None:
+                    return
+                self.transcrire_pod(fiche) if rep_ else self._partir_de_la_piste_fr(fiche)
+            elif messagebox.askyesno("Repartir de zéro",
+                                     f"Nouvelle transcription de « {p['nom']} » par Aristote ?\n\n"
+                                     "Les corrections faites seront perdues.", parent=self.winfo_toplevel()):
+                self.transcrire_pod(fiche)
+        self._avec_fiche(choisir)
+
+    def _transcrire_puis(self, cle: str) -> None:
+        """Vidéo sans sous-titres : la transcription part d'abord, la demande
+        suit dès qu'elle est finie (décision de Cédric). Annoncé avant."""
+        quoi = "les métadonnées" if cle == "meta" else "le quiz"
+        if not messagebox.askyesno(
+                "Transcrire d'abord",
+                f"Cette vidéo n'a pas encore de sous-titres.\n\nAristote va d'abord la transcrire "
+                f"(quelques minutes à une demi-heure selon sa durée), puis préparer {quoi} "
+                f"({ATTENTE_IA}).\n\nVous pourrez relire les sous-titres entre-temps. Continuer ?",
+                parent=self.winfo_toplevel()):
+            return
+        self._avec_fiche(lambda f: self.transcrire_pod(f, enchainer=[cle]))
+
+    def _enchainer(self, cle: str) -> None:
+        """Transcription en cours : la demande partira dès qu'elle est finie."""
+        p = self._projet_courant()
+        if p is None:
+            return
+        p["a_enchainer"] = sorted(set(p.get("a_enchainer") or []) | {cle})
+        projets_ia.enregistrer(p)
+        self.journal(f"{p['nom']} : {LIBELLES_PARTIE_IA.get(cle, cle)} demandés dès la fin de la transcription.")
+        self._maj_cartes()
+
+    def demander(self, pid: str, cle: str, avertir: bool = True) -> None:
+        """Une demande Aristote pour une partie, hors de l'interface."""
+        p = projets_ia.charger(pid)
+        if avertir and projets_ia.etat_partie(p, "sous_titres")["etat"] == "a_relire" and not messagebox.askyesno(
+                "Sous-titres non relus",
+                "Les sous-titres n'ont pas encore été relus : Aristote travaillera sur le texte "
+                "tel qu'il est.\n\nDemander quand même ?", parent=self.winfo_toplevel()):
+            return
+        serveur = self.serveur                 # créé dans le fil principal
+        libelle = LIBELLES_PARTIE_IA.get(cle, cle)
+
+        def ensuite(r):
+            if isinstance(r, Exception):
+                self.hote._log(f"❌ {p['nom']} : demande « {libelle} » refusée : {type(r).__name__} : {r}")
+                messagebox.showerror("Demande refusée", message_editeur(r), parent=self.winfo_toplevel())
+            else:
+                self.journal(f"→ {p['nom']} : {libelle} demandés à Aristote ({ATTENTE_IA}).")
+            self._maj_ligne(projets_ia.charger(pid))
+            if pid == self.pid_courant:
+                self._maj_cartes()
+        self._fond(lambda: serveur.lancer_demande(pid, cle), ensuite)
 
     def journal(self, msg: str) -> None:
         """Le panneau n'a plus sa propre zone de journal : tout va au Journal
@@ -11342,12 +11879,10 @@ class PanneauEnrichissement(ctk.CTkFrame):
             barre = ctk.CTkProgressBar(cadre, height=6, progress_color=C_ACTION, fg_color=S_PUCE)
             barre.set(0)
             # Actions répétées sur chaque ligne : neutres et compactes.
-            b_corr = ctk.CTkButton(cadre, text="✏️  Corriger", width=104, height=H_COMPACT,
+            b_corr = ctk.CTkButton(cadre, text="Afficher", width=96, height=H_COMPACT,
                                    fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
-                                   text_color=T_SUR_NEUTRE, command=lambda: self.corriger(pid))
-            b_exp = ctk.CTkButton(cadre, text="Exporter", width=84, height=H_COMPACT,
-                                  fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
-                                  text_color=T_SUR_NEUTRE, command=lambda: self.exporter(pid))
+                                   text_color=T_SUR_NEUTRE, command=lambda: self.selectionner_projet(pid))
+            ajouter_infobulle(b_corr, "Afficher ses trois parties : sous-titres, métadonnées, quiz")
             b_dos = ctk.CTkButton(cadre, text="📁", width=34, height=H_COMPACT,
                                   fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
                                   text_color=T_SUR_NEUTRE,
@@ -11359,11 +11894,9 @@ class PanneauEnrichissement(ctk.CTkFrame):
                                   text_color=T_SUR_NEUTRE, command=lambda: self.supprimer(pid))
             ajouter_infobulle(b_sup, "Retirer cette vidéo de la liste")
             b_corr.grid(row=0, column=1, rowspan=2, padx=3)
-            b_exp.grid(row=0, column=2, rowspan=2, padx=3)
-            b_dos.grid(row=0, column=3, rowspan=2, padx=3)
-            b_sup.grid(row=0, column=4, rowspan=2, padx=(3, 8))
-            self.lignes[pid] = dict(cadre=cadre, etat=etat, barre=barre,
-                                    corriger=b_corr, exporter=b_exp)
+            b_dos.grid(row=0, column=2, rowspan=2, padx=3)
+            b_sup.grid(row=0, column=3, rowspan=2, padx=(3, 8))
+            self.lignes[pid] = dict(cadre=cadre, etat=etat, barre=barre, afficher=b_corr)
             self._reordonner(nouveau=pid)
         self._maj_ligne(p)
         self._maj_vide()
@@ -11387,23 +11920,19 @@ class PanneauEnrichissement(ctk.CTkFrame):
         if e == "erreur" and p.get("erreur"):
             texte += " : " + p["erreur"]
         elif e in ("a_corriger", "corrige"):
-            prm = soustitres_ia.Parametres.depuis_dict(p.get("parametres"))
-            sts = p.get("sous_titres") or []
-            revoir = sum(1 for d in sts
-                         if soustitres_ia.verifier(soustitres_ia.SousTitre.depuis_dict(d), prm))
-            texte += f" · {len(sts)} sous-titres" + (f", {revoir} à revoir" if revoir else "")
+            # Résumé des trois parties : ce qui reste à faire se lit sans ouvrir.
+            cartes = cartes_ia(p, bool(p.get("pod")))
+            texte = " · ".join(f"{nom} : {cartes[cle]['pastille']}" for cle, nom in
+                               (("st", "sous-titres"), ("meta", "métadonnées"), ("quiz", "quiz"))
+                               if cle != "meta" or p.get("pod"))
         if detail:
             texte += " · " + detail
-        w["etat"].configure(text=texte,
-                            text_color=T_ERREUR if e == "erreur"
-                            else T_SUCCES if e == "corrige" else T_SECONDAIRE)
+        w["etat"].configure(text=texte, text_color=T_ERREUR if e == "erreur" else T_SECONDAIRE)
         pret = e in ("a_corriger", "corrige")
-        w["corriger"].configure(state="normal" if pret else "disabled")
-        w["exporter"].configure(state="normal" if pret else "disabled")
         if progression is None or pret or e == "erreur":
             w["barre"].grid_forget()
         else:
-            w["barre"].grid(row=2, column=0, columnspan=5, sticky="ew", padx=10, pady=(0, 8))
+            w["barre"].grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 8))
             if progression < 0:
                 w["barre"].configure(mode="indeterminate")
                 w["barre"].start()
@@ -11428,11 +11957,21 @@ class PanneauEnrichissement(ctk.CTkFrame):
                     ev[1]()
                 elif genre == "recharger" and projets_ia.existe(ev[1]):
                     self._maj_ligne(projets_ia.charger(ev[1]))
+                    if ev[1] == self.pid_courant:
+                        self._maj_cartes()
+                elif genre == "resultat":
+                    self._resultat(*ev[1:])
                 elif genre == "pret":
                     p = ev[1]
                     self._ligne(p)
                     self.journal(f"✔ {p['nom']} : transcription prête, "
-                                 f"{len(p['sous_titres'])} sous-titres. Cliquez sur « Corriger ».")
+                                 f"{len(p['sous_titres'])} sous-titres à relire.")
+                    self._signaler_resultat()
+                    self._lancer_enchainements(p["id"])
+                    if p["id"] == self.pid_courant or (
+                            self.fiche and p.get("pod") and self.fiche["video"]["id"] == p["pod"]["id"]):
+                        self.pid_courant = p["id"]
+                        self._maj_cartes()
         except queue.Empty:
             pass
         except Exception as e:                          # un événement fautif n'arrête pas la boucle
@@ -11445,6 +11984,42 @@ class PanneauEnrichissement(ctk.CTkFrame):
 
     def _signaler(self, p: dict, detail: str = "", prog: float | None = None):
         self.evenements.put(("etat", dict(p), detail, prog))
+        if p.get("id") == self.pid_courant:
+            self.evenements.put(("recharger", p["id"]))
+
+    def _resultat(self, pid: str, cle: str, ok: bool) -> None:
+        """Une demande Aristote est terminée (fil principal)."""
+        if not projets_ia.existe(pid):
+            return
+        p = projets_ia.charger(pid)
+        libelle = LIBELLES_PARTIE_IA.get(cle, cle.replace("trad:", "traduction "))
+        if ok:
+            self.journal(f"✔ {p['nom']} : {libelle} reçus d'Aristote, à relire dans l'éditeur.")
+        else:
+            d = projets_ia.enrichissement(p)["demandes"].get(cle) or {}
+            self.journal(f"✖ {p['nom']} : {libelle} : {d.get('erreur') or 'échec'}")
+        self._maj_ligne(p)
+        if pid == self.pid_courant:
+            self._maj_cartes()
+        self._signaler_resultat()
+
+    def _signaler_resultat(self) -> None:
+        """Pastille sur l'entrée de la barre latérale si l'utilisateur est
+        ailleurs : un résultat l'attend ici (décision de Cédric)."""
+        if getattr(self.hote, "onglet_courant", "enrich") != "enrich":
+            signaler = getattr(self.hote, "_signaler_onglet", None)
+            if signaler:
+                signaler("enrich", True)
+
+    def _lancer_enchainements(self, pid: str) -> None:
+        """Demandes faites pendant la transcription : elles partent maintenant."""
+        p = projets_ia.charger(pid)
+        cles = p.pop("a_enchainer", None) or []
+        if not cles:
+            return
+        projets_ia.enregistrer(p)
+        for cle in cles:
+            self.demander(pid, cle, avertir=False)
 
     def _fond(self, travail, ensuite):
         """Exécute `travail` hors de l'interface, puis `ensuite(résultat |
@@ -11492,6 +12067,11 @@ class PanneauEnrichissement(ctk.CTkFrame):
             self._signaler(p, "récupération de la transcription", -1)
             tr = client.transcription(p["enrichment_id"], d.get("initialVersionId"))
             projets_ia.appliquer_transcription(p, tr, self._parametres())
+            # « Demander après la transcription » a pu être cliqué pendant
+            # l'attente : cette liste est sur le disque, pas dans `p`.
+            if projets_ia.existe(p["id"]):
+                disque = projets_ia.charger(p["id"]).get("a_enchainer") or []
+                p["a_enchainer"] = sorted(set(p.get("a_enchainer") or []) | set(disque))
             projets_ia.enregistrer(p)
             self.evenements.put(("pret", dict(p)))
         except Exception as e:
@@ -11525,8 +12105,13 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 self.journal(f"Reprise du suivi : {p['nom']}")
                 self.hote._run(self._attendre_et_recuperer, self._client(),
                                projets_ia.charger(p["id"]))
-            if (p.get("enrichissement") or {}).get("etat") == "en_cours":
-                self.journal(f"Reprise de l'enrichissement : {p['nom']}")
+            # Une demande par partie (1.11.0) ; un projet plus ancien est
+            # converti à la lecture (projet.enrichissement).
+            en_cours = projets_ia.demandes_en_cours(p)
+            if en_cours:
+                parties = ", ".join(LIBELLES_PARTIE_IA.get(d["cle"], d["cle"].replace("trad:", "traduction "))
+                                    for d in en_cours)
+                self.journal(f"Reprise du suivi Aristote : {p['nom']} ({parties})")
                 self.serveur.reprendre(p["id"])
 
     def choisir_video_pod(self):
@@ -11593,6 +12178,8 @@ class PanneauEnrichissement(ctk.CTkFrame):
         p = projets_ia.nouveau(chemin, "fr")
         projets_ia.enregistrer(p)
         self._ligne(p)
+        self.fiche, self.pid_courant = None, p["id"]
+        self._montrer_selection()
         self.journal(f"→ {p['nom']} : envoi à Aristote ({taille / 1024 / 1024:.0f} Mo).")
         self.hote._run(self._travail_fichier, client, p)
 
@@ -11652,7 +12239,9 @@ class PanneauEnrichissement(ctk.CTkFrame):
         self.journal(f"✔ {nom} importé et redécoupé : {len(sts)} → "
                      f"{len(p['sous_titres'])} sous-titres."
                      + ("" if video else " Aucune vidéo du même nom trouvée à côté."))
-        self.corriger(p["id"])
+        self.fiche, self.pid_courant = None, p["id"]
+        self._montrer_selection()
+        self.ouvrir_editeur(p["id"], "st")
 
     def associer_pod(self, pid_local: str, fiche: dict) -> None:
         """Rattache une correction faite sur le poste à une vidéo Pod : le
@@ -11666,10 +12255,11 @@ class PanneauEnrichissement(ctk.CTkFrame):
             p["video_distante"] = fiche["mp4"] or ""
         projets_ia.enregistrer(p)
         self._maj_ligne(p)
+        self.fiche, self.pid_courant = fiche, pid_local
+        self._montrer_selection()
         self.journal(f"✔ « {p['nom']} » est associé à la vidéo Pod n° {fiche['video']['id']}.")
-        self.corriger(pid_local)
 
-    def transcrire_pod(self, fiche: dict) -> None:
+    def transcrire_pod(self, fiche: dict, enchainer: list[str] | None = None) -> None:
         """Nouvelle transcription : Aristote télécharge lui-même le MP3 de Pod.
         Rien ne passe par le poste, et la limite d'envoi d'ILaaS ne s'applique
         pas (voir verifier_ilaas_taille.py)."""
@@ -11683,8 +12273,12 @@ class PanneauEnrichissement(ctk.CTkFrame):
                                    fiche["proprietaire"], fiche["disciplines"],
                                    fiche["types"], "fr")
         p["etat"] = "envoi"
+        if enchainer:
+            p["a_enchainer"] = sorted(set(enchainer))
         projets_ia.enregistrer(p)
         self._ligne(p)
+        self.fiche, self.pid_courant = fiche, p["id"]
+        self._montrer_selection()
         self.journal(f"→ {p['nom']} (Pod n° {fiche['video']['id']}) : envoi du lien du son "
                      "à Aristote.")
 
@@ -11729,34 +12323,26 @@ class PanneauEnrichissement(ctk.CTkFrame):
             p["origine"] = f"piste Pod {piste.get('lang')} ({piste.get('kind')})"
             projets_ia.enregistrer(p)
             self._ligne(p)
+            self.fiche, self.pid_courant = fiche, p["id"]
+            self._montrer_selection()
             self.journal(f"✔ {p['nom']} : piste {piste.get('lang')} de Pod reprise et "
                          f"redécoupée, {len(sts)} → {len(p['sous_titres'])} sous-titres.")
-            self.corriger(p["id"])
+            self.ouvrir_editeur(p["id"], "st")
         self._fond(lambda: api.lire_piste(piste), ensuite)
 
     # ── Actions sur une ligne ───────────────────────────────────────────────
-    def corriger(self, pid: str):
-        self.serveur.ouvrir(pid)
-        self.journal("Éditeur ouvert dans le navigateur. Les corrections sont "
-                     "enregistrées automatiquement.")
+    PARTIES_EDITEUR = {"st": "Sous-titres et traduction", "meta": "Métadonnées", "quiz": "Quiz"}
 
-    def exporter(self, pid: str):
-        p = projets_ia.charger(pid)
-        prm = soustitres_ia.Parametres.depuis_dict(p.get("parametres"))
-        revoir = sum(1 for d in p["sous_titres"]
-                     if soustitres_ia.verifier(soustitres_ia.SousTitre.depuis_dict(d), prm))
-        if p.get("etat") != "corrige" and not messagebox.askyesno(
-                "Exporter sans relecture",
-                "Ces sous-titres n'ont pas été relus dans l'éditeur"
-                + (f" et {revoir} ne respectent pas la norme" if revoir else "")
-                + ".\n\nExporter quand même ?", parent=self.winfo_toplevel()):
-            return
-        fichiers = projets_ia.exporter(p, self.prefs.get("formats", ["vtt"]))
-        p["etat"] = "corrige"
-        projets_ia.enregistrer(p)
-        self._maj_ligne(p)
-        for f in fichiers:
-            self.journal(f"✔ Écrit : {f}")
+    def ouvrir_editeur(self, pid: str, partie: str = "st") -> None:
+        """Ouvre l'éditeur sur une partie. Une seule fenêtre par vidéo : si
+        elle est déjà ouverte, elle change de partie (ServeurEditeur.ouvrir)."""
+        deja = self.serveur.ouvrir(pid, partie)
+        nom = self.PARTIES_EDITEUR.get(partie, partie)
+        self.journal(f"Éditeur déjà ouvert : il affiche maintenant « {nom} »." if deja else
+                     f"Éditeur ouvert sur « {nom} ». Les corrections sont enregistrées automatiquement.")
+
+    def corriger(self, pid: str):
+        self.ouvrir_editeur(pid, "st")
 
     def ouvrir_dossier_projet(self, pid: str):
         p = projets_ia.charger(pid)
@@ -11786,6 +12372,8 @@ class PanneauEnrichissement(ctk.CTkFrame):
             w["cadre"].destroy()
         self._reordonner()
         self._maj_vide()
+        if pid == self.pid_courant:
+            self.revenir_au_choix()
 
     def ouvrir_reglages(self):
         FenetreReglagesEnrichissement(self)
@@ -11881,14 +12469,16 @@ class FenetreVideoPod(ctk.CTkToplevel):
 
     TYPES_PISTE = {"subtitles": "sous-titres", "captions": "légendes (sourds et malentendants)"}
 
-    def __init__(self, panneau: PanneauEnrichissement, api):
+    def __init__(self, panneau: PanneauEnrichissement, api, associer: str | None = None):
         racine = panneau.winfo_toplevel()
         super().__init__(racine)
         self.panneau = panneau
         self.hote = panneau.hote
         self.api = api
         self.fiche: dict | None = None
-        self.title("Vidéo sur Pod")
+        # Projet du poste à rattacher à la vidéo choisie, ou None.
+        self.associer = associer
+        self.title("Associer à une vidéo Pod" if associer else "Vidéo sur Pod")
         # 720 px de haut : CustomTkinter 6 ne descend pas sous ~212 px pour la
         # zone des résultats ; à 660 px, la troisième action de la fiche était
         # coupée en bas.
@@ -11978,31 +12568,11 @@ class FenetreVideoPod(ctk.CTkToplevel):
                           command=lambda v=v: self.ouvrir_fiche(v)).pack(fill="x", padx=2, pady=1)
 
     # ── Fiche ───────────────────────────────────────────────────────────────
-    def _nom_proprietaire(self, url: str) -> str:
-        """Nom du propriétaire : d'abord la liste des comptes déjà chargée."""
-        cible = str(url or "").rstrip("/")
-        for u in getattr(self.hote, "all_users", None) or []:
-            if str(u.get("url", "")).rstrip("/") == cible:
-                nom = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
-                return nom or u.get("username", "")
-        try:
-            u = self.api.get_user(url)
-            return f"{u.get('first_name', '')} {u.get('last_name', '')}".strip() or u.get("username", "")
-        except Exception:
-            return ""
-
     def ouvrir_fiche(self, video: dict):
         self.statut.configure(text=f"Lecture de la fiche de « {video.get('title', '')} »…",
                               text_color=T_SECONDAIRE)
         api, panneau = self.api, self.panneau
-
-        def charger():
-            refs = panneau.references(api)
-            return {"video": video, "lien": api.lien_public(video),
-                    "proprietaire": self._nom_proprietaire(video.get("owner", "")),
-                    "pistes": api.pistes(video), "mp3": api.mp3(video), "mp4": api.mp4(video),
-                    "disciplines": list(refs["disciplines"]), "types": list(refs["types"])}
-        panneau._fond(charger, self._apres(self._afficher_fiche))
+        panneau._fond(lambda: panneau.lire_fiche(api, video), self._apres(self._afficher_fiche))
 
     def _section(self, texte: str):
         ctk.CTkLabel(self.cadre_fiche, text=texte, font=ctk.CTkFont(size=T_SOUS, weight="bold"),
@@ -12052,48 +12622,27 @@ class FenetreVideoPod(ctk.CTkToplevel):
                                  f"{self.TYPES_PISTE.get(t.get('kind'), t.get('kind'))}",
                          anchor="w", font=ctk.CTkFont(size=T_CORPS)).pack(fill="x", padx=14)
 
-        self._section("Point de départ")
         actions = ctk.CTkFrame(c, fg_color="transparent")
-        actions.pack(fill="x", padx=14, pady=(0, 12))
-        pid = projets_ia.id_pod(v["id"])
-        existe = projets_ia.existe(pid)
-        if existe:
-            self._bouton(actions, "✏️  Rouvrir la correction en cours",
-                         lambda: (self.panneau.corriger(pid), self.destroy()),
-                         principal=True).pack(anchor="w", pady=(0, 6))
-        self._bouton(actions, "🤖  Nouvelle transcription par Aristote", self._nouvelle,
-                     principal=not existe).pack(anchor="w", pady=3)
-        for t in f["pistes"]:
-            self._bouton(actions, f"Partir des {self.TYPES_PISTE.get(t.get('kind'), 'sous-titres')} "
-                                  f"existants ({t.get('lang')}), sans transcription",
-                         lambda t=t: self._depuis_piste(t)).pack(anchor="w", pady=3)
+        actions.pack(fill="x", padx=14, pady=(16, 12))
+        if self.associer:
+            if projets_ia.existe(projets_ia.id_pod(v["id"])):
+                ctk.CTkLabel(actions, text="⚠  Une correction est déjà rattachée à cette vidéo.",
+                             anchor="w", text_color=T_ALERTE,
+                             font=ctk.CTkFont(size=T_PETIT)).pack(fill="x", pady=(0, 6))
+            self.bouton_defaut = self._bouton(actions, "🔗  Associer à cette vidéo",
+                                              lambda: self._associer(self.associer), principal=True)
+        else:
+            self.bouton_defaut = self._bouton(actions, "Choisir cette vidéo", self._choisir,
+                                              principal=True)
+        self.bouton_defaut.pack(anchor="w")
+        ctk.CTkLabel(actions, text="Les sous-titres, métadonnées et quiz se préparent ensuite "
+                                   "dans les cartes de l'onglet.",
+                     anchor="w", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=T_PETIT)
+                     ).pack(fill="x", pady=(6, 0))
 
-        # Correction faite sur le poste avant la mise en ligne : on la rattache.
-        locaux = {f"{p['nom']}  ({str(p.get('modifie', ''))[:10]})": p["id"]
-                  for p in projets_ia.lister() if not p.get("pod") and p.get("sous_titres")}
-        if locaux:
-            bloc = bloc_filtre(actions, "Ou associer une correction faite sur le poste")
-            bloc.pack(anchor="w", pady=(12, 3), fill="x")
-            ligne = ctk.CTkFrame(bloc, fg_color="transparent")
-            ligne.pack(fill="x")
-            choix = ctk.StringVar(value=next(iter(locaux)))
-            ctk.CTkOptionMenu(ligne, values=list(locaux), variable=choix, width=300,
-                              height=H_NORMAL, dynamic_resizing=False,
-                              **STYLE_CHAMP).pack(side="left")
-            ctk.CTkButton(ligne, text="Associer", width=100, height=H_NORMAL,
-                          fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
-                          command=lambda: self._associer(locaux[choix.get()])).pack(side="left", padx=6)
-
-    def _confirmer_remplacement(self) -> bool:
-        pid = projets_ia.id_pod(self.fiche["video"]["id"])
-        return not projets_ia.existe(pid) or messagebox.askyesno(
-            "Correction en cours", "Une correction existe déjà pour cette vidéo.\n\n"
-            "La remplacer ? Les corrections non exportées seront perdues.", parent=self)
-
-    def _nouvelle(self):
-        if self._confirmer_remplacement():
-            self.panneau.transcrire_pod(self.fiche)
-            self.destroy()
+    def _choisir(self):
+        self.panneau.selectionner_fiche(self.fiche)
+        self.destroy()
 
     def _associer(self, pid_local: str):
         if projets_ia.existe(projets_ia.id_pod(self.fiche["video"]["id"])) and not messagebox.askyesno(
@@ -12102,11 +12651,6 @@ class FenetreVideoPod(ctk.CTkToplevel):
             return
         self.panneau.associer_pod(pid_local, self.fiche)
         self.destroy()
-
-    def _depuis_piste(self, piste: dict):
-        if self._confirmer_remplacement():
-            self.panneau.partir_de_piste_pod(self.fiche, piste)
-            self.destroy()
 
 
 # ════════════════════════════════════════════════════════════════════════════

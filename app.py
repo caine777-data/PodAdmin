@@ -49,7 +49,7 @@ from pod_api import identifiant_depuis_lien
 from enrichissement import reglages as reglages_ia
 from enrichissement import projet as projets_ia
 from enrichissement import sous_titres as soustitres_ia
-from enrichissement.aristote_api import AristoteAPI, AristoteErreur, ETATS
+from enrichissement.aristote_api import AristoteAPI, AristoteErreur, ETATS, est_passagere
 from enrichissement.editeur import ServeurEditeur
 
 # Arrêts demandés par l'utilisateur (bouton 🛑 du Téléversement). Chacun des
@@ -11312,7 +11312,8 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                                  f"Aristote transcrit la vidéo, {ATTENTE_IA} ou davantage selon sa "
                                  "durée. Vous pouvez travailler ailleurs.")
         elif e["etat"] == "erreur":
-            cartes["st"] = carte("échec", "erreur", e["detail"], "reessayer_st", "Réessayer")
+            cartes["st"] = carte("échec", "erreur", e["detail"], "reessayer_st",
+                                 "Reprendre le suivi" if p.get("reprenable") else "Réessayer")
         elif e["etat"] == "vide":
             cartes["st"] = carte("pas encore de sous-titres", "", "", "reessayer_st",
                                  "Transcrire avec Aristote")
@@ -11372,7 +11373,9 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                                 (f"Demandé à {heure}. " if heure else "")
                                 + f"Réponse {ATTENTE_IA} : vous pouvez travailler ailleurs.")
         elif e["etat"] == "erreur":
-            cartes[cle] = carte("échec", "erreur", e["detail"], f"demander_{cle}", "Réessayer")
+            reprenable = (projets_ia.enrichissement(p)["demandes"].get(cle) or {}).get("reprenable")
+            cartes[cle] = carte("échec", "erreur", e["detail"], f"demander_{cle}",
+                                "Reprendre le suivi" if reprenable else "Réessayer")
         elif e["etat"] == "vide":
             cartes[cle] = carte("pas encore demandé", "",
                                 (e["detail"] + ". " if e["detail"] else "") + presentation,
@@ -11398,6 +11401,21 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                                     "demander_quiz" if cle == "quiz" else "",
                                     "Demander d'autres questions" if cle == "quiz" else "")
     return cartes
+
+
+ETATS_A_FAIRE_IA = {"en_cours", "erreur", "a_relire", "pret"}
+
+
+def projet_a_faire_ia(p: dict) -> bool:
+    """Vrai si la vidéo attend encore quelque chose : transcription ou demande
+    en cours, échec, sous-titres à relire, résultat reçu mais pas encore
+    publié ou exporté. Sert au filtre « À faire » de la liste (audit I1)."""
+    if p.get("etat") in ("envoi", "attente", "erreur") or p.get("a_enchainer"):
+        return True
+    e = projets_ia.enrichissement(p)
+    parties = ["sous_titres", "quiz"] + (["meta"] if p.get("pod") else []) + [
+        f"trad:{lg}" for lg in set(e["traductions"]) | {c[5:] for c in e["demandes"] if c.startswith("trad:")}]
+    return any(projets_ia.etat_partie(p, x)["etat"] in ETATS_A_FAIRE_IA for x in parties)
 
 
 def carte_principale_ia(cartes: dict) -> str:
@@ -11435,6 +11453,8 @@ class PanneauEnrichissement(ctk.CTkFrame):
         # choisie mais jamais traitée a une fiche et pas encore de projet.
         self.pid_courant: str | None = None
         self.fiche: dict | None = None
+        self._a_recharger: set[str] = set()        # rafraîchissements regroupés (audit O6)
+        self._recharge_prevue = False
         self._construire()
         self._charger_projets()
         self.after(200, self._traiter_evenements)
@@ -11449,7 +11469,7 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 formats_defaut=lambda: self.prefs.get("formats", ["vtt"]),
                 sur_enregistrement=lambda pid: self.evenements.put(("recharger", pid)),
                 client=self._client,
-                reglages=lambda: self.prefs,
+                reglages=lambda: {**self.prefs, "theme": ctk.get_appearance_mode().lower()},
                 pod=lambda: self.hote.api,
                 message_erreur=message_editeur,
                 # Appelé depuis les fils du serveur : retour au fil principal.
@@ -11527,9 +11547,17 @@ class PanneauEnrichissement(ctk.CTkFrame):
         self.sel_infos = ctk.CTkLabel(bandeau, text="", anchor="w", text_color=T_SECONDAIRE,
                                       font=ctk.CTkFont(size=T_PETIT))
         self.sel_infos.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 10))
+        # Lien vers la page de la vidéo sur Pod (audit I4).
+        self._lien_pod = ""
+        self.b_voir_pod = ctk.CTkButton(bandeau, text="Voir sur Pod ↗", width=130, height=H_NORMAL,
+                                        fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
+                                        text_color=T_SUR_NEUTRE,
+                                        command=self._voir_sur_pod)
+        self.b_voir_pod.grid(row=0, column=1, rowspan=2, padx=(14, 0))
+        self.b_voir_pod.grid_remove()
         ctk.CTkButton(bandeau, text="Changer de vidéo", width=150, height=H_NORMAL,
                       fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
-                      command=self.revenir_au_choix).grid(row=0, column=1, rowspan=2, padx=14)
+                      command=self.revenir_au_choix).grid(row=0, column=2, rowspan=2, padx=14)
         grille = ctk.CTkFrame(self.selection, fg_color="transparent")
         grille.pack(fill="x", pady=(0, 10))
         self.cartes = {}
@@ -11551,30 +11579,54 @@ class PanneauEnrichissement(ctk.CTkFrame):
             bouton = ctk.CTkButton(c, text="", height=H_NORMAL, fg_color=C_NEUTRE,
                                    hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
                                    command=lambda n=nom: self._action_carte(n, "action"))
-            bouton.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 6))
+            # Progression de la transcription, montrée dans la carte elle-même
+            # (audit I3 : elle n'apparaissait que dans la liste).
+            barre = ctk.CTkProgressBar(c, height=6, progress_color=C_ACTION, fg_color=S_PUCE)
+            barre.set(0)
+            barre.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 8))
+            barre.grid_remove()
+            bouton.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 6))
             bouton2 = ctk.CTkButton(c, text="", height=H_COMPACT, fg_color=C_NEUTRE,
                                     hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
                                     command=lambda n=nom: self._action_carte(n, "action2"))
-            bouton2.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 10))
+            bouton2.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 10))
             # Place réservée quand il n'y a pas de seconde action : les boutons
             # principaux restent alignés d'une carte à l'autre.
             cale = ctk.CTkFrame(c, height=H_COMPACT, fg_color="transparent")
-            cale.grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 10))
+            cale.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 10))
             cale.grid_remove()
             self.cartes[nom] = dict(pastille=pastille, detail=detail, bouton=bouton, bouton2=bouton2,
-                                    cale=cale)
+                                    cale=cale, barre=barre)
         self._bind_largeur_cartes(grille)
 
-        ctk.CTkLabel(self, text="Vidéos en cours", anchor="w",
-                     font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(fill="x", pady=(4, 4))
+        entete = ctk.CTkFrame(self, fg_color="transparent")
+        entete.pack(fill="x", pady=(4, 4))
+        ctk.CTkLabel(entete, text="Vidéos", anchor="w",
+                     font=ctk.CTkFont(size=T_SOUS, weight="bold")).pack(side="left")
+        self.compte_liste = ctk.CTkLabel(entete, text="", text_color=T_SECONDAIRE,
+                                         font=ctk.CTkFont(size=T_PETIT))
+        self.compte_liste.pack(side="left", padx=12)
+        # Filtre (audit I1) : la liste ne faisait que grandir, vidéos finies et
+        # vidéos en attente d'un geste mêlées sous le titre « en cours ».
+        self.filtre_liste = ctk.StringVar(value="À faire")
+        ctk.CTkSegmentedButton(entete, values=["À faire", "Terminées", "Toutes"],
+                               variable=self.filtre_liste, height=H_NORMAL,
+                               command=lambda _v: self._reordonner()).pack(side="right")
         self.liste = ctk.CTkScrollableFrame(self, fg_color=S_CARTE, corner_radius=8)
         self.liste.pack(fill="both", expand=True)
         self.liste.grid_columnconfigure(0, weight=1)
         # État vide dans son propre cadre : `etat_vide` place ses widgets par
         # `pack`, alors que les lignes de la liste sont placées par `grid`.
         self.vide = ctk.CTkFrame(self.liste, fg_color="transparent")
-        etat_vide(self.vide, "🤖", "Aucune vidéo en cours.",
+        etat_vide(self.vide, "🤖", "Aucune vidéo pour l'instant.",
                   "Commencez par « Vidéo sur Pod… », dans la carte ci-dessus.")
+        self.vide_filtre = ctk.CTkLabel(self.liste, text="", text_color=T_SECONDAIRE,
+                                        font=ctk.CTkFont(size=T_CORPS))
+
+    def _voir_sur_pod(self) -> None:
+        if self._lien_pod:
+            import webbrowser                 # importé au besoin, comme ailleurs dans PodAdmin
+            webbrowser.open(self._lien_pod)
 
     def _bind_largeur_cartes(self, grille):
         """Le texte des cartes suit leur largeur (fenêtre agrandie ou non)."""
@@ -11606,11 +11658,13 @@ class PanneauEnrichissement(ctk.CTkFrame):
         self.pid_courant, self.fiche = None, None
         self.selection.pack_forget()
         self.depart.pack(fill="x", pady=(0, 10))
+        self._reordonner()
 
     def _montrer_selection(self) -> None:
         self.depart.pack_forget()
         self.selection.pack(fill="x")
         self._maj_cartes()
+        self._reordonner()
 
     def _projet_courant(self) -> dict | None:
         if self.pid_courant and projets_ia.existe(self.pid_courant):
@@ -11640,11 +11694,22 @@ class PanneauEnrichissement(ctk.CTkFrame):
         # Pas d'icône : 🎞️ est mal rendu par Tk à cette taille, et la ligne
         # du dessous dit déjà « Pod n° … » ou « Fichier du poste ».
         self.sel_titre.configure(text=titre)
-        self.sel_infos.configure(text=infos)
+        brouillon = bool(((self.fiche or {}).get("video") or {}).get("is_draft"))
+        if brouillon:
+            infos += "  ·  brouillon : sous-titres visibles à sa publication"
+        self.sel_infos.configure(text=infos, text_color=T_ALERTE if brouillon else T_SECONDAIRE)
+        lien = ((p or {}).get("pod") or {}).get("lien") or (self.fiche or {}).get("lien") or ""
+        self._lien_pod = lien
+        if lien:
+            self.b_voir_pod.grid()
+        else:
+            self.b_voir_pod.grid_remove()
         pistes = sorted({t.get("lang", "") for t in (self.fiche or {}).get("pistes") or []} - {""})
         etats = cartes_ia(p, pod, pistes)
         principale = carte_principale_ia(etats)
         teintes = {"ok": T_SUCCES, "alerte": T_ALERTE, "cours": T_EN_COURS, "erreur": T_ERREUR}
+        if (p or {}).get("etat") not in ("envoi", "attente"):
+            self._barre_carte(None)
         for nom, w in self.cartes.items():
             e = etats[nom]
             w["pastille"].configure(text=e["pastille"], text_color=teintes.get(e["teinte"], T_SECONDAIRE))
@@ -11669,6 +11734,22 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 w["bouton2"].grid_remove()
                 w["cale"].grid()
 
+    def _barre_carte(self, progression: float | None) -> None:
+        """Barre de la carte Sous-titres : None la masque, < 0 = sans fin."""
+        barre = self.cartes["st"]["barre"]
+        if progression is None:
+            barre.stop()
+            barre.grid_remove()
+            return
+        barre.grid()
+        if progression < 0:
+            barre.configure(mode="indeterminate")
+            barre.start()
+        else:
+            barre.stop()
+            barre.configure(mode="determinate")
+            barre.set(progression)
+
     def _action_carte(self, nom: str, champ: str) -> None:
         e = self.cartes[nom].get("action") or {}
         action = e.get(champ, "")
@@ -11677,6 +11758,8 @@ class PanneauEnrichissement(ctk.CTkFrame):
         p = self._projet_courant()
         if action.startswith(("relire_", "ouvrir_")):
             self.ouvrir_editeur(self.pid_courant, action.split("_", 1)[1])
+        elif action == "reessayer_st" and p is not None and p.get("reprenable"):
+            self.reprendre_transcription(p)
         elif action in ("transcrire", "reessayer_st"):
             if p is not None and not p.get("pod"):
                 self.transcrire_fichier(p["media"]) if p.get("media") else None
@@ -11736,6 +11819,16 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 return
             self.selectionner_fiche(r)
         self._fond(lambda: self.lire_fiche(api, video), ensuite)
+
+    def reprendre_transcription(self, p: dict) -> None:
+        """Reprend le suivi d'une transcription perdue de vue sur une panne,
+        sans renvoyer la vidéo à Aristote."""
+        p.update(etat="attente", erreur="", reprenable=False)
+        projets_ia.enregistrer(p)
+        self._ligne(p)
+        self._maj_cartes()
+        self.journal(f"{p['nom']} : reprise du suivi de la transcription chez Aristote.")
+        self.hote._run(self._attendre_et_recuperer, self._client(), p)
 
     def _avec_fiche(self, suite) -> None:
         """Exécute `suite(fiche)` ; la fiche Pod est relue au besoin (vidéo
@@ -11853,26 +11946,42 @@ class PanneauEnrichissement(ctk.CTkFrame):
 
     # ── Liste des travaux ───────────────────────────────────────────────────
     def _charger_projets(self):
-        for p in projets_ia.lister()[:60]:
-            self._ligne(p)
-        self._maj_vide()
+        """Lecture des projets HORS de l'interface (audit O4 : 385 ms de gel
+        avec trente vidéos d'une heure), puis une seule mise en place."""
+        def afficher(projets):
+            if isinstance(projets, Exception):
+                self.hote._log(f"❌ Enrichissement IA : lecture des projets : {projets}")
+                return
+            self._chargement = True
+            try:
+                # Du plus ancien au plus récent : chaque ligne s'insère EN TÊTE.
+                # Dans l'autre sens, le plus ancien finissait en haut.
+                for p in reversed(projets[:60]):
+                    if p["id"] not in self.lignes:
+                        self._ligne(p)
+            finally:
+                self._chargement = False
+            self._maj_vide()
+        self._fond(projets_ia.lister, afficher)
 
     def _maj_vide(self):
         if self.lignes:
             self.vide.grid_forget()
         else:
             self.vide.grid(row=0, column=0, pady=20)
+        self._reordonner()
 
     def _ligne(self, p: dict) -> None:
         pid = p["id"]
         if pid not in self.lignes:
             cadre = ctk.CTkFrame(self.liste, fg_color=S_LIGNE, corner_radius=6)
             cadre.grid_columnconfigure(0, weight=1)
-            titre = ("🎞️  " if p.get("pod") else "📄  ") + p["nom"] + (
-                f"   ·   Pod n° {p['pod']['id']}" if p.get("pod") else "")
-            ctk.CTkLabel(cadre, text=titre, anchor="w",
-                         font=ctk.CTkFont(size=T_CORPS, weight="bold")).grid(
-                row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
+            # Sans icône : 🎞️ est mal rendu par Tk sous Windows (audit I5).
+            titre = p["nom"] + (f"   ·   Pod n° {p['pod']['id']}" if p.get("pod")
+                                else "   ·   fichier du poste")
+            l_titre = ctk.CTkLabel(cadre, text=titre, anchor="w",
+                                   font=ctk.CTkFont(size=T_CORPS, weight="bold"))
+            l_titre.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
             etat = ctk.CTkLabel(cadre, text="", anchor="w", text_color=T_SECONDAIRE,
                                 font=ctk.CTkFont(size=T_PETIT))
             etat.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
@@ -11896,7 +12005,11 @@ class PanneauEnrichissement(ctk.CTkFrame):
             b_corr.grid(row=0, column=1, rowspan=2, padx=3)
             b_dos.grid(row=0, column=2, rowspan=2, padx=3)
             b_sup.grid(row=0, column=3, rowspan=2, padx=(3, 8))
-            self.lignes[pid] = dict(cadre=cadre, etat=etat, barre=barre, afficher=b_corr)
+            # Toute la ligne est cliquable (audit I2), pas seulement « Afficher ».
+            for w in (cadre, l_titre, etat):
+                w.bind("<Button-1>", lambda _e: self.selectionner_projet(pid), add="+")
+                w.configure(cursor="hand2")
+            self.lignes[pid] = dict(cadre=cadre, etat=etat, barre=barre, afficher=b_corr, a_faire=True)
             self._reordonner(nouveau=pid)
         self._maj_ligne(p)
         self._maj_vide()
@@ -11907,15 +12020,40 @@ class PanneauEnrichissement(ctk.CTkFrame):
             ordre.remove(nouveau)
             ordre.insert(0, nouveau)
             self.lignes = {k: self.lignes[k] for k in ordre}
-        for i, pid in enumerate(self.lignes):
-            self.lignes[pid]["cadre"].configure(fg_color=S_LIGNE if i % 2 == 0 else S_LIGNE_ALT)
+        if getattr(self, "_chargement", False):
+            return                        # placement unique en fin de chargement
+        filtre = self.filtre_liste.get() if hasattr(self, "filtre_liste") else "Toutes"
+        a_faire = sum(1 for w in self.lignes.values() if w["a_faire"])
+        visibles = [pid for pid, w in self.lignes.items()
+                    if filtre == "Toutes" or w["a_faire"] == (filtre == "À faire")]
+        for pid, w in self.lignes.items():
+            if pid not in visibles:
+                w["cadre"].grid_remove()
+        for i, pid in enumerate(visibles):
+            # La vidéo affichée au-dessus est repérée dans la liste (audit I2).
+            fond = S_SELECTION if pid == self.pid_courant else (S_LIGNE if i % 2 == 0 else S_LIGNE_ALT)
+            self.lignes[pid]["cadre"].configure(fg_color=fond)
             self.lignes[pid]["cadre"].grid(row=i + 1, column=0, sticky="ew", padx=6, pady=2)
+        if hasattr(self, "compte_liste"):
+            self.compte_liste.configure(
+                text=f"{a_faire} à faire · {len(self.lignes) - a_faire} terminée"
+                     f"{'s' if len(self.lignes) - a_faire > 1 else ''}" if self.lignes else "")
+        if self.lignes and not visibles:
+            self.vide_filtre.configure(text="Rien à faire : tout est à jour. Voir « Terminées »."
+                                       if filtre == "À faire" else "Aucune vidéo terminée pour l'instant.")
+            self.vide_filtre.grid(row=0, column=0, pady=20)
+        elif hasattr(self, "vide_filtre"):
+            self.vide_filtre.grid_forget()
 
     def _maj_ligne(self, p: dict, detail: str = "", progression: float | None = None):
         w = self.lignes.get(p["id"])
         if not w:
             return
         e = p.get("etat", "")
+        a_faire = projet_a_faire_ia(p)
+        if a_faire != w["a_faire"]:
+            w["a_faire"] = a_faire
+            self._reordonner()
         texte = LIBELLES_ETAT_IA.get(e, e)
         if e == "erreur" and p.get("erreur"):
             texte += " : " + p["erreur"]
@@ -11951,14 +12089,22 @@ class PanneauEnrichissement(ctk.CTkFrame):
                     _, p, detail, prog = ev
                     self._ligne(p)
                     self._maj_ligne(p, detail, prog)
+                    if p["id"] == self.pid_courant and p.get("etat") in ("envoi", "attente") \
+                            and prog is not None and self.selection.winfo_manager():
+                        self._barre_carte(prog)
                 elif genre == "journal":
                     self.journal(ev[1])
                 elif genre == "appel":                 # rappel venu d'un autre fil
                     ev[1]()
-                elif genre == "recharger" and projets_ia.existe(ev[1]):
-                    self._maj_ligne(projets_ia.charger(ev[1]))
-                    if ev[1] == self.pid_courant:
-                        self._maj_cartes()
+                elif genre == "recharger":
+                    # La page enregistre pendant la frappe : on regroupe ces
+                    # rafraîchissements, au plus un toutes les 0,5 s par vidéo
+                    # (audit O6 : ~37 ms de travail sur le fil de l'interface
+                    # à chaque enregistrement).
+                    self._a_recharger.add(ev[1])
+                    if not self._recharge_prevue:
+                        self._recharge_prevue = True
+                        self.after(500, self._recharger_attente)
                 elif genre == "resultat":
                     self._resultat(*ev[1:])
                 elif genre == "pret":
@@ -11981,6 +12127,15 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 self.after(200, self._traiter_evenements)
         except Exception:
             pass                                        # application en cours de fermeture
+
+    def _recharger_attente(self) -> None:
+        self._recharge_prevue = False
+        pids, self._a_recharger = self._a_recharger, set()
+        for pid in pids:
+            if projets_ia.existe(pid):
+                self._maj_ligne(projets_ia.charger(pid))
+                if pid == self.pid_courant:
+                    self._maj_cartes()
 
     def _signaler(self, p: dict, detail: str = "", prog: float | None = None):
         self.evenements.put(("etat", dict(p), detail, prog))
@@ -12081,6 +12236,9 @@ class PanneauEnrichissement(ctk.CTkFrame):
         """L'échec s'affiche en clair dans la ligne ; le détail technique va
         au Journal, pour le support."""
         p["etat"] = "erreur"
+        # Panne de réseau pendant l'attente : la transcription continue sans
+        # doute chez Aristote ; « Réessayer » reprendra son suivi (audit O1).
+        p["reprenable"] = bool(p.get("enrichment_id")) and est_passagere(e)
         if isinstance(e, AristoteErreur) and "(413)" in str(e):
             # ILaaS a refusé le fichier pour sa taille, malgré le seuil.
             p["erreur"] = MESSAGE_TROP_LOURD_IA

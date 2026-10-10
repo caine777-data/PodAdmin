@@ -119,11 +119,11 @@ class TestUneFenetreParVideo:
         assert len(serveur.fenetres) == 1 and serveur.fenetres[0].endswith("&partie=quiz")
 
     def test_page_ouverte_recoit_l_ordre_au_lieu_d_une_nouvelle_fenetre(self, serveur):
-        appel(serveur.srv, serveur.pid, "/enrichissement")         # la page se signale
+        appel(serveur.srv, serveur.pid, "/etat")                   # la page se signale
         assert serveur.srv.ouvrir(serveur.pid, "meta") is True
         assert serveur.fenetres == [], "seconde fenêtre ouverte"
-        assert appel(serveur.srv, serveur.pid, "/enrichissement")["commande"] == "meta"
-        assert appel(serveur.srv, serveur.pid, "/enrichissement")["commande"] == "", "ordre rejoué"
+        assert appel(serveur.srv, serveur.pid, "/etat")["commande"] == "meta"
+        assert appel(serveur.srv, serveur.pid, "/etat")["commande"] == "", "ordre rejoué"
 
     def test_page_fermee_nouvelle_fenetre(self, serveur):
         appel(serveur.srv, serveur.pid, "/enrichissement")
@@ -197,10 +197,17 @@ const SERVEUR = {commande: "", versions: {"trad:en": 1}, traductions: {en: [{sta
 const apiAction = a => a, toast = m => messages.push(m), majParties = () => {}, montrerPartie = () => {};
 const rendrePartie = p => rendues.push(p), partieDeCle = k => k.startsWith("trad:") ? "st" : k;
 const libelleCle = k => k, sauverEnrichissement = async () => {};
-const fetch = async () => ({ok: true, json: async () => JSON.parse(JSON.stringify(SERVEUR))});
+const appels = [];
+const fetch = async url => { appels.push(url); const d = JSON.parse(JSON.stringify(SERVEUR));
+  if (url === "etat") return {ok: true, json: async () => ({parties: d.parties, versions: d.versions, commande: ""})};
+  return {ok: true, json: async () => d}; };
 """ + fonctions + """
-interroger().then(() => console.log(JSON.stringify({en: (E.traductions.en || []).length, version: VERSIONS["trad:en"],
-                                                       rendues, messages})));
+interroger().then(async () => {
+  const premier = {en: (E.traductions.en || []).length, version: VERSIONS["trad:en"], rendues, messages, appels: [...appels]};
+  appels.length = 0;
+  await interroger();                       // rien de nouveau : la route légère seule
+  console.log(JSON.stringify({...premier, ensuite: appels}));
+});
 """
         f = tmp_path / "banc.js"
         f.write_text(banc, encoding="utf-8")
@@ -209,6 +216,9 @@ interroger().then(() => console.log(JSON.stringify({en: (E.traductions.en || [])
         sortie = json.loads(r.stdout)
         assert sortie["en"] == 1 and sortie["version"] == 1, sortie
         assert sortie["rendues"] == ["st"] and len(sortie["messages"]) == 1, sortie
+        # Audit O2 : le bloc complet n'est relu que si une version a changé.
+        assert sortie["appels"] == ["etat", "enrichissement"], sortie
+        assert sortie["ensuite"] == ["etat"], sortie
 
     @pytest.mark.skipif(not shutil.which("node"), reason="Node.js absent")
     def test_script_syntaxiquement_valide(self, tmp_path):
@@ -216,3 +226,131 @@ interroger().then(() => console.log(JSON.stringify({en: (E.traductions.en || [])
         f.write_text(SCRIPT, encoding="utf-8")
         r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
+
+
+class TestFichierExporteRetrouvable:
+    """Audit I6 : le chemin du fichier exporté disparaissait avec le message."""
+
+    def test_export_note_au_journal(self, serveur):
+        lignes = []
+        serveur.srv.journal_hote = lignes.append
+        d = appel(serveur.srv, serveur.pid, "/exporter", {"formats": [], "quiz": True})
+        assert lignes == [f"✔ cours.mp4 : exporté vers {d['fichiers'][0]}"], lignes
+
+    def test_ouvrir_le_dossier_du_projet(self, serveur, monkeypatch):
+        from enrichissement import editeur
+        ouverts = []
+        monkeypatch.setattr(editeur, "_ouvrir_dossier", ouverts.append)
+        assert appel(serveur.srv, serveur.pid, "/ouvrir_dossier", {"chemin": "C:/Windows"}) == {"ok": True}
+        assert ouverts == [serveur.dossier], "le chemin vient du projet, jamais de la page"
+
+    def test_dossier_absent_documents(self, tmp_path):
+        from enrichissement import editeur
+        assert editeur.dossier_exports({"dossier": str(tmp_path / "disparu")}).endswith("Documents")
+
+    def test_les_deux_exports_proposent_le_dossier(self):
+        assert SCRIPT.count("OUVRIR_DOSSIER);") == 2
+
+
+class TestInterrogationLegere:
+    """Audit O2 et O3 : moins de lectures, d'écritures et d'octets."""
+
+    def test_route_legere(self, serveur):
+        p = pj.charger(serveur.pid)
+        # Le volume vient des traductions (une heure : ~800 sous-titres par langue).
+        pj.enrichissement(p)["traductions"]["en"] = [
+            {"start": i, "end": i + 1, "text": "Hello everyone."} for i in range(800)]
+        pj.enregistrer(p)
+        url = f"http://127.0.0.1:{serveur.srv.port}/api/{serveur.pid}"
+        leger = urllib.request.urlopen(f"{url}/etat?t={serveur.srv.jeton}").read()
+        complet = urllib.request.urlopen(f"{url}/enrichissement?t={serveur.srv.jeton}").read()
+        d = json.loads(leger)
+        assert set(d) == {"parties", "versions", "commande", "theme"}
+        assert len(leger) < 3000 and len(complet) > 20 * len(leger), (len(leger), len(complet))
+
+    def test_projet_relu_seulement_s_il_a_change(self, serveur, monkeypatch):
+        lectures = []
+        vrai = pj.charger
+        monkeypatch.setattr(pj, "charger", lambda pid: lectures.append(pid) or vrai(pid))
+        for _ in range(5):
+            serveur.srv.projet_en_lecture(serveur.pid)
+        assert len(lectures) == 1
+        p = vrai(serveur.pid)
+        p["sous_titres"].append({"start": 9, "end": 10, "text": "Nouveau."})
+        pj.enregistrer(p)
+        assert serveur.srv.projet_en_lecture(serveur.pid)["sous_titres"][-1]["text"] == "Nouveau."
+        assert len(lectures) == 2
+
+    def test_suivi_n_ecrit_que_les_changements(self, serveur, monkeypatch):
+        from enrichissement import editeur
+        ecritures = []
+        vrai = pj.enregistrer
+        monkeypatch.setattr(pj, "enregistrer", lambda p: ecritures.append(1) or vrai(p))
+
+        class FauxAristote:
+            def attendre(self, eid, rappel=None, **k):
+                for statut in ["IN_PROGRESS"] * 10 + ["SUCCESS"]:
+                    rappel(statut, {})
+                return {"status": "SUCCESS"}
+
+            def version_finale(self, eid):
+                return {"enrichmentVersionMetadata": {"title": "T2"}}
+        p = pj.charger(serveur.pid)
+        pj.nouvelle_demande(p, "meta", "e9", ["meta"])
+        vrai(p)
+        serveur.srv._suivre(serveur.pid, FauxAristote(), "meta", "e9")
+        # Deux changements d'état (en cours, terminé), puis le résultat : 3 au plus.
+        assert len(ecritures) <= 3, len(ecritures)
+
+    def test_ecriture_ignoree_si_rien_ne_change(self, serveur, monkeypatch):
+        """Première protection, testée seule : la mise à jour d'une demande."""
+        p = pj.charger(serveur.pid)
+        pj.nouvelle_demande(p, "meta", "e8", ["meta"])
+        pj.enregistrer(p)
+        ecritures = []
+        vrai = pj.enregistrer
+        monkeypatch.setattr(pj, "enregistrer", lambda q: ecritures.append(1) or vrai(q))
+        for _ in range(5):
+            serveur.srv._maj_demande(serveur.pid, "meta", "e8", detail="En cours")
+        assert len(ecritures) == 1
+
+    def test_suivi_ne_transmet_que_les_changements_d_etat(self, serveur, monkeypatch):
+        """Seconde protection, testée seule : le rappel du suivi."""
+        appels = []
+        monkeypatch.setattr(serveur.srv, "_maj_demande", lambda *a, **k: appels.append(k.get("detail")))
+
+        class FauxAristote:
+            def attendre(self, eid, rappel=None, **k):
+                for statut in ["PENDING"] * 3 + ["IN_PROGRESS"] * 6:
+                    rappel(statut, {})
+                raise RuntimeError("fin du banc")
+        serveur.srv._suivre(serveur.pid, FauxAristote(), "meta", "e7")
+        # Deux changements d'état, puis l'enregistrement de l'échec du banc.
+        assert appels == ["PENDING", "IN_PROGRESS", ""], appels
+
+
+
+class TestFinitionPage:
+    def test_la_page_suit_le_theme_de_podadmin(self, serveur):
+        """Audit I10 : le thème venait des préférences de SousTitreur, où
+        PodAdmin ne l'écrit pas ; la page s'ouvrait toujours en sombre."""
+        serveur.srv.reglages = lambda: {"theme": "light"}
+        assert appel(serveur.srv, serveur.pid, "/etat")["theme"] == "light"
+        corps = SCRIPT[SCRIPT.index("async function interroger"):SCRIPT.index("function recevoir")]
+        assert "document.documentElement.dataset.theme = d.theme" in corps
+
+    def test_l_onglet_transmet_le_vrai_theme(self):
+        src = open(os.path.join(RACINE, "app.py"), encoding="utf-8").read()
+        assert '"theme": ctk.get_appearance_mode().lower()' in src
+
+    def test_clavier(self):
+        """Audit I9 : Alt+1, 2, 3 et flèches dans le choix de langue."""
+        assert 'e.altKey && ["1", "2", "3"].includes(e.key)' in SCRIPT
+        assert '"ArrowLeft", "ArrowRight"' in SCRIPT
+        assert "<kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd>" in PAGE
+
+    def test_entete_etroit_et_poubelle_visible(self):
+        """Audits I7 et I8."""
+        assert "@media (max-width:1150px){#parties button small{display:none}" in PAGE
+        assert "text-overflow:ellipsis;max-width:30vw" in PAGE
+        assert "button.poubelle{color:var(--texte);border-color:var(--bord)}" in PAGE

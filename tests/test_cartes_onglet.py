@@ -144,3 +144,60 @@ class TestBoutonEnrichirDansVideos:
                               and "Enrichir" in str(k.value.value) for k in n.keywords))
         code = ast.unparse(bouton)
         assert "_enrichir_video" in code and "fg_color=C_NEUTRE" in code, code
+
+
+class TestAFaire:
+    """Filtre « À faire » de la liste (audit I1)."""
+
+    def test_transcription_ou_relecture(self):
+        assert A.projet_a_faire_ia(projet(etat="attente"))
+        assert A.projet_a_faire_ia(projet())                       # à relire
+
+    def test_relu_sans_rien_d_autre_est_termine(self):
+        p = projet()
+        pj.marquer_relu(p)
+        assert not A.projet_a_faire_ia(p)
+
+    def test_resultat_recu_non_publie_reste_a_faire(self):
+        p = projet()
+        pj.marquer_relu(p)
+        pj.nouvelle_demande(p, "meta", "e1", ["meta"])
+        assert A.projet_a_faire_ia(p), "demande en cours"
+        pj.appliquer_demande(p, "meta", {"enrichmentVersionMetadata": {"title": "T"}}, PRM)
+        assert A.projet_a_faire_ia(p), "proposées, pas publiées"
+        pj.marquer_fait(p, "meta")
+        assert not A.projet_a_faire_ia(p)
+
+    def test_traduction_non_publiee(self):
+        p = projet()
+        pj.marquer_relu(p)
+        pj.nouvelle_demande(p, "trad:en", "e1", ["trad:en"], groupes=p["sous_titres"])
+        pj.appliquer_demande(p, "trad:en", {"transcript": {"translatedSentences": [
+            {"start": 0, "end": 2, "text": "Hello."}]}}, PRM)
+        assert A.projet_a_faire_ia(p)
+
+    def test_enchainement_en_attente(self):
+        p = projet(etat="a_corriger")
+        pj.marquer_relu(p)
+        p["a_enchainer"] = ["quiz"]
+        assert A.projet_a_faire_ia(p)
+
+
+
+class TestRafraichissementsRegroupes:
+    """Audit O6 : la page enregistre pendant la frappe ; l'onglet regroupe
+    ces rafraîchissements au lieu de tout recalculer à chaque fois."""
+
+    def test_un_seul_rafraichissement_programme(self):
+        import queue
+        from types import SimpleNamespace
+        q = queue.Queue()
+        for _ in range(8):
+            q.put(("recharger", "pod1"))
+        programmes = []
+        faux = SimpleNamespace(evenements=q, _a_recharger=set(), _recharge_prevue=False,
+                               after=lambda ms, f: programmes.append(ms), winfo_exists=lambda: True,
+                               hote=SimpleNamespace(_log=lambda *a: None))
+        faux._recharger_attente = lambda: None
+        A.PanneauEnrichissement._traiter_evenements(faux)
+        assert programmes.count(500) == 1 and faux._a_recharger == {"pod1"}, programmes

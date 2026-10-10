@@ -688,7 +688,7 @@ PodAdmin/
 └── .github/workflows/build.yml
 ```
 
-Version : **1.11.0**
+Version : **1.11.1**
 
 ---
 

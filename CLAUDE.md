@@ -139,6 +139,13 @@ Détail dans le README, rubrique « Enrichissement IA ».
   Node exécute les vraies fonctions de la page (`test_page_editeur.py`).
 - Onglet : `cartes_ia` (fonction pure) décide pastilles et boutons ; un seul
   bouton coloré par écran (`carte_principale_ia`).
+- Audit 1.11.1 : une coupure pendant l'attente n'est plus un échec
+  (`est_passagere`, tolérance de 15 min, demande « reprenable » : Réessayer
+  reprend le suivi sans renvoyer). Les envois POST ne sont JAMAIS rejoués.
+- La page interroge `/etat` (~400 octets) et ne relit le bloc complet que si
+  une version change. Lecture et remplacement des projets sous
+  `_VERROU_FICHIERS` : sous Windows, os.replace échoue tant qu'un autre fil
+  lit le fichier (reproduit à six fils).
 - SousTitreur autonome (Téléchargements\SousTitreur) est GELÉ en 0.6.1 : les
   corrections se font ici, plus là-bas.
 

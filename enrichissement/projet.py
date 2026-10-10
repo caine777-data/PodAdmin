@@ -100,18 +100,44 @@ def nouveau_pod(video: dict, lien: str, mp4: str | None, proprietaire: str,
     return p
 
 
-def charger(pid: str) -> dict:
-    # Sous Windows, ouvrir un fichier à l'instant où un autre fil le
-    # REMPLACE échoue (« Accès refusé ») : on réessaie brièvement.
+# Sous Windows, lire un fichier à l'instant où un autre fil le REMPLACE, ou
+# remplacer un fichier qu'un autre fil LIT, échoue (« Accès refusé »).
+# L'éditeur, l'onglet et le suivi d'Aristote touchent les mêmes projets ; un
+# antivirus peut aussi tenir le fichier. Une seconde de tentatives ne
+# suffisait pas sous charge (audit O7, reproduit avec six fils) : 5 s, avec
+# des pauses croissantes.
+DELAI_ACCES_REFUSE = 5.0
+
+# Python ouvre les fichiers sans autoriser leur remplacement : sous Windows,
+# os.replace échoue tant qu'un AUTRE fil tient le projet ouvert en lecture.
+# Avec plusieurs lecteurs, le fichier était presque toujours ouvert quelque
+# part et l'écriture pouvait attendre indéfiniment. Ce verrou empêche, dans
+# PodAdmin, qu'une lecture chevauche un remplacement ; les tentatives
+# ci-dessus ne servent plus que pour un programme extérieur (antivirus).
+import threading as _threading
+_VERROU_FICHIERS = _threading.Lock()
+
+
+def _insister(operation):
     import time
-    for essai in range(20):
+    limite = time.monotonic() + DELAI_ACCES_REFUSE
+    pause = 0.02
+    while True:
         try:
-            with open(chemin_projet(pid), encoding="utf-8") as f:
-                return json.load(f)
+            return operation()
         except PermissionError:
-            if essai == 19:
+            if time.monotonic() > limite:
                 raise
-            time.sleep(0.05)
+            time.sleep(pause)
+            pause = min(pause * 1.5, 0.25)
+
+
+def charger(pid: str) -> dict:
+    def lire():
+        with _VERROU_FICHIERS, open(chemin_projet(pid), encoding="utf-8") as f:
+            texte = f.read()
+        return json.loads(texte)                # analyse hors du verrou
+    return _insister(lire)
 
 
 def enregistrer(p: dict) -> None:
@@ -124,19 +150,18 @@ def enregistrer(p: dict) -> None:
     tmp = f"{chemin_projet(p['id'])}.{os.getpid()}-{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(p, f, ensure_ascii=False)
-    # Sous Windows, remplacer un fichier qu'un autre fil est en train de LIRE
-    # échoue (« Accès refusé ») : l'éditeur et l'onglet relisent les projets
-    # pendant que les fils de travail les écrivent. La lecture dure quelques
-    # millisecondes ; on réessaie donc brièvement avant d'abandonner.
-    import time
-    for essai in range(20):
+    try:
+        def remplacer():
+            with _VERROU_FICHIERS:
+                os.replace(tmp, chemin_projet(p["id"]))
+        _insister(remplacer)
+    except PermissionError:
+        # Abandon : ne pas laisser le fichier temporaire derrière soi.
         try:
-            os.replace(tmp, chemin_projet(p["id"]))
-            return
-        except PermissionError:
-            if essai == 19:
-                raise
-            time.sleep(0.05)
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def lister() -> list[dict]:
@@ -203,6 +228,9 @@ def enrichissement(p: dict) -> dict:
             e[cle] = _migrer_demandes(e) if cle == "demandes" else defaut
     for q in e["quiz"]:
         _completer_question(q)
+    for d in e["demandes"].values():          # projets d'avant l'audit O5
+        if d.get("etat") == "termine" and d.get("groupes"):
+            d["groupes"] = []
     return e
 
 
@@ -326,8 +354,11 @@ def appliquer_demande(p: dict, cle: str, version: dict, params: st.Parametres) -
         e["sources"][partie] = d.get("empreinte", "")
         e["faits"].pop(partie, None)      # nouveau contenu : pas encore publié
         e["versions"][partie] = e["versions"].get(partie, 0) + 1
+    # Les phrases envoyées ne servaient qu'à caler la traduction : une fois le
+    # résultat rangé, on les oublie (23 % du fichier pour une heure de vidéo,
+    # recopiées dans chaque demande ; audit O5).
     d.update(etat="termine", detail="", erreur="", termine_le=_maintenant(),
-             vide=not recu)
+             vide=not recu, groupes=[])
 
 
 # ── Quiz : origine, questions retenues, doublons ───────────────────────────

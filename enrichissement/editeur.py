@@ -52,6 +52,25 @@ def _ressource(rel: str) -> str:
     return os.path.join(getattr(sys, "_MEIPASS", racine), rel)
 
 
+def dossier_exports(p: dict) -> str:
+    """Dossier où `projet.exporter` écrit les fichiers de ce projet (même
+    règle : dossier du projet, sinon celui de la vidéo, sinon Documents)."""
+    dossier = p.get("dossier") or os.path.dirname(p.get("media") or "")
+    if not dossier or not os.path.isdir(dossier):
+        dossier = os.path.join(os.path.expanduser("~"), "Documents")
+    return dossier
+
+
+def _ouvrir_dossier(chemin: str) -> None:
+    """Ouvre un dossier dans l'explorateur du système."""
+    if sys.platform.startswith("win"):
+        os.startfile(chemin)                                   # noqa: S606 (Windows)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", chemin])
+    else:
+        subprocess.Popen(["xdg-open", chemin])
+
+
 def _navigateurs_app() -> list[str]:
     """Navigateurs capables d'ouvrir une page en fenêtre d'application."""
     candidats = []
@@ -126,6 +145,7 @@ class ServeurEditeur:
         self._langues: list[dict] | None = None
         self.vues: dict[str, float] = {}       # dernière interrogation de chaque page
         self.commandes: dict[str, str] = {}    # partie à afficher, pour une page déjà ouverte
+        self._lectures: dict[str, tuple] = {}   # pid -> (signature du fichier, projet)
         serveur = self
 
         class Gestionnaire(_Gestionnaire):
@@ -196,6 +216,18 @@ class ServeurEditeur:
         if client is None:
             raise ValueError("Identifiants Aristote manquants (voir Configuration).")
         p = pj.charger(pid)
+        # Demande perdue de vue sur une panne de réseau : on reprend son suivi
+        # chez Aristote plutôt que d'en envoyer une nouvelle (audit O1).
+        precedente = pj.enrichissement(p)["demandes"].get(cle) or {}
+        if precedente.get("reprenable") and precedente.get("eid"):
+            with self.verrou:
+                p = pj.charger(pid)
+                d = pj.enrichissement(p)["demandes"][cle]
+                d.update(etat="en_cours", erreur="", detail="Reprise du suivi", reprenable=False)
+                pj.enregistrer(p)
+            threading.Thread(target=self._suivre, args=(pid, client, cle, d["eid"]),
+                             daemon=True).start()
+            return d
         source = p.get("langue") or "fr"
         if cle.startswith("trad:"):
             codes = {l.get("code") for l in self.langues_traduction(source)}
@@ -248,6 +280,22 @@ class ServeurEditeur:
                 "detail": (en_cours[0] if en_cours else derniere).get("detail", "") if demandes else "",
                 "erreur": derniere.get("erreur", "") if etat == "erreur" else "",
                 "parties": self.etats_parties(p)}
+
+    def projet_en_lecture(self, pid: str) -> dict | None:
+        """Projet pour une LECTURE seule, relu seulement si son fichier a
+        changé (date et taille). La page interroge toutes les 3 s : relire et
+        analyser 600 Ko à chaque fois coûtait 10 ms pour rien (audit O2)."""
+        try:
+            infos = os.stat(pj.chemin_projet(pid))
+        except OSError:
+            return None
+        signature = (infos.st_mtime_ns, infos.st_size)
+        connu = self._lectures.get(pid)
+        if connu and connu[0] == signature:
+            return connu[1]
+        p = pj.charger(pid)
+        self._lectures[pid] = (signature, p)
+        return p
 
     def etats_parties(self, p: dict) -> dict:
         """État de chaque partie, pour les cartes et la page."""
@@ -413,17 +461,26 @@ class ServeurEditeur:
         with self.verrou:
             p = pj.charger(pid)
             d = pj.enrichissement(p)["demandes"].get(cle)
-            if d and d.get("eid") == eid:
+            # Rien n'a changé : pas de réécriture (600 Ko pour une heure de
+            # vidéo, toutes les 5 s par demande en cours ; audit O3).
+            if d and d.get("eid") == eid and any(d.get(k) != v for k, v in champs.items()):
                 d.update(champs)
                 pj.enregistrer(p)
 
     def _suivre(self, pid: str, client, cle: str, eid: str) -> None:
         from .aristote_api import ETATS
         ok = False
+        dernier = {"detail": None}
+
+        def rappel(statut, _d):
+            # Le même état revient toutes les 5 s : on ne touche au projet
+            # (relecture et réécriture) que lorsqu'il change (audit O3).
+            detail = ETATS.get(statut, statut)
+            if detail != dernier["detail"]:
+                dernier["detail"] = detail
+                self._maj_demande(pid, cle, eid, detail=detail)
         try:
-            client.attendre(eid, intervalle=5, jusqu_au_bout=True,
-                            rappel=lambda s, _d: self._maj_demande(
-                                pid, cle, eid, detail=ETATS.get(s, s)))
+            client.attendre(eid, intervalle=5, jusqu_au_bout=True, rappel=rappel)
             version = client.version_finale(eid)
             with self.verrou:
                 p = pj.charger(pid)
@@ -434,8 +491,9 @@ class ServeurEditeur:
                     pj.enregistrer(p)
             ok = True
         except Exception as e:                                  # noqa: BLE001
+            from .aristote_api import est_passagere
             self._maj_demande(pid, cle, eid, etat="erreur", detail="",
-                              erreur=self.message_erreur(e))
+                              erreur=self.message_erreur(e), reprenable=est_passagere(e))
         if self.sur_enregistrement:
             self.sur_enregistrement(pid)
         if self.sur_resultat:
@@ -534,16 +592,31 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                 return self._json(200, self.srv.metadonnees_pod(parts[1]))
             except Exception as e:                              # noqa: BLE001
                 return self._json(400, {"erreur": self.srv.message_erreur(e)})
-        # Interrogé toutes les 5 s par la page pendant un enrichissement.
+        # Interrogation LÉGÈRE, toutes les 3 s : état des parties, versions,
+        # ordre de PodAdmin. Environ 1 Ko au lieu du projet entier (262 Ko pour
+        # une heure de vidéo, soit 300 Mo par heure d'éditeur ouvert ; audit O2).
+        # La page ne relit le projet complet que si une version a changé.
+        if len(parts) == 3 and parts[0] == "api" and parts[2] == "etat":
+            if not parts[1].isalnum():
+                return self._json(404, {"erreur": "projet introuvable"})
+            p = self.srv.projet_en_lecture(parts[1])
+            if p is None:
+                return self._json(404, {"erreur": "projet introuvable"})
+            import time
+            self.srv.vues[parts[1]] = time.time()
+            return self._json(200, {"parties": self.srv.etats_parties(p),
+                                    "versions": pj.enrichissement(p)["versions"],
+                                    "commande": self.srv.commandes.pop(parts[1], ""),
+                                    # La page suit la bascule clair / sombre de PodAdmin (audit I10).
+                                    "theme": self.srv.reglages().get("theme") or "dark"})
+        # Bloc enrichissement complet : relu par la page quand une version a changé.
         if len(parts) == 3 and parts[0] == "api" and parts[2] == "enrichissement":
             p = self._projet(parts[1])
             if p is None:
                 return self._json(404, {"erreur": "projet introuvable"})
             import time
             self.srv.vues[parts[1]] = time.time()
-            vue = self.srv.vue_enrichissement(p)
-            vue["commande"] = self.srv.commandes.pop(parts[1], "")
-            return self._json(200, vue)
+            return self._json(200, self.srv.vue_enrichissement(p))
         if parts == ["ressources", "logo_ut.png"]:      # logo de l'en-tête de l'éditeur
             return self._envoyer_fichier(_ressource("assets/logo_ut.png"))
         if len(parts) == 2 and parts[0] in ("media", "audio"):
@@ -643,6 +716,17 @@ class _Gestionnaire(BaseHTTPRequestHandler):
             except Exception as e:                              # noqa: BLE001
                 return self._json(400, {"erreur": self.srv.message_erreur(e)})
             return self._json(200, self.srv.vue_enrichissement(pj.charger(parts[1])))
+        # Ouvre le dossier des exports de CE projet : le chemin est calculé ici,
+        # jamais reçu de la page.
+        if len(parts) == 3 and parts[2] == "ouvrir_dossier":
+            p = self._projet(parts[1])
+            if p is None:
+                return self._json(404, {"erreur": "projet introuvable"})
+            try:
+                _ouvrir_dossier(dossier_exports(p))
+            except Exception as e:                              # noqa: BLE001
+                return self._json(400, {"erreur": self.srv.message_erreur(e)})
+            return self._json(200, {"ok": True})
         if len(parts) == 3 and parts[2] == "relu":
             if self._projet(parts[1]) is None:
                 return self._json(404, {"erreur": "projet introuvable"})
@@ -676,6 +760,10 @@ class _Gestionnaire(BaseHTTPRequestHandler):
                     if formats:
                         p["etat"] = "corrige"
                     pj.enregistrer(p)
+                    # Le message de la page disparaît en quelques secondes : le
+                    # Journal de PodAdmin garde où sont partis les fichiers (audit I6).
+                    for f in ecrits:
+                        self.srv._journal(f"✔ {p['nom']} : exporté vers {f}")
                     reponse = {"ok": True, "fichiers": ecrits}
                 elif action == "redecouper":
                     params = st.Parametres.depuis_dict(

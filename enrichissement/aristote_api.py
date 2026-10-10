@@ -56,6 +56,8 @@ ETATS = {
     "AI_EVALUATING": "Évaluation du quiz",
     "SUCCESS": "Terminé",
     "FAILURE": "Échec",
+    # Pas un état d'Aristote : affiché pendant une coupure, le temps de réessayer.
+    "RECONNEXION": "Connexion perdue, nouvel essai…",
 }
 # États où la transcription n'existe pas encore.
 ETATS_AVANT_TRANSCRIPTION = {
@@ -65,7 +67,27 @@ ETATS_AVANT_TRANSCRIPTION = {
 
 
 class AristoteErreur(Exception):
-    pass
+    """`status` : code HTTP reçu, s'il y en a un. `passagere` : panne de
+    réseau ou de passerelle, la demande continue sans doute chez Aristote."""
+
+    def __init__(self, message: str, status: int | None = None, passagere: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.passagere = passagere
+
+
+# Codes d'une panne PASSAGÈRE (passerelle d'ILaaS, surcharge) : on réessaie.
+# Les autres (400, 403, 404…) disent quelque chose de la demande : on s'arrête.
+CODES_PASSAGERS = {429, 500, 502, 503, 504}
+
+
+def est_passagere(e: Exception) -> bool:
+    """Erreur qui ne dit rien de la demande : coupure réseau, délai dépassé,
+    passerelle indisponible. Réessayer a un sens."""
+    if isinstance(e, AristoteErreur):
+        return e.passagere or e.status in CODES_PASSAGERS
+    return isinstance(e, (requests.ConnectionError, requests.Timeout,
+                          requests.exceptions.ChunkedEncodingError))
 
 
 def _message_erreur(r: requests.Response) -> str:
@@ -90,7 +112,11 @@ class AristoteAPI:
         self._jeton: str | None = None
         self._expire = 0.0
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = f"SousTitreur/{__version__}"
+        # Nom vu dans les journaux d'ILaaS, utile en cas de support (audit O8).
+        self.session.headers["User-Agent"] = f"PodAdmin/{__version__}"
+        # Pauses avant de réessayer une LECTURE tombée sur une panne passagère.
+        # Les envois ne sont jamais rejoués : ils créeraient un doublon.
+        self.pauses_reprise: tuple[float, ...] = (2.0, 5.0)
 
     # ── Authentification ────────────────────────────────────────────────
     def jeton(self) -> str:
@@ -117,6 +143,16 @@ class AristoteAPI:
                 "Accept": "application/json"}
 
     def _get(self, chemin: str, **kw) -> requests.Response:
+        """Lecture, réessayée après une panne passagère (audit O1)."""
+        for pause in (*self.pauses_reprise, None):
+            try:
+                return self._get_une_fois(chemin, **kw)
+            except Exception as e:
+                if pause is None or not est_passagere(e):
+                    raise
+                time.sleep(pause)
+
+    def _get_une_fois(self, chemin: str, **kw) -> requests.Response:
         r = self.session.get(f"{self.url}/{VERSION_API}{chemin}",
                              headers=self._entetes(), timeout=self.timeout, **kw)
         if r.status_code == 401:                      # jeton expiré entre-temps
@@ -125,7 +161,7 @@ class AristoteAPI:
                                  headers=self._entetes(), timeout=self.timeout, **kw)
         if r.status_code != 200:
             raise AristoteErreur(f"Aristote {r.status_code} sur {chemin} : "
-                                 f"{_message_erreur(r)}")
+                                 f"{_message_erreur(r)}", status=r.status_code)
         return r
 
     # ── Diagnostic ──────────────────────────────────────────────────────
@@ -262,23 +298,47 @@ class AristoteAPI:
                  rappel: Callable[[str, dict], None] | None = None,
                  intervalle: float = 15.0, delai_max: float = 6 * 3600,
                  arret: Callable[[], bool] | None = None,
-                 jusqu_au_bout: bool = False) -> dict:
+                 jusqu_au_bout: bool = False, tolerance_panne: float = 15 * 60) -> dict:
         """Interroge Aristote jusqu'à ce que la transcription existe.
 
         Avec `jusqu_au_bout`, attend la fin de TOUS les traitements demandés
         (métadonnées, quiz, traduction), c'est-à-dire l'état SUCCESS.
+
+        Une panne PASSAGÈRE (coupure, passerelle) n'interrompt pas l'attente :
+        la demande continue chez Aristote. Elle n'abandonne qu'après
+        `tolerance_panne` secondes de panne continue, avec une erreur marquée
+        `passagere` : son suivi pourra être repris plus tard (audit O1 ; une
+        micro-coupure faisait échouer une demande en cours).
         """
         debut = time.time()
+        panne_depuis = None
         while True:
-            d = self.etat(enrichment_id)
-            statut = d.get("status", "")
-            if rappel:
+            try:
+                d = self.etat(enrichment_id)
+            except Exception as e:
+                if not est_passagere(e):
+                    raise
+                panne_depuis = panne_depuis or time.time()
+                if time.time() - panne_depuis > tolerance_panne:
+                    raise AristoteErreur(
+                        f"Connexion à Aristote perdue depuis {int(tolerance_panne // 60)} min. "
+                        "La demande continue sans doute chez Aristote : « Réessayer » "
+                        "reprendra son suivi, sans nouvel envoi.", passagere=True) from e
+                if rappel:
+                    rappel("RECONNEXION", {})
+                d = None
+            if d is None:
+                statut = ""
+            else:
+                panne_depuis = None
+                statut = d.get("status", "")
+            if rappel and d is not None:
                 rappel(statut, d)
             if statut == "FAILURE":
                 raise AristoteErreur(
                     f"Aristote a échoué : {d.get('failureCause') or 'cause inconnue'}")
-            if statut == "SUCCESS" or (not jusqu_au_bout and statut
-                                        and statut not in ETATS_AVANT_TRANSCRIPTION):
+            if d is not None and (statut == "SUCCESS" or (
+                    not jusqu_au_bout and statut and statut not in ETATS_AVANT_TRANSCRIPTION)):
                 return d
             if time.time() - debut > delai_max:
                 raise AristoteErreur("Délai d'attente dépassé.")
@@ -286,7 +346,9 @@ class AristoteAPI:
             while time.time() < fin:
                 if arret and arret():
                     raise AristoteErreur("Interrompu.")
-                time.sleep(0.5)
+                # Par tranches de 0,5 s au plus (l'arrêt reste réactif), sans
+                # dépasser l'intervalle demandé.
+                time.sleep(min(0.5, max(0.0, fin - time.time())))
 
     # ── Récupération ────────────────────────────────────────────────────
     def transcription(self, enrichment_id: str,

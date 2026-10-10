@@ -101,6 +101,10 @@ p["sous_titres"] = [{"start": 0, "end": 2, "text": "Bonjour."}]; P.enregistrer(p
 q = P.nouveau("chez aristote.mp4", "fr"); q["etat"] = "attente"; q["enrichment_id"] = "eid-ancien"
 P.enregistrer(q)
 r = P.nouveau("envoi coupe.mp4", "fr"); r["etat"] = "envoi"; P.enregistrer(r)
+# Dates distinctes (enregistrer() met l'heure à la seconde : les trois seraient égales).
+for x, date in ((p, "2026-10-01T10:00:00"), (q, "2026-10-02T10:00:00"), (r, "2026-10-03T10:00:00")):
+    d = json.load(open(P.chemin_projet(x["id"]), encoding="utf-8")); d["modifie"] = date
+    json.dump(d, open(P.chemin_projet(x["id"]), "w", encoding="utf-8"))
 
 a = A.App(); a.update()
 assert a.enrich_panneau is None and not ouvertures and not clients, "travail au démarrage"
@@ -110,7 +114,18 @@ assert list(a.nav_btns).index("enrich") == list(a.nav_btns).index("browse") + 1
 a._show_tab("enrich"); a.update()
 pan = a.enrich_panneau
 assert pan is not None and pan.winfo_manager() == "pack"
-assert set(pan.lignes) == {p["id"], q["id"], r["id"]}
+# Lecture des projets hors de l'interface (audit O4) : on attend la fin.
+assert attendre(lambda: set(pan.lignes) == {p["id"], q["id"], r["id"]})
+# Du plus récent au plus ancien (l'ordre était inversé).
+assert list(pan.lignes) == [r["id"], q["id"], p["id"]], list(pan.lignes)
+# Filtre « À faire » (audit I1) : tout est à faire ici ; « Terminées » est vide.
+assert all(w["a_faire"] for w in pan.lignes.values())
+assert "3 à faire" in pan.compte_liste.cget("text")
+pan.filtre_liste.set("Terminées"); pan._reordonner(); a.update()
+assert not any(w["cadre"].winfo_manager() for w in pan.lignes.values())
+assert "Aucune vidéo terminée" in pan.vide_filtre.cget("text") and pan.vide_filtre.winfo_manager()
+pan.filtre_liste.set("À faire"); pan._reordonner(); a.update()
+assert all(w["cadre"].winfo_manager() for w in pan.lignes.values())
 assert pan.depart.winfo_manager() and not pan.selection.winfo_manager(), "départ d'abord"
 assert not ouvertures and not clients, "réseau ou serveur sans connexion"
 pan.choisir_video_pod(); a.update()
@@ -168,6 +183,9 @@ assert not fen.winfo_exists(), "la fenêtre reste ouverte"
 assert pan.selection.winfo_manager() and not pan.depart.winfo_manager()
 assert pan.fiche["video"]["id"] == 202 and pan.pid_courant is None
 assert "Les métropoles du Néolithique" in pan.sel_titre.cget("text")
+# Audit I4 : vidéo en brouillon signalée, lien vers Pod disponible.
+assert "brouillon" in pan.sel_infos.cget("text"), pan.sel_infos.cget("text")
+assert pan.b_voir_pod.winfo_manager() and pan._lien_pod.endswith("/video/0202-les-metropoles/")
 
 def carte(nom):
     w = pan.cartes[nom]
@@ -220,17 +238,23 @@ assert attendre(lambda: P.existe("pod7") and P.charger("pod7").get("etat") == "a
 assert P.charger("pod7")["a_enchainer"] == ["quiz"]
 # Pendant la transcription, la carte Métadonnées propose « Demander après la transcription ».
 assert attendre(lambda: carte("meta")["action"] == "enchainer_meta"), carte("meta")
+# … et la carte Sous-titres montre la progression (audit I3).
+assert attendre(lambda: pan.cartes["st"]["barre"].winfo_manager() != ""), "pas de barre dans la carte"
 pan.cartes["meta"]["bouton"].invoke(); a.update()
 assert P.charger("pod7")["a_enchainer"] == ["meta", "quiz"]
 assert carte("meta")["pastille"] == "demandé après la transcription"
 porte_7.set()
 assert attendre(lambda: ("pod7", "quiz") in demandes and ("pod7", "meta") in demandes), demandes
 assert "a_enchainer" not in P.charger("pod7"), "enchaînement rejoué au redémarrage"
+assert attendre(lambda: pan.cartes["st"]["barre"].winfo_manager() == ""), "barre restée après la transcription"
 assert P.charger("pod7")["etat"] == "a_corriger"
 
-# — « Afficher » d'une ligne : la vidéo devient la vidéo choisie —
-pan.lignes[p["id"]]["afficher"].invoke(); a.update()
+# — Clic sur la LIGNE (audit I2) : la vidéo devient la vidéo choisie et y est repérée —
+etiquette = [w for w in pan.lignes[p["id"]]["cadre"].winfo_children() if isinstance(w, ctk.CTkLabel)][0]
+etiquette._label.event_generate("<Button-1>", x=5, y=5); a.update()   # là où tombe le vrai clic
 assert pan.pid_courant == p["id"] and pan.fiche is None
+assert pan.lignes[p["id"]]["cadre"].cget("fg_color") == A.S_SELECTION
+assert pan.lignes[r["id"]]["cadre"].cget("fg_color") != A.S_SELECTION
 assert carte("meta")["action"] == "associer", "vidéo du poste : métadonnées après association"
 
 # — Bouton « Enrichir… » de l'onglet Vidéos : l'onglet s'ouvre sur cette vidéo —

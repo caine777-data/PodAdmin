@@ -57,7 +57,8 @@ header h1{font-size:15px;margin:0;font-weight:600;white-space:nowrap;overflow:hi
   text-overflow:ellipsis;min-width:0}
 #etat{color:var(--doux);font-size:12.5px;white-space:nowrap}
 .espace{flex:1}
-#enr-pastille{font-size:12.5px;color:var(--lien);white-space:nowrap}
+#enr-pastille{font-size:12.5px;color:var(--lien);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;max-width:30vw;min-width:0}
 
 /* ── Deux colonnes : la vidéo, le texte ── */
 main{display:grid;grid-template-columns:minmax(0,3fr) minmax(400px,2fr);gap:20px;
@@ -233,7 +234,11 @@ main.pleine .formulaire{max-width:920px;margin:0 auto;width:100%;box-sizing:bord
 .ressemble{font-size:12.5px;color:var(--alerte);margin:-2px 0 10px}
 .vide-panneau .boutons{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px}
 .vide-panneau .boutons button{margin-top:0}
+/* Poubelle visible au repos (audit I8), rouge au survol seulement. */
+button.poubelle{color:var(--texte);border-color:var(--bord)}
 .poubelle:hover{border-color:var(--erreur)!important;color:var(--erreur)!important}
+/* Fenêtre étroite : l'en-tête garde les noms des parties, pas leurs états (audit I7). */
+@media (max-width:1150px){#parties button small{display:none} header .appli{display:none}}
 </style>
 </head>
 <body>
@@ -374,6 +379,7 @@ main.pleine .formulaire{max-width:920px;margin:0 auto;width:100%;box-sizing:bord
       <span><kbd class="alt">Alt</kbd> <kbd>←</kbd> <kbd>→</kbd></span><span>reculer / avancer de 2 s</span>
       <span><kbd class="mod">Ctrl</kbd> <kbd>Entrée</kbd></span><span>couper le sous-titre au curseur</span>
       <span><kbd class="mod">Ctrl</kbd> <kbd>S</kbd></span><span>enregistrer</span>
+      <span><kbd class="alt">Alt</kbd> <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></span><span>sous-titres, métadonnées, quiz</span>
       <span>Clic sur le numéro</span><span>lire à partir de ce sous-titre</span>
     </div>
     <div class="pied"><button value="fermer">Fermer</button></div>
@@ -447,7 +453,20 @@ function lire(v){
   if (p.some(isNaN)) return null;
   return p.reduce((acc, x) => acc*60 + x, 0);
 }
-function toast(msg, ms=3500){ const t=$("#toast"); t.textContent=msg; t.style.display="block"; clearTimeout(t._m); t._m=setTimeout(()=>t.style.display="none", ms); }
+/* Message passager ; `action` ({libelle, fn}) y ajoute un bouton : après un
+   export, « Ouvrir le dossier » (audit I6 : le chemin se perdait avec le message). */
+function toast(msg, ms=3500, action=null){
+  const t=$("#toast"); t.textContent=msg;
+  if (action){
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = action.libelle;
+    b.style.cssText = "margin-left:12px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6)";
+    b.onclick = () => { action.fn(); t.style.display = "none"; };
+    t.append(b);
+  }
+  t.style.display="block"; clearTimeout(t._m); t._m=setTimeout(()=>t.style.display="none", ms);
+}
+const OUVRIR_DOSSIER = {libelle: "Ouvrir le dossier", fn: () => fetch(apiAction("ouvrir_dossier"), {method: "POST"})};
 
 /* ─────────── Contrôle (miroir de verifier()) ─────────── */
 function alertes(s){
@@ -657,7 +676,7 @@ $("#d-exporter").addEventListener("close", async () => {
   const r = await fetch(apiAction("exporter"), {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(corps)});
   const d = await r.json();
   if (!r.ok){ toast("Échec de l'export : " + d.erreur, 6000); return; }
-  toast(`${d.fichiers.length} fichier(s) créé(s) : ` + d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; "), 9000);
+  toast(`${d.fichiers.length} fichier(s) créé(s) : ` + d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; "), 12000, OUVRIR_DOSSIER);
   $("#etat").textContent = "Exporté à " + new Date().toLocaleTimeString("fr-FR");
   interroger();
 });
@@ -718,6 +737,8 @@ document.addEventListener("keydown", e => {
   else if (e.altKey && e.key === "ArrowLeft"){ e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - 2); }
   else if (e.altKey && e.key === "ArrowRight"){ e.preventDefault(); video.currentTime += 2; }
   else if (mod && e.key.toLowerCase() === "s"){ e.preventDefault(); sauver(); }
+  // Alt+1, 2, 3 : changer de partie (audit I9).
+  else if (e.altKey && ["1", "2", "3"].includes(e.key)){ e.preventDefault(); montrerPartie(["st", "meta", "quiz"][+e.key - 1]); }
   else if (mod && e.key === "Enter" && e.target.tagName === "TEXTAREA"){
     e.preventDefault(); couper(+e.target.closest(".st").dataset.i, e.target.selectionStart);
   }
@@ -883,16 +904,21 @@ async function demander(cle){
    la page : guetter le passage « en cours » → « terminé » en manquait un si
    une autre action avait rafraîchi l'état entre deux interrogations. */
 async function interroger(){
+  // Route LÉGÈRE (état, versions, ordre) ; le bloc complet n'est relu que si
+  // une version a changé (audit O2 : 262 Ko toutes les 3 s auparavant).
   let r;
-  try { r = await fetch(apiAction("enrichissement")); } catch { return; }
+  try { r = await fetch(apiAction("etat")); } catch { return; }
   if (!r.ok) return;
   let d = await r.json();
   if (d.commande){ montrerPartie(d.commande); window.focus(); }
+  if ((d.theme === "dark" || d.theme === "light") && document.documentElement.dataset.theme !== d.theme)
+    document.documentElement.dataset.theme = d.theme;          // bascule de PodAdmin suivie (audit I10)
   const plusRecentes = v => Object.keys(v.versions || {}).filter(k => (v.versions[k] || 0) > (VERSIONS[k] || 0));
-  if (plusRecentes(d).length && minuterieEnr){
-    // Saisie en attente : on l'enregistre d'abord, puis on relit.
-    await sauverEnrichissement();
-    const r2 = await fetch(apiAction("enrichissement")); if (r2.ok) d = await r2.json();
+  if (plusRecentes(d).length){
+    // Saisie en attente : on l'enregistre d'abord, puis on relit le tout.
+    if (minuterieEnr) await sauverEnrichissement();
+    const r2 = await fetch(apiAction("enrichissement")); if (!r2.ok) return;
+    d = await r2.json();
   }
   const avant = E.parties || {}, nouveautes = plusRecentes(d);
   nouveautes.forEach(k => recevoir(k, d));
@@ -961,6 +987,15 @@ function majLangues(){
     `<button type="button" role="tab" data-lg="${esc(l)}" class="${l === langueVue ? "choisi" : ""}" aria-selected="${l === langueVue}">${esc(nomLangue(l))}<small>${esc(etiquette(l))}</small></button>`).join("");
 }
 $("#langues-vue").onclick = e => { const b = e.target.closest("button"); if (b) choisirLangue(b.dataset.lg); };
+// Flèches gauche / droite dans le choix de langue, comme dans des onglets (audit I9).
+$("#langues-vue").addEventListener("keydown", e => {
+  if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+  e.preventDefault();
+  const langues = [LANGUE, ...LANGUES.map(l => l.code)];
+  const i = (langues.indexOf(langueVue) + (e.key === "ArrowRight" ? 1 : langues.length - 1)) % langues.length;
+  choisirLangue(langues[i]);
+  const b = $(`#langues-vue [data-lg="${langues[i]}"]`); if (b) b.focus();
+});
 function majActionsSt(){
   const orig = langueVue === LANGUE, e = orig ? etatDe("sous_titres") : etatDe("trad:" + langueVue);
   const T = orig ? S : ((E.traductions || {})[langueVue] || []);
@@ -1208,7 +1243,7 @@ async function exporterPartie(kind){
   const d = await r.json();
   if (!r.ok){ toast("Échec de l'export : " + d.erreur, 6000); return; }
   toast(`Fichier créé : ${d.fichiers.map(f => f.split(/[\\/]/).pop()).join(" ; ")}` +
-        (kind === "quiz" ? ". Dans Moodle : Banque de questions, Importer, format GIFT." : ""), 10000);
+        (kind === "quiz" ? ". Dans Moodle : Banque de questions, Importer, format GIFT." : ""), 12000, OUVRIR_DOSSIER);
   interroger();
 }
 

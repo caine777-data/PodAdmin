@@ -225,3 +225,59 @@ class TestGift:
         assert "$CATEGORY: $course$/Les métropoles du Néolithique" in texte
         assert "Aristote" not in texte
         assert pj.etat_partie(p, "quiz")["etat"] == "fait"
+
+
+class TestVerrouFichiers:
+    """Audit O7 : sous Windows, remplacer un fichier qu'un autre fil lit
+    échoue. Lecture et remplacement se font sous le même verrou (contrôle
+    déterministe ; la charge à six fils est dans test_demandes_editeur)."""
+
+    def test_lecture_et_remplacement_sous_verrou(self, tmp_path, monkeypatch):
+        import builtins
+        monkeypatch.setattr(pj, "DOSSIER_PROJETS", str(tmp_path))
+        constats = []
+        vrai_open, vrai_replace = builtins.open, pj.os.replace
+
+        def ouvrir(chemin, mode="r", *a, **k):
+            if str(chemin).endswith(".json") and "r" in mode:
+                constats.append(("lecture", pj._VERROU_FICHIERS.locked()))
+            return vrai_open(chemin, mode, *a, **k)
+
+        def remplacer(src, dst):
+            constats.append(("remplacement", pj._VERROU_FICHIERS.locked()))
+            return vrai_replace(src, dst)
+        monkeypatch.setattr(pj, "open", ouvrir, raising=False)
+        monkeypatch.setattr(pj.os, "replace", remplacer)
+        p = projet()
+        pj.enregistrer(p)
+        pj.charger(p["id"])
+        assert constats == [("remplacement", True), ("lecture", True)], constats
+        assert not pj._VERROU_FICHIERS.locked(), "verrou resté pris"
+
+
+class TestPhrasesOubliees:
+    """Audit O5 : les phrases envoyées ne restent pas dans le projet."""
+
+    def test_videes_une_fois_le_resultat_range(self):
+        p = projet()
+        pj.nouvelle_demande(p, "trad:en", "e1", ["trad:en"], groupes=p["sous_titres"])
+        assert pj.enrichissement(p)["demandes"]["trad:en"]["groupes"]
+        pj.appliquer_demande(p, "trad:en", VERSION_TRAD, PARAMS)
+        # Dictionnaire BRUT : enrichissement() nettoie aussi à la lecture, ce qui
+        # masquerait un oubli dans appliquer_demande.
+        assert p["enrichissement"]["demandes"]["trad:en"]["groupes"] == []
+        assert p["enrichissement"]["traductions"]["en"], "la traduction, elle, est gardée"
+
+    def test_gardees_tant_que_la_demande_peut_reprendre(self):
+        p = projet()
+        pj.nouvelle_demande(p, "trad:en", "e1", ["trad:en"], groupes=p["sous_titres"])
+        pj.echec_demande(p, "trad:en", "coupure")
+        assert pj.enrichissement(p)["demandes"]["trad:en"]["groupes"]
+
+    def test_anciens_projets_nettoyes_a_la_lecture(self):
+        p = projet()
+        p["enrichissement"] = {"metadonnees": {}, "quiz": [], "traductions": {}, "sources": {},
+                               "faits": {}, "versions": {}, "demandes": {
+                                   "trad:en": {"cle": "trad:en", "etat": "termine", "parties": ["trad:en"],
+                                               "groupes": [{"start": 0, "end": 1, "text": "x"}]}}}
+        assert pj.enrichissement(p)["demandes"]["trad:en"]["groupes"] == []

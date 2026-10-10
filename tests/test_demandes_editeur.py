@@ -177,18 +177,22 @@ class TestDemandesSeparees:
 class TestEcrituresSimultanees:
     def test_plusieurs_fils_enregistrent_le_meme_projet(self, banc):
         """Avec un fichier temporaire commun, deux fils s'écrasaient
-        mutuellement (FileNotFoundError, puis projet perdu)."""
+        mutuellement (FileNotFoundError, puis projet perdu). Puis, sous charge,
+        une seconde de tentatives ne suffisait pas (« Accès refusé », audit O7)."""
+        p = banc.pj.charger(banc.pid)
+        p["mots"] = [["mot", 0, 1]] * 20000          # ~ une heure de vidéo
+        banc.pj.enregistrer(p)
         erreurs = []
 
         def ecrire(n):
             try:
-                for i in range(40):
+                for i in range(50):
                     p = banc.pj.charger(banc.pid)
                     p[f"fil{n}"] = i
                     banc.pj.enregistrer(p)
             except Exception as e:                              # noqa: BLE001
                 erreurs.append(repr(e))
-        fils = [threading.Thread(target=ecrire, args=(n,)) for n in range(4)]
+        fils = [threading.Thread(target=ecrire, args=(n,)) for n in range(6)]
         for f in fils:
             f.start()
         for f in fils:

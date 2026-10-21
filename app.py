@@ -33,6 +33,8 @@ from datetime import datetime
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox, simpledialog
+from tkinter import font as tkfont
+from tkinter import ttk
 
 import config as cfg
 import maj                                  # vérification des mises à jour
@@ -194,6 +196,23 @@ S_FILET      = ("gray80", "gray32")
 # simplement sélectionnée : confondre les deux revient à ne plus savoir ce sur
 # quoi une action de masse va porter.
 C_MULTI      = ("#93c5fd", "#1e3a8a")
+
+# — Liste de l'onglet Vidéos (ttk.Treeview) ———————————————————————————————
+# Colonnes : identifiant → (en-tête, largeur en pixels, alignement).
+ENTETES_VIDEOS = {
+    "statut":  ("", 40, "center"),
+    "titre":   ("Titre", 300, "w"),
+    "proprio": ("Propriétaire", 110, "w"),
+    "date":    ("Ajoutée le", 90, "center"),
+    "enc":     ("Encodée", 70, "center"),
+}
+COLONNES_VIDEOS = tuple(ENTETES_VIDEOS)
+# Tris proposés par le menu « Trier » ; un clic sur un en-tête choisit le même
+# tri (les deux restent d'accord). « Plus récentes » est l'ordre de Pod.
+TRIS_VIDEOS = ("Plus récentes", "Plus anciennes", "A → Z", "Z → A", "Propriétaire")
+# Touche d'ajout à la sélection, nommée dans les textes : Cmd sur Mac (où
+# Ctrl+clic est le clic droit), Ctrl ailleurs.
+TOUCHE_AJOUT = "Cmd" if sys.platform == "darwin" else "Ctrl"
 
 # — Contrôles de saisie ————————————————————————————————————————————————
 # Les listes déroulantes prenaient le bleu par défaut de CustomTkinter, c'est-
@@ -1132,6 +1151,8 @@ class App(_AppBase):
             pass
         self._maj_libelle_theme()
         self._maj_couleur_titres_aide()
+        self._browse_styler_liste()      # le tableau Vidéos n'accepte que des couleurs simples
+        self._browse_teinter()
         self._log(f"Thème : mode {'clair' if nouveau == 'light' else 'sombre'}.")
 
     def _maj_couleur_titres_aide(self):
@@ -5128,7 +5149,7 @@ class App(_AppBase):
         bloc_tri.pack(side="left", padx=(0, 14))
         self.browse_tri = ctk.CTkOptionMenu(
             bloc_tri, width=160,
-            values=["Plus récentes", "A → Z", "Z → A"],
+            values=list(TRIS_VIDEOS),
             command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
         self.browse_tri.set("Plus récentes")
         self.browse_tri.pack()
@@ -5176,16 +5197,58 @@ class App(_AppBase):
                                              font=ctk.CTkFont(size=11), anchor="w")
         self.browse_count_lbl.grid(row=0, column=0, sticky="w")
 
-        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées, y compris
-        # celles qui ne sont pas affichées : l'affichage est plafonné à 300
-        # lignes pour rester fluide, mais la sélection ne l'est pas.
+        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées.
         ctk.CTkButton(entete, text="☑ Tout sélectionner", width=140, height=H_COMPACT,
                       font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
                       hover_color=C_NEUTRE_SURV,
                       command=self._browse_tout_selectionner, text_color=T_SUR_NEUTRE).grid(row=0, column=1, padx=4)
-        self.browse_list = ctk.CTkScrollableFrame(body, label_text="Résultats", fg_color=S_CARTE, label_anchor="w",
-                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
+        # LISTE NATIVE (ttk.Treeview) et non plus un bouton CustomTkinter par
+        # vidéo. Mesure du 2026-10-21 sur ~600 vidéos : reconstruire 300
+        # boutons prenait 7 à 8 s à CHAQUE filtrage ou frappe dans la
+        # recherche ; le Treeview affiche les 600 lignes en 0,05 s, sans
+        # plafond, avec des colonnes triables. Le cadre `browse_list` reste le
+        # conteneur : l'état vide s'y affiche à la place du tableau.
+        self.browse_list = ctk.CTkFrame(body, fg_color=S_CARTE)
         self.browse_list.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        ctk.CTkLabel(self.browse_list, text="Résultats", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=8, pady=(4, 2))
+        self._browse_cadre_arbre = ctk.CTkFrame(self.browse_list, fg_color="transparent")
+        self._browse_cadre_arbre.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        self.browse_tree = ttk.Treeview(
+            self._browse_cadre_arbre, columns=COLONNES_VIDEOS, show="headings",
+            style="Pod.Treeview",
+            # La sélection native est COUPÉE : la sélection simple (panneau de
+            # détail) et la sélection multiple (lots) gardent leur logique et
+            # leurs teintes propres, posées par des étiquettes (voir
+            # _browse_teinter). Deux mécanismes de sélection en parallèle
+            # finiraient par se contredire.
+            selectmode="none")
+        for col, (titre, largeur, ancre) in ENTETES_VIDEOS.items():
+            self.browse_tree.heading(col, text=titre, anchor=ancre,
+                                     command=lambda c=col: self._browse_trier_par(c))
+            self.browse_tree.column(col, width=largeur, minwidth=30, anchor=ancre,
+                                    stretch=(col == "titre"))
+        barre = ctk.CTkScrollbar(self._browse_cadre_arbre, command=self.browse_tree.yview)
+        self.browse_tree.configure(yscrollcommand=barre.set)
+        barre.pack(side="right", fill="y")
+        self.browse_tree.pack(side="left", fill="both", expand=True)
+        # Clic simple, Ctrl+clic (ajoute ou retire), Maj+clic (plage), comme
+        # dans un explorateur de fichiers. Flèches haut et bas pour parcourir.
+        self.browse_tree.bind("<Button-1>", self._browse_clic_ligne)
+        self.browse_tree.bind("<Control-Button-1>",
+                              lambda e: self._browse_clic_ligne(e, "ctrl"))
+        self.browse_tree.bind("<Shift-Button-1>",
+                              lambda e: self._browse_clic_ligne(e, "maj"))
+        # Sur Mac, Ctrl+clic est le clic droit du système : le geste attendu
+        # pour ajouter une ligne à la sélection est Cmd+clic. Ctrl+clic reste
+        # lié pour qui en a l'habitude.
+        if sys.platform == "darwin":
+            self.browse_tree.bind("<Command-Button-1>",
+                                  lambda e: self._browse_clic_ligne(e, "ctrl"))
+        self.browse_tree.bind("<Up>", lambda e: self._browse_deplacer(-1))
+        self.browse_tree.bind("<Down>", lambda e: self._browse_deplacer(1))
+        self._browse_vide_widgets = []     # widgets de l'état vide, s'il est affiché
+        self._browse_styler_liste()
         self.browse_detail = ctk.CTkScrollableFrame(body, label_text="Détail / actions", fg_color=S_CARTE, label_anchor="w",
                                                   label_font=ctk.CTkFont(size=12, weight="bold"))
         self.browse_detail.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
@@ -5307,12 +5370,31 @@ class App(_AppBase):
     # ── Filtrage ───────────────────────────────────────────────────────────
 
     def _browse_owner_label(self, v) -> str:
-        """Nom lisible du propriétaire d'une vidéo (via la liste des comptes)."""
+        """Nom lisible du propriétaire d'une vidéo (via la liste des comptes).
+
+        Passe par un INDEX (URL ou identifiant → nom) au lieu de parcourir
+        tous les comptes pour chaque vidéo : la recherche appelait cette
+        fonction pour chaque vidéo à chaque frappe, soit vidéos × comptes."""
         oid = str(self._video_owner_id(v)).rstrip("/")
-        for u in (self.all_users or []):
-            if str(u.get("url", "")).rstrip("/") == oid or u.get("username") == oid:
-                return u.get("username", oid)
-        return oid or "—"
+        return self._index_proprietaires().get(oid) or oid or "—"
+
+    def _index_proprietaires(self) -> dict:
+        """Index URL / identifiant → nom d'utilisateur, reconstruit seulement
+        quand la liste des comptes change (elle est remplacée, jamais
+        modifiée sur place : l'identité de l'objet et sa longueur suffisent)."""
+        users = self.all_users or []
+        cle = (id(users), len(users))
+        if getattr(self, "_proprios_cle", None) != cle:
+            index = {}
+            for u in users:
+                nom = u.get("username")
+                if not nom:
+                    continue
+                index[str(u.get("url", "")).rstrip("/")] = nom
+                index[nom] = nom
+            index.pop("", None)
+            self._proprios_index, self._proprios_cle = index, cle
+        return self._proprios_index
 
     def _browse_apply_filter(self, *_):
         """Demande un filtrage de la liste — avec TEMPORISATION.
@@ -5336,8 +5418,10 @@ class App(_AppBase):
         self._browse_filter_job = None
         if not self.videos:
             self.browse_count_lbl.configure(text="Cliquez sur « Charger les vidéos ».")
-            for w in self.browse_list.winfo_children():
-                w.destroy()
+            self.browse_filtered = []
+            self._browse_montrer_vide(False)
+            self.browse_tree.delete(*self.browse_tree.get_children())
+            self.browse_rows = {}
             return
 
         vids = self.videos              # source unique partagée
@@ -5419,65 +5503,186 @@ class App(_AppBase):
             vids = sorted(vids,
                           key=lambda v: (v.get("title") or "").strip().lower(),
                           reverse=(tri == "Z → A"))
+        elif tri == "Plus anciennes":
+            vids = list(reversed(vids))
+        elif tri == "Propriétaire":
+            vids = sorted(vids, key=lambda v: self._browse_owner_label(v).lower())
         self.browse_filtered = vids
         self._render_browse_list()
 
     def _render_browse_list(self):
-        """Affiche la liste filtrée des vidéos (plafonnée pour ne pas figer l'interface)."""
-        for w in self.browse_list.winfo_children():
-            w.destroy()
+        """Affiche TOUTE la liste filtrée dans le tableau (plus de plafond :
+        le Treeview reste fluide avec des milliers de lignes)."""
         self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
-
+        arbre = self.browse_tree
+        arbre.delete(*arbre.get_children())
+        # slug → identifiant de ligne. L'identifiant EST le slug (unique dans
+        # Pod) : la table sert à savoir si une vidéo est affichée.
+        self.browse_rows = {}
         if not self.browse_filtered:
-            etat_vide(self.browse_list, "🔍", "Aucune vidéo ne correspond.",
-                      "Élargissez la recherche, ou remettez les filtres sur "
-                      "« Tous » et « Toutes ».")
+            self._browse_montrer_vide(True)
             return
+        self._browse_montrer_vide(False)
+        for v in self.browse_filtered:
+            slug = v.get("slug")
+            if not slug or slug in self.browse_rows:
+                continue                  # slug absent ou en double : ligne ignorée
+            arbre.insert("", "end", iid=slug, values=self._browse_valeurs(v))
+            self.browse_rows[slug] = slug
+        self._browse_teinter()
+        self._browse_maj_entetes()
 
-        CAP = 300
-        sel_slug = self.browse_selected.get("slug") if self.browse_selected else None
-        # On garde une référence sur chaque bouton : cela permet, lors d'un clic,
-        # de ne recolorer QUE les deux lignes concernées au lieu de reconstruire
-        # toute la liste (voir _browse_select).
-        self.browse_rowbtns = {}
-        police = ctk.CTkFont(size=12)      # police partagée par toutes les lignes
-        for v in self.browse_filtered[:CAP]:
-            slug = v.get("slug", "?")
-            is_sel = slug == sel_slug
-            title = (v.get("title") or "(sans titre)")[:48]
-            tag = "📝" if v.get("is_draft") else "🌐"        # brouillon / public
-            btn = ctk.CTkButton(
-                self.browse_list, text=f"{tag}  {title}", anchor="w", height=28,
-                fg_color=S_SELECTION if is_sel else "transparent",
-                text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                font=police,
-                command=lambda vv=v: self._browse_select(vv))
-            btn.pack(fill="x", pady=1)
-            # Sélection multiple à la manière d'un explorateur de fichiers :
-            # Ctrl+clic ajoute ou retire une ligne, Maj+clic prend une plage.
-            #
-            # ⚠️ IL FAUT AUSSI INTERCEPTER LE RELÂCHEMENT.
-            #
-            # Un CTkButton déclenche sa `command` sur <ButtonRelease-1>, pas sur
-            # <Button-1>. Bloquer le seul <Control-Button-1> ne servait donc à
-            # rien : le relâchement passait quand même et lançait la sélection
-            # SIMPLE. La ligne Ctrl+cliquée prenait alors la teinte de sélection
-            # simple au lieu de la teinte multiple, et la ligne précédemment
-            # sélectionnée était remise en transparent — alors qu'elle restait
-            # dans la sélection. D'où l'impression que le Ctrl+clic « ne prenait
-            # pas », ou marquait « celle d'à côté ».
-            btn.bind("<Control-Button-1>", lambda e, vv=v: self._browse_toggle_multi(vv))
-            btn.bind("<Shift-Button-1>", lambda e, vv=v: self._browse_plage_multi(vv))
-            btn.bind("<Control-ButtonRelease-1>", lambda e: "break")
-            btn.bind("<Shift-ButtonRelease-1>", lambda e: "break")
-            self.browse_rowbtns[slug] = btn
-            # Teinte particulière pour les lignes retenues en sélection multiple.
-            if slug in self.browse_multi:
-                btn.configure(fg_color=C_MULTI)
-        if len(self.browse_filtered) > CAP:
-            ctk.CTkLabel(self.browse_list,
-                         text=f"… +{len(self.browse_filtered) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
+    def _browse_valeurs(self, v) -> tuple:
+        """Valeurs affichées dans les colonnes pour une vidéo."""
+        date = str(v.get("date_added") or "")[:10]
+        if len(date) == 10 and date[4] == "-":
+            date = f"{date[8:10]}/{date[5:7]}/{date[:4]}"   # AAAA-MM-JJ → JJ/MM/AAAA
+        return ("📝" if v.get("is_draft") else "🌐",
+                v.get("title") or "(sans titre)",
+                self._browse_owner_label(v),
+                date,
+                "✗" if PodAPI.is_unencoded(v) else "✓")
+
+    def _browse_montrer_vide(self, vide: bool):
+        """Bascule entre le tableau et l'état vide qui explique quoi faire."""
+        for w in self._browse_vide_widgets:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+        self._browse_vide_widgets = []
+        if not vide:
+            if not self._browse_cadre_arbre.winfo_manager():
+                self._browse_cadre_arbre.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+            return
+        self._browse_cadre_arbre.pack_forget()
+        avant = set(self.browse_list.winfo_children())
+        etat_vide(self.browse_list, "🔍", "Aucune vidéo ne correspond.",
+                  "Élargissez la recherche, ou remettez les filtres sur "
+                  "« Tous » et « Toutes ».")
+        self._browse_vide_widgets = [w for w in self.browse_list.winfo_children()
+                                     if w not in avant]
+
+    def _browse_teinte(self, slug, rang=None) -> str:
+        """Étiquette de teinte d'une ligne. UNE seule à la fois : quand deux
+        étiquettes fixent le fond, la priorité entre elles n'est pas garantie
+        d'une version de Tk à l'autre. La sélection multiple l'emporte, comme
+        avant : une ligne retenue garde sa marque même si on la consulte."""
+        if slug in self.browse_multi:
+            return "multi"
+        if self.browse_selected and slug == self.browse_selected.get("slug"):
+            return "courante"
+        if rang is None:
+            rang = self.browse_tree.index(slug)
+        return "alt" if rang % 2 else "pair"
+
+    def _browse_teinter(self, slugs=None):
+        """Pose la teinte des lignes indiquées (toutes par défaut).
+
+        Pour toute la liste, le rang vient de l'énumération : demander
+        `index()` à Tk pour chaque ligne coûterait un parcours par ligne."""
+        arbre = self.browse_tree
+        if slugs is None:
+            for rang, slug in enumerate(arbre.get_children()):
+                arbre.item(slug, tags=(self._browse_teinte(slug, rang),))
+            return
+        for slug in slugs:
+            if slug and arbre.exists(slug):
+                arbre.item(slug, tags=(self._browse_teinte(slug),))
+
+    def _browse_styler_liste(self):
+        """Couleurs et police du tableau selon le thème courant.
+
+        Un Treeview n'accepte que des couleurs SIMPLES, pas les couples
+        (clair, sombre) de CustomTkinter : on choisit la teinte du mode actif,
+        et _basculer_theme rappelle cette méthode à chaque changement. Le thème
+        ttk « clam » est le seul qui respecte les couleurs sur Windows ET sur
+        macOS (« aqua » les ignore)."""
+        sombre = ctk.get_appearance_mode().lower() == "dark"
+        c = (lambda paire: paire[1] if sombre else paire[0])
+        style = ttk.Style(self)
+        if style.theme_use() != "clam":
+            style.theme_use("clam")
+        echelle = ctk.ScalingTracker.get_widget_scaling(self)
+        police = tkfont.nametofont("TkDefaultFont").copy()
+        police.configure(size=-round(13 * echelle))         # négatif = pixels
+        gras = police.copy()
+        gras.configure(weight="bold")
+        self._browse_polices = (police, gras)   # gardées : Tk n'en tient qu'une référence faible
+        fond, texte = c(S_CARTE), c(("gray10", "gray90"))
+        style.configure("Pod.Treeview", background=fond, fieldbackground=fond,
+                        foreground=texte, rowheight=round(28 * echelle), font=police,
+                        borderwidth=0, relief="flat")
+        style.layout("Pod.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+        style.configure("Pod.Treeview.Heading", background=c(S_PUCE), foreground=texte,
+                        font=gras, relief="flat", borderwidth=0)
+        style.map("Pod.Treeview.Heading", background=[("active", c(S_SELECTION))])
+        arbre = self.browse_tree
+        arbre.tag_configure("pair", background=fond)
+        arbre.tag_configure("alt", background=c(S_LIGNE))
+        arbre.tag_configure("courante", background=c(S_SELECTION))
+        arbre.tag_configure("multi", background=c(C_MULTI))
+
+    def _browse_maj_entetes(self):
+        """Flèche ▲ ou ▼ sur l'en-tête de la colonne qui fixe le tri."""
+        tri = self.browse_tri.get()
+        fleches = {"A → Z": ("titre", "▲"), "Z → A": ("titre", "▼"),
+                   "Plus récentes": ("date", "▼"), "Plus anciennes": ("date", "▲"),
+                   "Propriétaire": ("proprio", "▲")}
+        col_tri, fleche = fleches.get(tri, (None, ""))
+        for col, (titre, _l, _a) in ENTETES_VIDEOS.items():
+            self.browse_tree.heading(col, text=f"{titre}  {fleche}" if col == col_tri else titre)
+
+    def _browse_trier_par(self, col: str):
+        """Clic sur un en-tête : choisit le tri correspondant dans le menu
+        « Trier », puis refiltre. Un second clic sur la même colonne inverse
+        l'ordre (titre et date)."""
+        tri = self.browse_tri.get()
+        nouveau = {"titre": "Z → A" if tri == "A → Z" else "A → Z",
+                   "date": "Plus anciennes" if tri == "Plus récentes" else "Plus récentes",
+                   "proprio": "Propriétaire"}.get(col)
+        if not nouveau:
+            return                         # statut, encodée : pas de tri
+        self.browse_tri.set(nouveau)
+        self._browse_do_filter()
+
+    def _browse_video_de(self, slug):
+        """Objet vidéo (filtré) correspondant à un slug, ou None."""
+        return next((v for v in self.browse_filtered if v.get("slug") == slug), None)
+
+    def _browse_clic_ligne(self, evt, modificateur=None):
+        """Clic dans le tableau : simple, Ctrl (ajoute ou retire), Maj (plage).
+
+        Renvoie "break" pour que le Treeview n'applique pas son propre
+        comportement par défaut par-dessus."""
+        if self.browse_tree.identify_region(evt.x, evt.y) == "heading":
+            return None                    # clic d'en-tête : laissé au tri
+        slug = self.browse_tree.identify_row(evt.y)
+        v = self._browse_video_de(slug) if slug else None
+        if v is None:
+            return "break"
+        self.browse_tree.focus_set()
+        if modificateur == "ctrl":
+            self._browse_toggle_multi(v)
+        elif modificateur == "maj":
+            self._browse_plage_multi(v)
+        else:
+            self._browse_select(v)
+        return "break"
+
+    def _browse_deplacer(self, pas: int):
+        """Flèche haut ou bas : sélectionne la ligne voisine."""
+        lignes = self.browse_tree.get_children()
+        if not lignes:
+            return "break"
+        courant = self.browse_selected.get("slug") if self.browse_selected else None
+        rang = lignes.index(courant) + pas if courant in lignes else 0
+        rang = max(0, min(len(lignes) - 1, rang))
+        v = self._browse_video_de(lignes[rang])
+        if v is not None:
+            self._browse_select(v)
+            self.browse_tree.see(lignes[rang])
+        return "break"
 
     # ── Sélection multiple (Ctrl+clic / Maj+clic) ─────────────────────────
 
@@ -5494,7 +5699,7 @@ class App(_AppBase):
 
     def _browse_plage_multi(self, v):
         """Maj+clic : sélectionne toute la plage depuis la dernière ligne cliquée."""
-        slugs = [x.get("slug") for x in self.browse_filtered[:300]]
+        slugs = [x.get("slug") for x in self.browse_filtered]
         cible = v.get("slug")
         depart = self.browse_ancre or (
             self.browse_selected.get("slug") if self.browse_selected else None)
@@ -5545,12 +5750,7 @@ class App(_AppBase):
             pass
 
     def _browse_tout_selectionner(self):
-        """Sélectionne TOUTES les vidéos filtrées, affichées ou non.
-
-        L'affichage est plafonné à 300 lignes pour que l'interface reste
-        fluide, mais ce plafond ne doit pas limiter les actions : sans ce
-        bouton, il serait impossible de traiter plus de 300 vidéos d'un coup
-        depuis cet onglet."""
+        """Sélectionne TOUTES les vidéos filtrées (Ctrl+A hors d'un champ)."""
         if not self.browse_filtered:
             return
         self.browse_multi = {v.get("slug") for v in self.browse_filtered}
@@ -5641,25 +5841,14 @@ class App(_AppBase):
 
     def _browse_refresh_multi(self):
         """Met à jour la teinte des lignes puis rebascule le panneau de droite."""
-        for slug, btn in getattr(self, "browse_rowbtns", {}).items():
-            try:
-                if not btn.winfo_exists():
-                    continue
-                if slug in self.browse_multi:
-                    btn.configure(fg_color=C_MULTI)
-                elif self.browse_selected and slug == self.browse_selected.get("slug"):
-                    btn.configure(fg_color=S_SELECTION)
-                else:
-                    btn.configure(fg_color="transparent")
-            except Exception:
-                pass
+        self._browse_teinter()
         self._browse_render_detail()
 
     def _browse_videos_multi(self) -> list:
         """Renvoie les objets vidéo correspondant à la sélection multiple.
 
-        On parcourt TOUTES les vidéos filtrées, pas seulement les 300 affichées :
-        « Tout sélectionner » peut en retenir davantage.
+        On parcourt les vidéos FILTRÉES : une vidéo cochée puis sortie du
+        filtre n'est plus visée.
 
         ⚠️ SEULE définition de la cible d'une action de lot. Une seconde,
         qui lisait tout le magasin, servait au type et aux disciplines : une
@@ -5685,16 +5874,8 @@ class App(_AppBase):
         ctk.CTkLabel(self.browse_detail, text=f"☑  {n} vidéo(s) sélectionnée(s)",
                      font=ctk.CTkFont(size=16, weight="bold")).pack(
             anchor="w", padx=6, pady=(6, 2))
-        # Une sélection peut dépasser les lignes visibles : on le dit clairement,
-        # pour que personne n'agisse sur plus de vidéos qu'il ne croit.
-        caches = n - len(getattr(self, "browse_rowbtns", {}).keys() & self.browse_multi)
-        if caches > 0:
-            ctk.CTkLabel(self.browse_detail,
-                         text=f"⚠  dont {caches} hors affichage (liste limitée à 300 lignes)",
-                         font=ctk.CTkFont(size=11), text_color=T_ALERTE,
-                         wraplength=360, justify="left").pack(anchor="w", padx=6)
         ctk.CTkLabel(self.browse_detail,
-                     text="Ctrl+clic pour ajouter ou retirer une vidéo, "
+                     text=f"{TOUCHE_AJOUT}+clic pour ajouter ou retirer une vidéo, "
                           "Maj+clic pour une plage.",
                      font=ctk.CTkFont(size=11), text_color=T_DISCRET,
                      wraplength=360, justify="left").pack(anchor="w", padx=6)
@@ -5792,28 +5973,11 @@ class App(_AppBase):
     def _browse_select(self, v):
         """Sélectionne une vidéo et affiche son panneau de détail.
 
-        La surbrillance est déplacée en recolorant UNIQUEMENT l'ancienne et la
-        nouvelle ligne. Auparavant, la liste entière était détruite puis
-        recréée à chaque clic (jusqu'à 300 boutons) juste pour ce changement de
-        couleur, ce qui rendait la sélection très lente sur les grandes listes."""
+        Seules l'ancienne et la nouvelle ligne sont reteintées. Une ligne
+        retenue en sélection MULTIPLE garde sa teinte (voir _browse_teinte)."""
         ancien = self.browse_selected.get("slug") if self.browse_selected else None
         self.browse_selected = v
-        nouveau = v.get("slug")
-        boutons = getattr(self, "browse_rowbtns", {})
-        if boutons:
-            b = boutons.get(ancien)
-            if b is not None and b.winfo_exists():
-                # Une ligne retenue en sélection MULTIPLE garde sa teinte : la
-                # remettre en transparent effaçait la marque d'une ligne qui
-                # restait pourtant sélectionnée.
-                b.configure(fg_color=C_MULTI if ancien in self.browse_multi
-                            else "transparent")
-            b = boutons.get(nouveau)
-            if b is not None and b.winfo_exists():
-                b.configure(fg_color=C_MULTI if nouveau in self.browse_multi
-                            else S_SELECTION)
-        else:
-            self._render_browse_list()   # repli : liste pas encore construite
+        self._browse_teinter([ancien, v.get("slug")])
         self._browse_render_detail()
 
     # ── Panneau de détail / actions ────────────────────────────────────────
@@ -6528,7 +6692,7 @@ class App(_AppBase):
                  f"Discipline « {choix} » : {ok} vidéo(s) mise(s) à jour"
                  + (f", {fail} en échec." if fail else "."),
                  T_SUCCES if not fail else T_ALERTE)
-        self._ui(self._browse_render_list)
+        self._ui(self._browse_do_filter)
 
     def _do_browse_mass_set_type(self, vids, new_url, choice):
         """(Thread) Applique le type à chaque vidéo affichée, avec bilan."""
@@ -9577,23 +9741,22 @@ class App(_AppBase):
         section(
             "☑  Traiter plusieurs vidéos à la fois (onglet Vidéos)",
             "Dans la liste de l'onglet Vidéos :\n"
-            "• Ctrl + clic pour ajouter ou retirer une vidéo de la sélection ;\n"
+            f"• {TOUCHE_AJOUT} + clic pour ajouter ou retirer une vidéo de la sélection ;\n"
             "• Maj + clic pour sélectionner toute une plage.\n\n"
             "Les lignes retenues passent en bleu, et le panneau de droite bascule sur "
             "les actions groupées : mettre en brouillon, rendre public, rendre "
             "restreint, restreindre à des groupes, affecter à une ou plusieurs "
             "chaînes.\n\n"
-            "Le bouton « ☑ Tout sélectionner », à droite du compteur, retient TOUTES "
-            "les vidéos filtrées — y compris celles qui ne sont pas affichées, la "
-            "liste étant limitée à 300 lignes. Le panneau indique alors combien sont "
-            "hors affichage.\n\n"
+            "Le bouton « ☑ Tout sélectionner », à droite du compteur (ou Ctrl + A "
+            "hors d'un champ de saisie), retient TOUTES les vidéos filtrées.\n\n"
             "Deux filtres de DÉTECTION complètent la recherche :\n"
             "• « Doublons de titre » — vidéos portant le même titre ;\n"
             "• « Vieux brouillons » — brouillons plus anciens que le nombre de mois "
             "indiqué à côté.\n\n"
-            "La liste peut être triée par « Plus récentes » (ordre d'origine), "
-            "« A → Z » ou « Z → A » — utile pour retrouver une vidéo dont on "
-            "connaît le titre.\n\n"
+            "La liste peut être triée par le menu « Trier » ou d'un clic sur un "
+            "en-tête de colonne : Titre (un second clic inverse l'ordre), Ajoutée le "
+            "(plus récentes ou plus anciennes), Propriétaire. Les flèches haut et bas "
+            "parcourent la liste.\n\n"
             "Pour l'affectation à une chaîne, deux modes sont proposés :\n"
             "• AJOUTER — les vidéos restent dans leurs chaînes actuelles ;\n"
             "• REMPLACER — les affectations existantes sont perdues.\n"

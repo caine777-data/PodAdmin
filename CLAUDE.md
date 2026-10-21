@@ -189,3 +189,18 @@ Voir la fiche §7 : captures des tutoriels, sauvegarde JSON avant opération de
 masse, listes de lecture, vocabulaire des tutoriels, notification de mise à jour
 du Téléverseur. Plus : 404 d'encodage
 après envoi par morceaux, marqueur visible dans le slug.
+
+## Liste de l'onglet Vidéos (1.12.0)
+
+- `ttk.Treeview` (`browse_tree`, thème ttk « clam », style `Pod.Treeview`)
+  au lieu d'un CTkButton par vidéo : 300 boutons = 7 à 8 s par filtrage sur
+  ~600 vidéos, le Treeview affiche tout en 0,05 s. Plus de plafond à 300.
+- Sélection native coupée (`selectmode="none"`) : sélection simple et
+  multiple gardent leur logique ; teintes par UNE étiquette par ligne
+  (`multi` > `courante` > `alt`/`pair`, voir `_browse_teinte`).
+- Couleurs simples seulement : `_browse_styler_liste` choisit la teinte du
+  mode actif, rappelée par `_basculer_theme`.
+- Propriétaire via `_index_proprietaires` (reconstruit si `all_users` est
+  remplacée), plus de parcours vidéos × comptes à chaque frappe.
+- Les 7 autres listes à boutons (comptes, encodage, fenêtres de choix)
+  restent à migrer après validation de celle-ci.

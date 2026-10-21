@@ -21,6 +21,33 @@ SÉRIE 2 (option --serie2), décidée après la première :
 
     python verifier_aristote_demandes.py --serie2
 
+SÉRIE 3 (option --serie3), 2026-10-15 : métadonnées et quiz échouent en
+production (« Max enrichment retries reached (2) »). Panne d'Aristote, ou
+listes de Pod ? Trois demandes simultanées sur le même texte :
+
+  F. métadonnées, listes COURTES (celles de la série 1, qui avait réussi) ;
+  G. métadonnées, VRAIES listes de Pod (11 disciplines, 4 types) ;
+  H. quiz seul.
+
+    python verifier_aristote_demandes.py --serie3
+
+SÉRIE 4 (option --serie4), 2026-10-15 : séparer les demandes est-il en cause ?
+UNE seule demande groupée, comme avant la 1.11.0 (traduction en anglais,
+métadonnées et quiz ensemble, listes courtes de la série 1).
+
+  I. demande groupée.
+
+    python verifier_aristote_demandes.py --serie4
+
+SÉRIE 5 (option --serie5), 2026-10-15 : le modèle par défaut (gpt-oss-120b)
+est-il seul en cause ? Métadonnées et quiz avec l'autre modèle de l'instance,
+Llama 3.3 70B.
+
+  J. métadonnées, Llama ;
+  K. quiz, Llama.
+
+    python verifier_aristote_demandes.py --serie5
+
 La sonde envoie trois fois le même petit texte français (un VTT de dix
 sous-titres : Aristote saute alors la transcription), suit les trois demandes
 jusqu'au bout, puis résume. Les réponses brutes sont enregistrées dans
@@ -88,9 +115,45 @@ SERIE_2 = {
     "D_notes_seules": {**RIEN, "generateNotes": True},
     "E_quiz_bis":     {**RIEN, "generateQuiz": True},
 }
+# Listes réelles de videos.utoulouse.fr, relevées dans la demande en échec
+# du 2026-10-14 (projet pod164).
+DISCIPLINES_POD = ["Biologie", "Chimie", "Informatique", "Mathématiques", "Médecine",
+                   "Odontologie", "Pharmacie", "Physique", "Santé",
+                   "Sciences de la Terre et de l'Univers",
+                   "Sciences du sport et du mouvement humain"]
+TYPES_POD = ["capsule d'enseignement", "Communication", "Tutoriels", "vidéo"]
+SERIE_3 = {
+    "F_meta_listes_courtes": {**RIEN, "generateMetadata": True,
+                              "disciplines": ["Histoire", "Archéologie", "Autres"],
+                              "mediaTypes": ["Cours", "Conférence"]},
+    "G_meta_listes_pod":     {**RIEN, "generateMetadata": True,
+                              "disciplines": DISCIPLINES_POD, "mediaTypes": TYPES_POD},
+    "H_quiz_seul":           {**RIEN, "generateQuiz": True},
+}
+SERIE_4 = {
+    "I_groupee": {**RIEN, "translateTo": "en", "generateMetadata": True, "generateQuiz": True,
+                  "disciplines": ["Histoire", "Archéologie", "Autres"],
+                  "mediaTypes": ["Cours", "Conférence"]},
+}
+# Second modèle proposé par l'instance (route ai_model_infrastructure_combinations) :
+# le modèle par défaut, gpt-oss-120b, échoue sur tout enrichissement depuis le 11/10.
+LLAMA = {"aiModel": "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic", "infrastructure": "ILaaS"}
+SERIE_5 = {
+    "J_meta_llama": {**RIEN, **LLAMA, "generateMetadata": True,
+                     "disciplines": ["Histoire", "Archéologie", "Autres"],
+                     "mediaTypes": ["Cours", "Conférence"]},
+    "K_quiz_llama": {**RIEN, **LLAMA, "generateQuiz": True},
+}
 SERIE2 = "--serie2" in sys.argv
-DEMANDES = SERIE_2 if SERIE2 else SERIE_1
-FICHIER = "sonde_aristote_demandes_2.json" if SERIE2 else "sonde_aristote_demandes.json"
+SERIE3 = "--serie3" in sys.argv
+SERIE4 = "--serie4" in sys.argv
+SERIE5 = "--serie5" in sys.argv
+DEMANDES = (SERIE_5 if SERIE5 else SERIE_4 if SERIE4 else SERIE_3 if SERIE3 else
+            SERIE_2 if SERIE2 else SERIE_1)
+FICHIER = ("sonde_aristote_demandes_5.json" if SERIE5 else
+           "sonde_aristote_demandes_4.json" if SERIE4 else
+           "sonde_aristote_demandes_3.json" if SERIE3 else
+           "sonde_aristote_demandes_2.json" if SERIE2 else "sonde_aristote_demandes.json")
 
 
 def envoyer_vtt(client: AristoteAPI, texte: str, nom: str, parametres: dict) -> str:

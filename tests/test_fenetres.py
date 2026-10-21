@@ -1872,15 +1872,17 @@ class TestSelectionMultiple:
         # La liste peut avoir été reconstruite entre-temps par un rendez-vous
         # différé laissé par un autre test du module : on la reconstruit et on
         # relit la référence plutôt que de cliquer sur une fenêtre détruite.
-        b = app.browse_rowbtns.get(slug)
-        if b is None or not b.winfo_exists():
+        arbre = app.browse_tree
+        if not arbre.exists(slug):
             app._browse_do_filter()
             app.update()
             app.update_idletasks()
-            b = app.browse_rowbtns[slug]
-        assert b.winfo_exists(), f"la ligne « {slug} » est introuvable"
-        x = b.winfo_rootx() + b.winfo_width() // 2
-        y = b.winfo_rooty() + b.winfo_height() // 2
+        assert arbre.exists(slug), f"la ligne « {slug} » est introuvable"
+        arbre.see(slug)
+        app.update()
+        bx, by, bw, bh = arbre.bbox(slug, "titre")
+        x = arbre.winfo_rootx() + bx + bw // 2
+        y = arbre.winfo_rooty() + by + bh // 2
         if modificateur:
             os.system(f"xdotool keydown {modificateur} mousemove {x} {y} "
                       f"click 1 keyup {modificateur}")
@@ -1917,11 +1919,12 @@ class TestSelectionMultiple:
         self._clic(app, "v1")
         self._clic(app, "v3", "ctrl")
         self._clic(app, "v5", "ctrl")
+        assert module_app.C_MULTI                # teinte définie dans la palette
         for slug in app.browse_multi:
-            couleur = app.browse_rowbtns[slug].cget("fg_color")
-            assert list(couleur) == list(module_app.C_MULTI), (
+            etiquettes = app.browse_tree.item(slug, "tags")
+            assert tuple(etiquettes) == ("multi",), (
                 f"« {slug} » est dans la sélection mais n'en porte pas la "
-                f"teinte (couleur = {couleur})")
+                f"teinte (étiquettes = {etiquettes})")
 
     def test_maj_clic_prend_la_plage(self, app):
         import pytest
@@ -1936,11 +1939,14 @@ class TestSelectionMultiple:
 
     def test_relachement_intercepte_dans_la_source(self):
         """Garde-fou : sans ces deux liaisons, le défaut revient tel quel."""
+        # Depuis la 1.12.0, la liste est un ttk.Treeview : les clics modifiés
+        # sont liés sur l'appui, et la sélection native est coupée pour
+        # qu'aucun comportement par défaut ne s'ajoute au nôtre.
         corps = TestEchelleDeSurfaces._corps()
-        assert '"<Control-ButtonRelease-1>"' in corps, (
-            "le relâchement Ctrl n'est pas intercepté")
-        assert '"<Shift-ButtonRelease-1>"' in corps, (
-            "le relâchement Maj n'est pas intercepté")
+        assert '"<Control-Button-1>"' in corps, "le Ctrl+clic n'est pas lié"
+        assert '"<Shift-Button-1>"' in corps, "le Maj+clic n'est pas lié"
+        assert 'selectmode="none"' in corps, (
+            "la sélection native du tableau s'ajouterait à la nôtre")
 
 
 class TestTaillesDeCibles:
@@ -2006,6 +2012,7 @@ class TestEtatsVides:
 
         Compter les appels dans la source ne prouve rien — encore faut-il que
         le chemin qui les contient soit atteint."""
+        import customtkinter as module_ctk
         base = "https://exemple.invalid/rest"
         app.videos = [{"slug": "v0", "title": "Anatomie", "is_draft": False,
                        "encoded": True, "channel": [], "type": f"{base}/types/1/",
@@ -2021,7 +2028,7 @@ class TestEtatsVides:
         app.update_idletasks()
         try:
             textes = [w.cget("text") for w in app.browse_list.winfo_children()
-                      if hasattr(w, "cget")]
+                      if isinstance(w, module_ctk.CTkLabel)]
             joint = " ".join(str(t) for t in textes)
             assert "Aucune vidéo ne correspond" in joint, (
                 "l'état vide ne s'affiche pas")
@@ -2649,3 +2656,184 @@ class TestChainesEtThemesDUneVideo:
         import app as module_app
         source = inspect.getsource(module_app.App._browse_apply_channels)
         assert 'payload["theme"]' in source and '{"channel": list(urls)}' in source
+
+
+class TestListeVideosNative:
+    """Liste de l'onglet Vidéos en ttk.Treeview (1.12.0).
+
+    Reconstruire 300 boutons CustomTkinter prenait 7 à 8 s à chaque filtrage
+    sur un fonds de ~600 vidéos. Ces tests vérifient que le tableau affiche
+    TOUT, vite, et que les sélections simple et multiple gardent leur sens."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    def _peupler(self, app, n=8):
+        app.videos = [{"slug": f"v{i}", "title": f"Titre {i:04d}", "is_draft": i % 3 == 0,
+                       "encoded": True, "channel": [], "type": "",
+                       "owner": f"{self.BASE}/users/{i % 2}/",
+                       "date_added": f"2026-0{1 + i % 9}-1{i % 10}T08:00:00",
+                       "url": f"{self.BASE}/videos/v{i}/"} for i in range(n)]
+        app.all_users = [{"url": f"{self.BASE}/users/0/", "username": "alice"},
+                         {"url": f"{self.BASE}/users/1/", "username": "bruno"}]
+        app.browse_chan_by_url, app.type_map = {}, {}
+        app.browse_multi.clear()
+        app.browse_selected = None
+        app.browse_text.delete(0, "end")
+        app.browse_tri.set("Plus récentes")
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app.update()
+
+    class _Evt:
+        def __init__(self, x, y):
+            self.x, self.y = x, y
+
+    def _evt(self, app, slug):
+        """Événement de clic placé au milieu de la ligne `slug`."""
+        app.browse_tree.see(slug)
+        app.update()
+        x, y, w, h = app.browse_tree.bbox(slug, "titre")
+        return self._Evt(x + w // 2, y + h // 2)
+
+    def test_plus_de_plafond_a_300(self, app):
+        self._peupler(app, 650)
+        assert len(app.browse_tree.get_children()) == 650, (
+            "le tableau doit afficher toutes les vidéos filtrées")
+
+    def test_rendu_rapide(self, app):
+        import time
+        self._peupler(app, 1000)
+        debut = time.perf_counter()
+        app._browse_do_filter()
+        app.update()
+        duree = time.perf_counter() - debut
+        assert duree < 1.5, f"1000 lignes en {duree:.2f} s : trop lent"
+
+    def test_colonnes(self, app):
+        self._peupler(app, 3)
+        statut, titre, proprio, date, enc = app.browse_tree.item("v1", "values")
+        assert (statut, titre, proprio, date, enc) == ("🌐", "Titre 0001", "bruno",
+                                                       "11/02/2026", "✓")
+        assert app.browse_tree.item("v0", "values")[0] == "📝"
+
+    def test_clic_simple_ctrl_et_maj(self, app):
+        self._peupler(app)
+        app._browse_clic_ligne(self._evt(app, "v1"))
+        assert app.browse_selected["slug"] == "v1"
+        assert app.browse_tree.item("v1", "tags") == ("courante",)
+        app._browse_clic_ligne(self._evt(app, "v2"), "ctrl")
+        assert app.browse_selected["slug"] == "v1", "le Ctrl+clic a changé la sélection simple"
+        assert app.browse_multi == {"v2"}
+        app._browse_clic_ligne(self._evt(app, "v5"), "maj")
+        assert app.browse_multi == {"v2", "v3", "v4", "v5"}
+        for slug in app.browse_multi:
+            assert app.browse_tree.item(slug, "tags") == ("multi",)
+        app._browse_vider_multi()
+        assert app.browse_tree.item("v3", "tags") == ("alt",)
+        assert app.browse_tree.item("v4", "tags") == ("pair",)
+
+    def test_teinte_multi_prioritaire_sur_courante(self, app):
+        self._peupler(app)
+        app._browse_clic_ligne(self._evt(app, "v1"))
+        app._browse_clic_ligne(self._evt(app, "v1"), "ctrl")
+        assert app.browse_tree.item("v1", "tags") == ("multi",)
+        app._browse_clic_ligne(self._evt(app, "v4"))
+        assert app.browse_tree.item("v1", "tags") == ("multi",), (
+            "la ligne retenue a perdu sa marque quand une autre a été consultée")
+        app._browse_vider_multi()
+
+    def test_fleches(self, app):
+        self._peupler(app)
+        app._browse_select(app.browse_filtered[2])
+        app._browse_deplacer(1)
+        assert app.browse_selected["slug"] == "v3"
+        app._browse_deplacer(-1)
+        app._browse_deplacer(-1)
+        assert app.browse_selected["slug"] == "v1"
+
+    def test_tri_par_entete(self, app):
+        self._peupler(app)
+        app._browse_trier_par("titre")
+        assert app.browse_tri.get() == "A → Z"
+        app._browse_trier_par("titre")
+        assert app.browse_tri.get() == "Z → A"
+        assert app.browse_tree.get_children()[0] == "v7"
+        assert "▼" in app.browse_tree.heading("titre", "text")
+        app._browse_trier_par("date")
+        assert app.browse_tri.get() == "Plus récentes"
+        app._browse_trier_par("date")
+        assert app.browse_tree.get_children()[0] == "v7", "plus anciennes = ordre inversé"
+        app._browse_trier_par("proprio")
+        noms = [app.browse_tree.item(s, "values")[2] for s in app.browse_tree.get_children()]
+        assert noms == sorted(noms)
+        app._browse_trier_par("enc")              # colonne sans tri : rien ne bouge
+        assert app.browse_tri.get() == "Propriétaire"
+        app.browse_tri.set("Plus récentes")
+
+    def test_recherche_par_proprietaire(self, app):
+        self._peupler(app)
+        app.browse_text.insert(0, "alice")
+        app._browse_do_filter()
+        assert set(app.browse_tree.get_children()) == {"v0", "v2", "v4", "v6"}
+        app.browse_text.delete(0, "end")
+        app._browse_do_filter()
+
+    def test_index_proprietaires_suit_les_comptes(self, app):
+        self._peupler(app)
+        assert app._browse_owner_label(app.videos[0]) == "alice"
+        app.all_users = [{"url": f"{self.BASE}/users/0/", "username": "carole"}]
+        assert app._browse_owner_label(app.videos[0]) == "carole", (
+            "l'index n'a pas été reconstruit après le remplacement des comptes")
+        assert app._browse_owner_label({"owner": "inconnu"}) == "inconnu"
+        assert app._browse_owner_label({"owner": ""}) == "—"
+
+    def test_etat_vide_puis_retour_du_tableau(self, app):
+        self._peupler(app)
+        app.browse_text.insert(0, "zzzz_introuvable")
+        app._browse_do_filter()
+        app.update()
+        assert not app._browse_cadre_arbre.winfo_manager(), "le tableau reste visible"
+        assert app._browse_vide_widgets
+        app.browse_text.delete(0, "end")
+        app._browse_do_filter()
+        app.update()
+        assert app._browse_cadre_arbre.winfo_manager() == "pack"
+        assert not app._browse_vide_widgets
+        assert len(app.browse_tree.get_children()) == 8
+
+    def test_theme_change_les_couleurs(self, app):
+        import app as module_app
+        ctk = module_app.ctk
+        initial = ctk.get_appearance_mode()
+        try:
+            ctk.set_appearance_mode("light")
+            app._browse_styler_liste()
+            clair = app.browse_tree.tag_configure("alt", "background")
+            ctk.set_appearance_mode("dark")
+            app._browse_styler_liste()
+            sombre = app.browse_tree.tag_configure("alt", "background")
+            assert (str(clair), str(sombre)) == module_app.S_LIGNE
+        finally:
+            ctk.set_appearance_mode(initial)
+            app._browse_styler_liste()
+
+    def test_tout_selectionner(self, app):
+        self._peupler(app, 400)
+        app._browse_tout_selectionner()
+        assert len(app.browse_multi) == 400
+        assert app.browse_tree.item("v399", "tags") == ("multi",)
+        app._browse_vider_multi()
+
+    def test_cmd_clic_sur_mac(self, app):
+        """Sur Mac, Ctrl+clic est le clic droit : Cmd+clic doit ajouter à la
+        sélection, et les textes doivent nommer la bonne touche."""
+        import inspect
+        import sys as module_sys
+
+        import app as module_app
+        source = inspect.getsource(module_app.App._build_tab_browse)
+        assert '"<Command-Button-1>"' in source and 'sys.platform == "darwin"' in source
+        attendu = "Cmd" if module_sys.platform == "darwin" else "Ctrl"
+        assert module_app.TOUCHE_AJOUT == attendu
+        if module_sys.platform == "darwin":
+            assert app.browse_tree.bind("<Command-Button-1>")

@@ -89,7 +89,7 @@ def comparer_versions(a: str, b: str) -> int:
     taille = max(len(ma), len(mb))
     ma += [0] * (taille - len(ma))  # « 1.2 » == « 1.2.0 »
     mb += [0] * (taille - len(mb))
-    for x, y in zip(ma, mb):
+    for x, y in zip(ma, mb, strict=True):
         if x != y:
             return -1 if x < y else 1
     return 0

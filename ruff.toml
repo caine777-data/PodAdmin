@@ -30,13 +30,11 @@ ignore = [
     "RUF100",
 
     # --- Dette existante au 22/10/2026 (1.13.1), à résorber règle par règle ---
+    # Résorbées le 23/10/2026 : B904, B905, SIM115 (code de l'application).
     # Ces règles signalent du code antérieur à l'adoption de ruff ; on les
     # désactive pour que le contrôle soit vert dès le départ. Pour en résorber
     # une : la retirer de cette liste, lancer `python -m ruff check .`, corriger.
     # Les plus utiles à traiter d'abord sont en tête.
-    "SIM115",  # 21 fichiers ouverts sans `with` (risque de fichier non fermé)
-    "B904",    # 5 raise dans un except sans `from` (perte de la cause d'origine)
-    "B905",    # 8 zip() sans strict= (listes de longueurs différentes ignorées)
     "F841",    # 1 variable affectée jamais lue
     "RUF059",  # 7 variables dépaquetées jamais lues
     "E402",    # 1 import après du code
@@ -54,8 +52,11 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-# Dans les tests, les assert et les noms courts sont normaux.
-"tests/**" = ["B011"]
+# Dans les tests, les assert et les noms courts sont normaux. Tests et sondes
+# ouvrent des fichiers sans `with` pour une lecture ponctuelle (SIM115) : sans
+# conséquence hors de l'application, qui, elle, y reste soumise.
+"tests/**" = ["B011", "SIM115"]
+"verifier*.py" = ["SIM115"]
 
 [format]
 quote-style = "double"

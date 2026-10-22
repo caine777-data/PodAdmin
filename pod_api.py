@@ -479,7 +479,7 @@ class PodAPI:
 
         def _one_attempt():
             """Un seul essai d'envoi ; rouvre le fichier et reconstruit l'encodeur."""
-            f = open(file_path, "rb")
+            f = open(file_path, "rb")  # noqa: SIM115  (fermé par le finally ci-dessous)
             try:
                 fields = list(base_fields)
                 fields.append(("video", (filename, f, "application/octet-stream")))
@@ -546,7 +546,7 @@ class PodAPI:
                     f"Dernière erreur : {e}",
                     0,
                     str(e),
-                )
+                ) from e
         # Ne devrait pas être atteint
         raise PodAPIError(f"Échec de l'envoi : {last_err}", 0, str(last_err))
 
@@ -697,7 +697,7 @@ class PodAPI:
 
         def _one_attempt():
             """Effectue UNE tentative d'upload (ré-essayée en cas de coupure réseau)."""
-            f = open(file_path, "rb")
+            f = open(file_path, "rb")  # noqa: SIM115  (fermé par le finally ci-dessous)
             try:
                 fields = [("video", (filename, f, "application/octet-stream"))]
                 if HAS_TOOLBELT:
@@ -747,7 +747,7 @@ class PodAPI:
                     f"Dernière erreur : {e}",
                     0,
                     str(e),
-                )
+                ) from e
         # Garde-fou : inatteignable tant que max_retries >= 1, mais sans lui la
         # fonction renverrait None en silence si la boucle ne s'exécutait pas —
         # l'appelant croirait le remplacement réussi. (Même garde-fou que

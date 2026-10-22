@@ -60,7 +60,7 @@ class TestDecoupage(unittest.TestCase):
 
     def test_pas_de_chevauchement(self):
         sts = self.decouper(LONG, LONG)
-        for a, b in zip(sts, sts[1:]):
+        for a, b in zip(sts, sts[1:], strict=False):  # paires de voisins : décalage voulu
             self.assertLessEqual(a.fin, b.debut - self.p.ecart_min + 1e-6)
 
     def test_pas_de_fin_sur_mot_faible(self):

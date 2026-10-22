@@ -39,7 +39,7 @@ def test_la_reprise_du_suivi_attend_la_connexion():
     """La reprise interroge Aristote : elle passe par le chargement
     automatique, qui n'agit qu'une fois PodAdmin connecté."""
     table = next(n for n in ast.walk(_methode("_auto_loaders")) if isinstance(n, ast.Dict))
-    chargeurs = {k.value: ast.unparse(v) for k, v in zip(table.keys, table.values)}
+    chargeurs = {k.value: ast.unparse(v) for k, v in zip(table.keys, table.values, strict=True)}
     assert chargeurs.get("enrich") == "self._enrich_reprendre"
     assert "reprendre_travaux" not in ast.unparse(_methode("_enrich_construire"))
 

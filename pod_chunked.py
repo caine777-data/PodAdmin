@@ -215,7 +215,7 @@ class PodChunkedSession:
                 verify=self.verify_ssl,
             )
         except TRANSIENT_ERRORS as e:
-            raise PodChunkedError(f"Connexion réseau impossible au login : {e}")
+            raise PodChunkedError(f"Connexion réseau impossible au login : {e}") from e
 
         # (c) Vérification : un login Django réussi pose un cookie 'sessionid'
         #     (et redirige, 302 → page suivie automatiquement par requests).
@@ -442,7 +442,7 @@ class PodChunkedSession:
                 raise PodChunkedError(
                     f"Échec d'envoi du morceau {crange} après {max_retries} "
                     f"tentatives (coupure réseau/SSL). Dernière erreur : {e}"
-                )
+                ) from e
         # Ne devrait jamais être atteint (la boucle sort par return ou raise).
         raise PodChunkedError(f"Échec inattendu sur le morceau {crange}.")
 
@@ -486,7 +486,7 @@ class PodChunkedSession:
                 "quand même terminé : vérifiez si la vidéo apparaît côté web avant "
                 f"de recommencer. (détail : {e})",
                 status=504,
-            )
+            ) from e
 
         # 502/503/504 : passerelle en timeout. Sur la FINALISATION, on ne ré-essaie
         # PAS automatiquement (risque de doublon) : le traitement a pu aboutir côté

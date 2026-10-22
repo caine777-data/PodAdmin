@@ -1115,7 +1115,7 @@ class RangeeFluide(ctk.CTkFrame):
                 cadre.pack(fill="x", pady=(0 if i == 0 else self.ECART, 0))
             else:
                 cadre.pack_forget()
-        for w, l in zip(self.elements, rangs):
+        for w, l in zip(self.elements, rangs, strict=True):
             w.pack_forget()
             w.pack(in_=self._lignes[l], side="left", padx=(0, self.ECART))
             w.lift()  # créé avant le cadre : sinon caché dessous
@@ -2624,7 +2624,7 @@ class App(_AppBase):
     def _on_owners_picked(self, urls: list[str], labels: list[str]):
         """Callback d'OwnerPicker : mémorise les co-propriétaires choisis et met à jour le libellé."""
         self.additional_owner_urls = urls
-        self.additional_owner_map = dict(zip(urls, labels))
+        self.additional_owner_map = dict(zip(urls, labels, strict=True))
         if urls:
             self.add_owners_lbl.configure(text=", ".join(labels)[:60], text_color=T_SUCCES)
         else:
@@ -10346,7 +10346,7 @@ class App(_AppBase):
         row = ctk.CTkFrame(self.stats_table, fg_color="transparent")
         row.pack(fill="x", pady=(0, 2))
         widths = (360, 80, 120)
-        for text, w in zip(cols, widths):
+        for text, w in zip(cols, widths, strict=True):
             ctk.CTkLabel(
                 row, text=text, width=w, anchor="w", font=ctk.CTkFont(size=12, weight="bold")
             ).pack(side="left", padx=4)
@@ -10356,7 +10356,7 @@ class App(_AppBase):
         row = ctk.CTkFrame(self.stats_table, fg_color=S_LIGNE, corner_radius=4)
         row.pack(fill="x", pady=1)
         widths = (360, 80, 120)
-        for text, w in zip(cols, widths):
+        for text, w in zip(cols, widths, strict=True):
             ctk.CTkLabel(row, text=text, width=w, anchor="w", font=ctk.CTkFont(size=12)).pack(
                 side="left", padx=4, pady=3
             )

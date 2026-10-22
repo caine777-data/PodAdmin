@@ -645,7 +645,7 @@ def decouper_traduction(
     # Chaque phrase est découpée à part : un sous-titre ne doit pas finir une
     # phrase et commencer la suivante (« in higher education. Today, »).
     sts: list[SousTitre] = []
-    for g, t in zip(groupes, textes):
+    for g, t in zip(groupes, textes, strict=True):
         sts.extend(decouper(_repartir(" ".join(str(t or "").split()), g.debut, g.fin), p))
     return ajuster_horaires(sts, p)
 

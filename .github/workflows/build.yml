@@ -203,6 +203,9 @@ jobs:
         with:
           name: PodAdmin-Windows-Setup
           path: installer/PodAdmin-Windows-Setup.exe
+          # Le stockage des builds est commun à tous les dépôts du compte : sans
+          # limite, les builds d'essai l'ont rempli (dépôt refusé le 2026-10-22).
+          retention-days: 14
 
   # ──────────────────────────────── macOS ────────────────────────────────
   build-macos:
@@ -288,6 +291,9 @@ jobs:
         with:
           name: PodAdmin-macOS-DMG
           path: dist/PodAdmin-macOS.dmg
+          # Le stockage des builds est commun à tous les dépôts du compte : sans
+          # limite, les builds d'essai l'ont rempli (dépôt refusé le 2026-10-22).
+          retention-days: 14
 
   # ───────────────────────── Blocage à distance ──────────────────────────
   # Écrit etat.json sur le dépôt PUBLIC lu par les applications installées

@@ -1,0 +1,63 @@
+# Configuration ruff commune aux projets Python de Cédric.
+# À copier à la racine du projet. ruff remplace à lui seul flake8, isort
+# et black : un seul outil, très rapide, une seule configuration.
+
+line-length = 100          # 79 est trop court pour les interfaces CustomTkinter
+target-version = "py311"   # version minimale visée par les builds PyInstaller
+
+# Dossiers générés : rien à analyser dedans.
+extend-exclude = ["build", "dist", "*.spec", ".venv", "venv"]
+
+[lint]
+select = [
+    "E", "W",   # style PEP 8 de base (dont E722 : except nu interdit)
+    "F",        # erreurs réelles : variable inconnue, import inutilisé
+    "I",        # imports triés et groupés
+    "B",        # pièges classiques (argument par défaut mutable, etc.)
+    "UP",       # syntaxe Python moderne
+    "SIM",      # simplifications évidentes
+    "C4",       # compréhensions de listes correctes
+    "RUF",      # règles propres à ruff
+]
+ignore = [
+    # Les commentaires et textes sont en français : apostrophes typographiques,
+    # espaces insécables et guillemets « » sont voulus, pas des confusions.
+    "RUF001", "RUF002", "RUF003",
+    # Laisser au formateur la longueur des lignes plutôt que bloquer l'analyse.
+    "E501",
+    # PodAdmin : les noqa existants (BLE001, S606...) documentent des choix
+    # volontaires pour des règles non activées ici ; on les garde.
+    "RUF100",
+
+    # --- Dette existante au 22/10/2026 (1.13.1), à résorber règle par règle ---
+    # Ces règles signalent du code antérieur à l'adoption de ruff ; on les
+    # désactive pour que le contrôle soit vert dès le départ. Pour en résorber
+    # une : la retirer de cette liste, lancer `python -m ruff check .`, corriger.
+    # Les plus utiles à traiter d'abord sont en tête.
+    "SIM115",  # 21 fichiers ouverts sans `with` (risque de fichier non fermé)
+    "B904",    # 5 raise dans un except sans `from` (perte de la cause d'origine)
+    "B905",    # 8 zip() sans strict= (listes de longueurs différentes ignorées)
+    "F841",    # 1 variable affectée jamais lue
+    "RUF059",  # 7 variables dépaquetées jamais lues
+    "E402",    # 1 import après du code
+    "B008",    # 1 appel de fonction en valeur par défaut d'argument
+    "B017",    # 1 test qui attend une Exception trop générale
+    "RUF012",  # 10 listes/dict mutables en attribut de classe
+    "RUF013",  # 1 Optional implicite
+    "SIM105",  # 66 try/except/pass (contextlib.suppress serait plus lisible)
+    "E741",    # 26 variables nommées l, O ou I
+    "RUF005",  # 19 concaténations de listes [*a, *b]
+    "E702",    # 10 instructions multiples sur une ligne avec ;
+    "E731",    # 3 lambdas affectées à une variable
+    "SIM102", "SIM108", "SIM112", "SIM117", "SIM118",
+    "C408", "RUF007", "RUF046", "UP031",
+]
+
+[lint.per-file-ignores]
+# Dans les tests, les assert et les noms courts sont normaux.
+"tests/**" = ["B011"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"       # respecte CRLF sous Windows, LF sous macOS

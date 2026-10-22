@@ -35,3 +35,25 @@ jobs:
 
       - name: Lancer les tests
         run: xvfb-run -a python -m pytest tests/ -v
+
+  # Analyse statique et mise en forme (règles dans ruff.toml).
+  # Rapide et indépendant des tests : un échec ici signale du code qui dérive
+  # (import inutilisé, except nu, fichier non formaté) avant même de compiler.
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer ruff
+        run: python -m pip install ruff
+
+      - name: Analyser le code
+        run: python -m ruff check --output-format=github .
+
+      - name: Vérifier la mise en forme
+        run: python -m ruff format --check .

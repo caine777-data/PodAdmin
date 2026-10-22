@@ -202,5 +202,14 @@ après envoi par morceaux, marqueur visible dans le slug.
   mode actif, rappelée par `_basculer_theme`.
 - Propriétaire via `_index_proprietaires` (reconstruit si `all_users` est
   remplacée), plus de parcours vidéos × comptes à chaque frappe.
-- Les 7 autres listes à boutons (comptes, encodage, fenêtres de choix)
-  restent à migrer après validation de celle-ci.
+- 1.13.0 : composant commun `ListeNative` (+ `styler_tableaux`,
+  `enregistrer_tableau`) pour toutes les longues listes : agent déposant,
+  sélecteurs de Réaffectation, OwnerPicker, VideoPicker (un clic ne met à
+  jour que sa ligne), Encodage (`multi=True` : sélection puis « Relancer la
+  sélection », double-clic = une vidéo), Comptes (liste + fiche à droite,
+  actions libellées). Plus aucun plafond d'affichage.
+- Filtres de l'onglet Vidéos en pastilles (`PastilleFiltre`, même interface
+  qu'un CTkOptionMenu : get, set, configure(values=…) ; 1re valeur = neutre)
+  dans une `RangeeFluide` (passage à la ligne par `pack(in_=…)`). Recherche
+  seule en haut. Tri sans menu (`browse_tri` = `ValeurSimple`, réglé par les
+  en-têtes). « Anomalies » remplace Détecter + case mois (`ANOMALIES_VIDEOS`).

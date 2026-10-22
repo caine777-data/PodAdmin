@@ -232,37 +232,38 @@ class TestLargeurDesBarres:
         app.geometry("1000x660")
         app._show_tab("browse")
         app.update()
-        requis, dispo = self._mesurer(app, app.browse_text)
+        # Depuis la 1.13.0 : la recherche est seule sur sa ligne, et la rangée
+        # de pastilles ne doit jamais réclamer plus que sa largeur.
+        app.browse_pastilles.reorganiser()
+        app.update_idletasks()
+        cadre = app.browse_pastilles
+        requis, dispo = cadre.winfo_reqwidth(), cadre.winfo_width()
         assert requis <= dispo + MARGE, (
-            f"la 1re rangée de filtres réclame {requis} px pour {dispo} px "
+            f"la rangée de filtres réclame {requis} px pour {dispo} px "
             f"disponibles : {requis - dispo} px seraient tronqués")
 
-    def test_filtres_videos_rangee_2(self, app):
+    def test_pastilles_au_repos_sur_une_ligne(self, app):
+        """Depuis la 1.13.0, les filtres sont des pastilles : au repos, les six
+        tiennent sur une seule ligne en fenêtre minimale."""
         app.geometry("1000x660")
         app._show_tab("browse")
+        app._browse_effacer_filtres()
         app.update()
-        requis, dispo = self._mesurer(app, app.browse_tri)
-        assert requis <= dispo + MARGE, (
-            f"la 2e rangée de filtres réclame {requis} px pour {dispo} px "
-            f"disponibles : {requis - dispo} px seraient tronqués")
+        app.browse_pastilles.reorganiser()
+        app.update()
+        assert app.browse_pastilles.nombre_de_lignes() == 1
 
-    def test_controles_de_tri_et_detection_atteignables(self, app):
-        """Les contrôles ajoutés en 1.2.x doivent être réellement visibles.
-
-        Ils existaient déjà, mais hors écran : présents à l'inspection du code,
-        inutilisables par l'utilisateur."""
+    def test_anomalies_atteignable(self, app):
+        """Les filtres de détection existaient autrefois hors écran : présents
+        à l'inspection du code, inutilisables par l'utilisateur."""
         app.geometry("1000x660")
         app._show_tab("browse")
         app.update()
         app.update_idletasks()
-        largeur = app.winfo_width()
-        for nom, widget in (("tri", app.browse_tri),
-                            ("détection", app.browse_detect),
-                            ("seuil en mois", app.browse_months)):
-            droite = widget.winfo_rootx() - app.winfo_rootx() + widget.winfo_reqwidth()
-            assert droite <= largeur, (
-                f"le contrôle « {nom} » se termine à {droite} px, "
-                f"hors d'une fenêtre de {largeur} px")
+        p = app.browse_detect
+        droite = p.winfo_rootx() - app.winfo_rootx() + p.winfo_width()
+        assert p.winfo_ismapped() and droite <= app.winfo_width(), (
+            f"la pastille « Anomalies » finit à {droite} px")
 
 
 class TestMagasinPartage:
@@ -1292,21 +1293,22 @@ class TestLibellesDeFiltres:
     Le libellé est AU-DESSUS et non à gauche : mesuré, à gauche il coûterait
     139 px sur une rangée qui n'a que 3 px de marge en fenêtre minimale."""
 
-    FILTRES = ("browse_statut", "browse_encode", "browse_chan",
-               "browse_type", "browse_tri", "browse_detect")
+    FILTRES = {"browse_statut": "Statut", "browse_encode": "Encodage",
+               "browse_chan": "Chaîne", "browse_type": "Type",
+               "browse_discipline": "Discipline", "browse_detect": "Anomalies"}
 
-    def test_chaque_filtre_a_un_libelle_au_dessus(self, app):
+    def test_chaque_filtre_garde_son_nom_meme_actif(self, app):
+        """Le principe d'origine, tenu autrement depuis les pastilles (1.13.0) :
+        une pastille active affiche « Nom : valeur », jamais la valeur seule."""
         app._show_tab("browse")
-        app.update()
-        app.update_idletasks()
-        for nom in self.FILTRES:
-            menu = getattr(app, nom)
-            parent = menu.master
-            libelles = [w for w in parent.winfo_children()
-                        if isinstance(w, module_ctk().CTkLabel)]
-            assert libelles, f"{nom} n'a pas de libellé au-dessus"
-            assert libelles[0].winfo_rooty() < menu.winfo_rooty(), (
-                f"le libellé de {nom} n'est pas au-dessus du menu")
+        for attr, nom in self.FILTRES.items():
+            p = getattr(app, attr)
+            p.configure(values=list(p.cget("values")[:1]) + ["Valeur test"])
+            p.set(p.cget("values")[0])
+            assert str(p.cget("text")).startswith(nom), f"{attr} au repos : {p.cget('text')}"
+            p.set("Valeur test")
+            assert str(p.cget("text")).startswith(f"{nom} : "), f"{attr} actif : {p.cget('text')}"
+            p.set(p.cget("values")[0])
 
     def test_la_valeur_ne_reprend_plus_l_intitule(self, app):
         """« Tous statuts » dans la valeur, c'était l'intitulé caché dedans."""
@@ -1359,22 +1361,30 @@ class TestLibellesDeFiltres:
         """Les filtres sont sur deux rangées parce qu'ils débordaient déjà :
         sur une seule ligne, huit contrôles réclamaient 1237 px pour 752
         disponibles."""
+        # Le cas qui débordait : des noms LONGS choisis dans les filtres. Un
+        # menu s'élargissait pour les afficher et poussait « Type » hors de la
+        # fenêtre ; une pastille abrège, et la rangée passe à la ligne.
+        long = "Faculté de santé, département d'odontologie (cours magistraux)"
+        app._show_tab("browse")
         app.geometry("1000x660")
+        for p in app.browse_pastilles.elements:
+            p.configure(values=list(p.cget("values")[:1]) + [long])
+            p.set(long)
+        app.update()
+        app.browse_pastilles.reorganiser()
         app.update()
         app.update_idletasks()
         try:
-            # `browse_discipline` est sur la SECONDE rangée : en sixième
-            # position sur la première, il la faisait déborder de 160 px.
-            droite = max(getattr(app, n).winfo_rootx() + getattr(app, n).winfo_width()
-                         for n in ("browse_statut", "browse_encode",
-                                   "browse_chan", "browse_type",
-                                   "browse_discipline"))
+            droite = max(p.winfo_rootx() + p.winfo_width()
+                         for p in app.browse_pastilles.elements) - app.winfo_rootx()
             assert droite <= app.winfo_width(), (
                 f"filtres tronqués : le dernier finit à {droite} px pour une "
                 f"fenêtre de {app.winfo_width()}")
-            assert app.browse_text.winfo_width() > 60, (
+            assert app.browse_pastilles.nombre_de_lignes() > 1, "pas de passage à la ligne"
+            assert app.browse_text.winfo_width() > 300, (
                 "le champ de recherche est écrasé par les filtres")
         finally:
+            app._browse_effacer_filtres()
             app.geometry("1180x760")
             app.update()
 
@@ -1397,7 +1407,7 @@ class TestPoidsDeLInterface:
     # sert plus à rien : il est là pour signaler une DÉRIVE, pas pour interdire
     # un onglet. Si un ajout coûtait 300 widgets, c'est la construction qu'il
     # faudrait revoir, pas ce chiffre.
-    PLAFOND_TOTAL = 860      # application neuve : constaté à 807
+    PLAFOND_TOTAL = 900      # application neuve : 807, puis 849 (1.12.0), 859 (1.13.0 : fiche Comptes)
     PLAFOND_AIDE = 40        # constaté à 14 ; était à 134
 
     @staticmethod
@@ -2837,3 +2847,457 @@ class TestListeVideosNative:
         assert module_app.TOUCHE_AJOUT == attendu
         if module_sys.platform == "darwin":
             assert app.browse_tree.bind("<Command-Button-1>")
+
+
+class TestListesDeChoixNatives:
+    """Listes de choix en tableau natif (ListeNative) : agent déposant,
+    sélecteurs de compte, choix de propriétaires, choix de vidéos."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    def _comptes(self, n):
+        return [{"url": f"{self.BASE}/users/{i}/", "username": f"u{i:04d}",
+                 "first_name": "Prénom", "last_name": f"Nom{i}"} for i in range(n)]
+
+    class _Evt:
+        def __init__(self, x, y):
+            self.x, self.y = x, y
+
+    def _cliquer(self, liste, iid):
+        """Clic réel (par le gestionnaire du tableau) au milieu de la ligne."""
+        liste.arbre.see(iid)
+        liste.arbre.update()
+        x, y, w, h = liste.arbre.bbox(iid)
+        return liste._clic(self._Evt(x + w // 2, y + h // 2))
+
+    def test_agent_tous_les_comptes_et_coche(self, app, monkeypatch):
+        import app as module_app
+        monkeypatch.setattr(module_app.cfg, "save_config", lambda *_a, **_k: None)
+        app.all_users = self._comptes(700)
+        app.config_data["agent_username"] = "u0003"
+        app.agent_filter.delete(0, "end")
+        app._render_users()
+        liste = app.agent_results
+        assert len(liste.lignes()) == 700, "plus de plafond à 300"
+        assert liste.arbre.item("u0003", "tags") == ("courante",)
+        assert liste.arbre.item("u0003", "values")[0].startswith("✅")
+        assert self._cliquer(liste, "u0005") == "break"
+        assert app.config_data["agent_username"] == "u0005"
+        assert liste.arbre.item("u0005", "tags") == ("courante",)
+        assert liste.arbre.item("u0003", "tags") != ("courante",)
+
+    def test_agent_messages(self, app):
+        app.all_users = []
+        app._render_users()
+        assert app.agent_results._message is not None
+        assert "Recharger" in app.agent_results._message.cget("text")
+        app.all_users = self._comptes(3)
+        app.agent_filter.insert(0, "zzz_introuvable")
+        app._render_users()
+        assert "Aucun résultat" in app.agent_results._message.cget("text")
+        app.agent_filter.delete(0, "end")
+        app._render_users()
+        assert app.agent_results._message is None and len(app.agent_results.lignes()) == 3
+
+    def test_selecteur_compact(self, app):
+        import app as module_app
+        app.all_users = self._comptes(450)
+        choisis = []
+        cadre = module_app.ctk.CTkFrame(app)
+        try:
+            etat = app._mini_user_picker(cadre, "Source", choisis.append)
+            if etat is None:
+                etat = app._reassign_pickers[-1]
+            liste = etat["results"]
+            assert len(liste.lignes()) == 450
+            self._cliquer(liste, "u0010")
+            assert choisis and choisis[-1]["username"] == "u0010"
+            assert liste.arbre.item("u0010", "tags") == ("courante",)
+        finally:
+            app._reassign_pickers[:] = [s for s in app._reassign_pickers
+                                        if s.get("frame") is not etat.get("frame")]
+            cadre.destroy()
+
+    def test_choix_proprietaires_multiple(self, app):
+        import app as module_app
+        app.all_users = self._comptes(600)
+        rendu = {}
+        pk = module_app.OwnerPicker(app, lambda urls, libs: rendu.update(urls=urls),
+                                    preselected={f"{self.BASE}/users/2/": "u0002"})
+        try:
+            pk._render()
+            liste = pk.listbox
+            assert len(liste.lignes()) == 600
+            u2 = f"{self.BASE}/users/2/"
+            assert liste.arbre.item(u2, "values")[0].startswith("☑")
+            assert liste.arbre.item(u2, "tags") == ("courante",)
+            u7 = f"{self.BASE}/users/7/"
+            lignes_avant = liste.lignes()
+            self._cliquer(liste, u7)
+            assert u7 in pk.selected
+            assert liste.arbre.item(u7, "values")[0].startswith("☑")
+            assert liste.lignes() == lignes_avant, "le tableau a été reconstruit"
+            assert "2 sélectionné(s)" in pk.count_lbl.cget("text")
+            self._cliquer(liste, u2)
+            assert u2 not in pk.selected
+            assert liste.arbre.item(u2, "values")[0].startswith("☐")
+            pk._validate()
+            assert rendu["urls"] == [u7]
+        finally:
+            if pk.winfo_exists():
+                pk.destroy()
+
+    def test_choix_proprietaire_unique(self, app):
+        import app as module_app
+        app.all_users = self._comptes(5)
+        pris = []
+        pk = module_app.OwnerPicker(app, lambda *_: None, single=True, on_single=pris.append)
+        pk._render()
+        self._cliquer(pk.listbox, f"{self.BASE}/users/4/")
+        assert pris and pris[0]["username"] == "u0004"
+        assert not pk.winfo_exists(), "la sélection unique doit fermer la fenêtre"
+
+    def test_choix_videos(self, app):
+        import app as module_app
+        videos = [{"slug": f"s{i}", "title": f"Vidéo {i}"} for i in range(800)]
+        rendu = {}
+        pk = module_app.VideoPicker(app, videos, lambda slugs: rendu.update(s=slugs),
+                                    preselected={"s1": "Vidéo 1"})
+        try:
+            liste = pk.listbox
+            assert len(liste.lignes()) == 800, "plus de plafond à 500"
+            assert liste.arbre.item("s1", "values")[0] == "☑"
+            self._cliquer(liste, "s5")
+            assert liste.arbre.item("s5", "values")[0] == "☑"
+            assert liste.arbre.item("s5", "tags") == ("courante",)
+            assert "2 vidéo(s)" in pk.chosen_lbl.cget("text")
+            pk.filter.insert(0, "Vidéo 79")
+            pk._render()
+            assert set(liste.lignes()) == {"s79"} | {f"s{i}" for i in range(790, 800)}
+            pk.filter.delete(0, "end")
+            pk.filter.insert(0, "zzz")
+            pk._render()
+            assert liste._message is not None
+            pk._validate()
+            assert sorted(rendu["s"]) == ["s1", "s5"]
+        finally:
+            if pk.winfo_exists():
+                pk.destroy()
+
+    def test_le_theme_reteint_toutes_les_listes(self, app):
+        import app as module_app
+        ctk = module_app.ctk
+        initial = ctk.get_appearance_mode()
+        pk = module_app.VideoPicker(app, [{"slug": "a", "title": "A"}], lambda s: None)
+        try:
+            for mode, rang in (("light", 0), ("dark", 1)):
+                ctk.set_appearance_mode(mode)
+                module_app.styler_tableaux(app)
+                for arbre in (pk.listbox.arbre, app.browse_tree, app.agent_results.arbre):
+                    assert str(arbre.tag_configure("courante", "background")) == \
+                        module_app.S_SELECTION[rang]
+        finally:
+            pk.destroy()
+            ctk.set_appearance_mode(initial)
+            module_app.styler_tableaux(app)
+
+
+class TestEncodageEtComptesNatifs:
+    """Onglets Encodage (sélection + relance) et Comptes (liste + fiche)."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    class _Evt:
+        def __init__(self, x, y):
+            self.x, self.y = x, y
+
+    def _evt(self, liste, iid):
+        liste.arbre.see(iid)
+        liste.arbre.update()
+        x, y, w, h = liste.arbre.bbox(iid)
+        return self._Evt(x + w // 2, y + h // 2)
+
+    # ── Encodage ──
+    def _encodage(self, app, n=12):
+        # L'onglet d'abord : son ouverture peut recopier le magasin partagé
+        # dans encode_videos, ce qui écraserait le jeu d'essai.
+        app._show_tab("encode")
+        for _ in range(3):
+            app.update()
+        app.encode_videos = [{"slug": f"e{i}", "title": f"Vidéo {i}", "encoded": False,
+                              "encoding_in_progress": False, "is_draft": False,
+                              "get_encoding_step": "erreur"} for i in range(n)]
+        app.encode_list.choix.clear()
+        app.encode_filter.set("Tous")
+        app._render_encode()
+        app.update()
+
+    def test_encodage_sans_plafond(self, app):
+        self._encodage(app, 900)
+        assert len(app.encode_list.lignes()) == 900
+
+    def test_encodage_selection_et_relance(self, app, monkeypatch):
+        import app as module_app
+        self._encodage(app)
+        liste = app.encode_list
+        assert str(app.encode_sel_btn.cget("state")) == "disabled"
+        liste._clic(self._evt(liste, "e2"))
+        liste._clic(self._evt(liste, "e4"), "ctrl")
+        liste._clic(self._evt(liste, "e6"), "maj")
+        assert liste.choix == {"e2", "e4", "e5", "e6"}
+        assert liste.arbre.item("e5", "tags") == ("multi",)
+        assert str(app.encode_sel_btn.cget("state")) == "normal"
+        assert "(4)" in app.encode_sel_btn.cget("text")
+        lances = []
+        monkeypatch.setattr(module_app.messagebox, "askyesno", lambda *a, **k: True)
+        monkeypatch.setattr(app, "_run", lambda f, vids: lances.append([v["slug"] for v in vids]))
+        app._encode_relaunch_selection()
+        assert lances == [["e2", "e4", "e5", "e6"]]
+        liste._clic(self._evt(liste, "e1"))              # clic simple : cette ligne seule
+        assert liste.choix == {"e1"}
+        assert liste.arbre.item("e2", "tags") != ("multi",)
+        liste._clic(self._evt(liste, "e3"), "ctrl")
+        liste._clic(self._evt(liste, "e1"), "ctrl")       # Ctrl+clic sur une ligne retenue : retirée
+        assert liste.choix == {"e3"}
+        assert liste.arbre.item("e1", "tags") != ("multi",)
+
+    def test_encodage_refus_de_confirmation(self, app, monkeypatch):
+        import app as module_app
+        self._encodage(app)
+        app.encode_list._clic(self._evt(app.encode_list, "e3"))
+        lances = []
+        monkeypatch.setattr(module_app.messagebox, "askyesno", lambda *a, **k: False)
+        monkeypatch.setattr(app, "_run", lambda f, vids: lances.append(vids))
+        app._encode_relaunch_selection()
+        assert not lances, "relance sans confirmation"
+
+    def test_encodage_double_clic(self, app, monkeypatch):
+        self._encodage(app)
+        vues = []
+        monkeypatch.setattr(app, "_encode_relaunch_one", lambda v: vues.append(v["slug"]))
+        app.encode_list._double(self._evt(app.encode_list, "e7"), app._encode_double_clic)
+        assert vues == ["e7"]
+
+    def test_encodage_selection_survit_au_filtre(self, app):
+        self._encodage(app)
+        liste = app.encode_list
+        liste._clic(self._evt(liste, "e2"))
+        app._render_encode()
+        assert liste.choix == {"e2"} and liste.arbre.item("e2", "tags") == ("multi",)
+        # Filtre qui retire la ligne choisie sans vider le tableau : la
+        # sélection ne doit pas viser une vidéo devenue invisible.
+        app.encode_videos[2]["encoded"] = True
+        app.encode_filter.set("À problème")
+        app._render_encode()
+        assert "e2" not in liste.lignes() and not liste.choix
+        assert str(app.encode_sel_btn.cget("state")) == "disabled"
+        app.encode_filter.set("Encodées")                 # plus rien d'affiché ici
+        app.encode_videos[2]["encoded"] = False
+        app._render_encode()
+        assert not liste.choix
+        assert str(app.encode_sel_btn.cget("state")) == "disabled"
+        assert "Aucune vidéo" in liste._message.cget("text")
+
+    # ── Comptes ──
+    def _comptes(self, app, n=10):
+        app.all_users = [{"url": f"{self.BASE}/users/{i}/", "username": f"c{i:03d}",
+                          "first_name": "Ana", "last_name": f"Nom{i}",
+                          "email": "" if i == 3 else f"c{i}@exemple.invalid",
+                          "is_staff": i % 4 == 0} for i in range(n)]
+        app.comptes_choisi = None
+        app.comptes_filter.delete(0, "end")
+        app.comptes_statut.set("Tous")
+        app._show_tab("comptes")
+        app._render_comptes()
+        app.update()
+
+    def _textes_fiche(self, app):
+        import customtkinter as ctk
+        return [str(w.cget("text")) for w in app.comptes_fiche.winfo_children()
+                if isinstance(w, (ctk.CTkLabel, ctk.CTkButton, ctk.CTkSwitch))]
+
+    def test_comptes_sans_plafond_et_colonnes(self, app):
+        self._comptes(app, 700)
+        liste = app.comptes_results
+        assert len(liste.lignes()) == 700
+        assert liste.arbre.item("c000", "values")[2] == "✓ Équipe"
+        assert liste.arbre.item("c001", "values")[2] == ""
+        assert liste.arbre.item("c003", "values")[3] == "aucun"
+        assert any("Sélectionnez un compte" in t for t in self._textes_fiche(app))
+
+    def test_comptes_fiche_du_compte_clique(self, app):
+        self._comptes(app)
+        liste = app.comptes_results
+        liste._clic(self._evt(liste, "c004"))
+        assert app.comptes_choisi == "c004"
+        assert liste.arbre.item("c004", "tags") == ("courante",)
+        textes = " | ".join(self._textes_fiche(app))
+        assert "Ana Nom4" in textes and "c4@exemple.invalid" in textes
+        assert "Ouvrir son jeton" in textes and "Préparer le courriel" in textes
+        liste._clic(self._evt(liste, "c005"))
+        assert liste.arbre.item("c004", "tags") != ("courante",)
+
+    def test_comptes_sans_courriel(self, app):
+        import customtkinter as ctk
+        self._comptes(app)
+        app._comptes_choisir("c003")
+        bouton = next(w for w in app.comptes_fiche.winfo_children()
+                      if isinstance(w, ctk.CTkButton) and "courriel" in str(w.cget("text")))
+        assert str(bouton.cget("state")) == "disabled"
+        assert any("pas d'adresse" in t for t in self._textes_fiche(app))
+
+    def test_comptes_actions_de_la_fiche(self, app, monkeypatch):
+        import customtkinter as ctk
+        self._comptes(app)
+        app._comptes_choisir("c002")
+        appels = []
+        monkeypatch.setattr(app, "_compte_creer_token", lambda u: appels.append(("jeton", u["username"])))
+        monkeypatch.setattr(app, "_compte_mail_token", lambda u: appels.append(("mail", u["username"])))
+        monkeypatch.setattr(app, "_on_staff_toggle", lambda u, v: appels.append(("staff", u["username"], v.get())))
+        app._comptes_render_fiche()
+        for w in app.comptes_fiche.winfo_children():
+            if isinstance(w, ctk.CTkButton):
+                w.invoke()
+            elif isinstance(w, ctk.CTkSwitch):
+                w.toggle()
+        assert ("jeton", "c002") in appels and ("mail", "c002") in appels
+        assert ("staff", "c002", True) in appels
+
+    def test_comptes_filtre_vide_et_choix_conserve(self, app):
+        self._comptes(app)
+        app._comptes_choisir("c006")
+        app.comptes_filter.insert(0, "zzz")
+        app._render_comptes()
+        assert "Aucun résultat" in app.comptes_results._message.cget("text")
+        app.comptes_filter.delete(0, "end")
+        app._render_comptes()
+        assert app.comptes_results.arbre.item("c006", "tags") == ("courante",)
+
+
+class TestPastillesDeFiltre:
+    """Filtres en pastilles de l'onglet Vidéos (1.13.0)."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    def _peupler(self, app):
+        app.videos = [{"slug": f"v{i}", "title": f"Cours {i}", "is_draft": i % 2 == 0,
+                       "encoded": True, "channel": [], "type": "", "owner": "",
+                       "date_added": f"2026-01-{1 + i:02d}", "url": f"{self.BASE}/videos/v{i}/"}
+                      for i in range(10)]
+        app.browse_chan_by_url, app.type_map = {}, {}
+        app._show_tab("browse")
+        app._browse_effacer_filtres()
+        app.update()
+
+    def test_compteur_au_repos_et_en_usage(self, app):
+        self._peupler(app)
+        assert app.browse_count_lbl.cget("text") == "10 vidéo(s)"
+        assert not app.browse_effacer_btn.winfo_manager(), "lien d'effacement visible au repos"
+        app.browse_statut.set("Brouillon")
+        app._browse_do_filter()
+        assert app.browse_count_lbl.cget("text") == "5 vidéo(s) sur 10  ·  1 filtre actif"
+        assert app.browse_effacer_btn.winfo_manager()
+        app.browse_text.insert(0, "Cours 2")
+        app._browse_do_filter()
+        assert app.browse_count_lbl.cget("text").startswith("1 vidéo(s) sur 10")
+
+    def test_effacer_tout(self, app):
+        self._peupler(app)
+        app.browse_statut.set("Public")
+        app.browse_detect.set("Doublons de titre")
+        app.browse_text.insert(0, "zzz")
+        app._browse_do_filter()
+        app._browse_effacer_filtres()
+        assert not app.browse_text.get()
+        assert not any(p.est_active() for p in app.browse_pastilles.elements)
+        assert len(app.browse_filtered) == 10
+
+    def test_croix_retire_le_filtre_et_le_reste_ouvre(self, app, monkeypatch):
+        self._peupler(app)
+        p = app.browse_statut
+        filtrages = []
+        monkeypatch.setattr(app, "_browse_apply_filter", lambda *a: filtrages.append(1))
+        ouvertures = []
+        monkeypatch.setattr(p, "ouvrir", lambda: ouvertures.append(1))
+        p._rappel = lambda v: app._browse_apply_filter()
+        p.set("Brouillon")
+        app.update()
+        p._x_clic = 5                                  # clic à gauche : ouvre les choix
+        p._clic()
+        assert ouvertures == [1] and p.get() == "Brouillon"
+        p._x_clic = p.winfo_width() - 8                # clic sur ✕ : retire le filtre
+        p._clic()
+        assert p.get() == "Tous" and filtrages, "le ✕ n'a pas retiré le filtre"
+        p._x_clic = p.winfo_width() - 8                # au repos, la même zone ouvre
+        p._clic()
+        assert ouvertures == [1, 1]
+
+    def test_choix_dans_la_liste(self, app, monkeypatch):
+        self._peupler(app)
+        filtrages = []
+        monkeypatch.setattr(app, "_browse_apply_filter", lambda *a: filtrages.append(1))
+        app.browse_encode._rappel = lambda v: app._browse_apply_filter()
+        app.browse_encode._choisir("Non-encodées")
+        assert app.browse_encode.get() == "Non-encodées" and filtrages
+        assert "Encodage : Non-encodées" in app.browse_encode.cget("text")
+        app.browse_encode.set("Tout")
+
+    def test_valeurs_remplacees_et_valeur_disparue(self, app):
+        p = app.browse_chan
+        p.configure(values=["Toutes", "A", "B"])
+        p.set("B")
+        p.configure(values=["Toutes", "A"])
+        assert p.get() == "Toutes", "une chaîne disparue reste choisie"
+        assert p.cget("values") == ["Toutes", "A"]
+
+    def test_abreviation(self):
+        import app as module_app
+        assert module_app.abreger("court") == "court"
+        long = module_app.abreger("x" * 40)
+        assert len(long) == 22 and long.endswith("…")
+
+    def test_anomalies_et_mois(self, app):
+        self._peupler(app)
+        for valeur, mois in (("Brouillons de plus de 3 mois", 3),
+                             ("Brouillons de plus de 12 mois", 12), ("Aucune", 6)):
+            app.browse_detect.set(valeur)
+            assert app._browse_months_value() == mois
+        app.browse_detect.set("Brouillons de plus de 6 mois")
+        assert "Anomalies : Brouillons > 6 mois" in app.browse_detect.cget("text")
+        app.browse_detect.set("Aucune")
+
+    def test_vieux_brouillons_filtres(self, app):
+        """Le filtre d'ancienneté doit réellement filtrer (comparaison de
+        chaîne modifiée : « Vieux brouillons » n'existe plus)."""
+        self._peupler(app)
+        for v in app.videos:
+            v["date_added"] = "2020-01-01T00:00:00"
+            v["is_draft"] = True
+        app.videos[0]["date_added"] = "2999-01-01T00:00:00"
+        app.browse_detect.set("Brouillons de plus de 6 mois")
+        app._browse_do_filter()
+        assert len(app.browse_filtered) == 9
+        app.browse_detect.set("Aucune")
+
+    def test_passage_a_la_ligne_juste_apres_un_choix(self, app):
+        """La rangée se réorganise AUSSITÔT après un choix, avant que Tk ait
+        recalculé la taille des pastilles : elle doit lire la nouvelle largeur,
+        sinon la dernière pastille déborde au lieu de passer à la ligne."""
+        self._peupler(app)
+        app.geometry("1000x660")
+        app.update()
+        long = "Faculté de santé, département d'odontologie (cours magistraux)"
+        for p in app.browse_pastilles.elements:
+            p.configure(values=list(p.cget("values")[:1]) + [long])
+            p.set(long)                        # aucun update() entre le choix et la mesure
+        app.browse_pastilles.reorganiser()
+        try:
+            assert app.browse_pastilles.nombre_de_lignes() > 1
+            app.update()
+            droite = max(p.winfo_rootx() + p.winfo_width()
+                         for p in app.browse_pastilles.elements) - app.winfo_rootx()
+            assert droite <= app.winfo_width(), f"débordement à {droite} px"
+        finally:
+            app._browse_effacer_filtres()
+            app.geometry("1180x760")
+            app.update()

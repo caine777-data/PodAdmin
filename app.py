@@ -46,6 +46,7 @@ from pod_chunked import EnvoiAnnule as EnvoiAnnuleMorceaux
 # Onglet « Enrichissement IA » (repris de SousTitreur).
 import queue
 import unicodedata
+import weakref
 from urllib.parse import urlsplit
 from pod_api import identifiant_depuis_lien
 from enrichissement import reglages as reglages_ia
@@ -207,9 +208,14 @@ ENTETES_VIDEOS = {
     "enc":     ("Encodée", 70, "center"),
 }
 COLONNES_VIDEOS = tuple(ENTETES_VIDEOS)
-# Tris proposés par le menu « Trier » ; un clic sur un en-tête choisit le même
-# tri (les deux restent d'accord). « Plus récentes » est l'ordre de Pod.
+# Tris possibles, choisis d'un clic sur les en-têtes du tableau (browse_tri
+# garde la valeur, sans menu depuis la 1.13.0). « Plus récentes » est l'ordre
+# de Pod.
 TRIS_VIDEOS = ("Plus récentes", "Plus anciennes", "A → Z", "Z → A", "Propriétaire")
+# Choix de la pastille « Anomalies » : la première est la valeur neutre. Le
+# nombre de mois est dans le libellé (plus de case à remplir à la main).
+ANOMALIES_VIDEOS = ("Aucune", "Doublons de titre", "Brouillons de plus de 3 mois",
+                    "Brouillons de plus de 6 mois", "Brouillons de plus de 12 mois")
 # Touche d'ajout à la sélection, nommée dans les textes : Cmd sur Mac (où
 # Ctrl+clic est le clic droit), Ctrl ailleurs.
 TOUCHE_AJOUT = "Cmd" if sys.platform == "darwin" else "Ctrl"
@@ -600,25 +606,419 @@ def _prefixe_aligne(police, icone: str, colonne: int) -> str:
         return icone + "   "
 
 
-def bloc_filtre(parent, libelle: str):
-    """Crée un conteneur portant `libelle` AU-DESSUS ; renvoie ce conteneur.
+# ════════════════════════════════════════════════════════════════════════════
+#  TABLEAUX NATIFS (ttk.Treeview)
+# ════════════════════════════════════════════════════════════════════════════
+#
+#  Un bouton CustomTkinter par ligne coûtait 7 à 8 s pour 300 lignes (mesure
+#  du 2026-10-21) ; un Treeview affiche des milliers de lignes en quelques
+#  centièmes. Toutes les longues listes passent donc par ces tableaux, qui
+#  partagent un même style (« Pod.Treeview ») et les mêmes teintes de ligne.
 
-    Les quatre premiers filtres portaient leur intitulé DANS leur valeur par
-    défaut (« Tous statuts », « Toutes chaînes »). Dès qu'on filtrait, ces mots
-    disparaissaient : l'écran affichait « Public », « MFCA », « Cours » sans
-    plus rien dire de ce que chaque valeur filtrait. L'information se perdait
-    exactement au moment où le filtre devenait actif.
+# Tableaux vivants, pour les reteinter au changement de thème. Références
+# faibles : un tableau détruit (fenêtre fermée) sort de lui-même de la liste.
+_TABLEAUX = weakref.WeakSet()
 
-    Le libellé ne peut pas être posé À GAUCHE du menu : mesuré, cela coûterait
-    139 px sur une rangée qui n'en a que 3 de marge en fenêtre minimale, et le
-    champ de recherche serait écrasé. Au-dessus, il ne coûte que ~16 px de
-    hauteur et vaut pour les deux rangées, ce qui uniformise du même coup les
-    deux conventions qui cohabitaient.
-    """
-    bloc = ctk.CTkFrame(parent, fg_color="transparent")
-    ctk.CTkLabel(bloc, text=libelle, font=ctk.CTkFont(size=10),
-                 text_color=T_DISCRET, anchor="w").pack(fill="x", padx=2)
-    return bloc
+
+def styler_tableaux(racine) -> None:
+    """Couleurs et police de TOUS les tableaux selon le thème courant.
+
+    Un Treeview n'accepte que des couleurs SIMPLES, pas les couples (clair,
+    sombre) de CustomTkinter : on choisit la teinte du mode actif, et
+    _basculer_theme rappelle cette fonction à chaque changement. Le thème ttk
+    « clam » est le seul qui respecte les couleurs sur Windows ET sur macOS
+    (« aqua » les ignore)."""
+    sombre = ctk.get_appearance_mode().lower() == "dark"
+    c = (lambda paire: paire[1] if sombre else paire[0])
+    style = ttk.Style(racine)
+    if style.theme_use() != "clam":
+        style.theme_use("clam")
+    echelle = ctk.ScalingTracker.get_widget_scaling(racine)
+    police = tkfont.nametofont("TkDefaultFont").copy()
+    police.configure(size=-round(13 * echelle))         # négatif = pixels
+    gras = police.copy()
+    gras.configure(weight="bold")
+    # Gardées sur la fonction : Tk ne tient qu'une référence faible aux polices.
+    styler_tableaux.polices = (police, gras)
+    fond, texte = c(S_CARTE), c(("gray10", "gray90"))
+    style.configure("Pod.Treeview", background=fond, fieldbackground=fond,
+                    foreground=texte, rowheight=round(28 * echelle), font=police,
+                    borderwidth=0, relief="flat")
+    style.layout("Pod.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+    style.configure("Pod.Treeview.Heading", background=c(S_PUCE), foreground=texte,
+                    font=gras, relief="flat", borderwidth=0)
+    style.map("Pod.Treeview.Heading", background=[("active", c(S_SELECTION))])
+    for arbre in list(_TABLEAUX):
+        try:
+            arbre.tag_configure("pair", background=fond)
+            arbre.tag_configure("alt", background=c(S_LIGNE))
+            arbre.tag_configure("courante", background=c(S_SELECTION))
+            arbre.tag_configure("multi", background=c(C_MULTI))
+        except Exception:
+            _TABLEAUX.discard(arbre)                # détruit entre-temps
+
+
+def enregistrer_tableau(arbre) -> None:
+    """Inscrit un Treeview parmi les tableaux stylés, et le teinte aussitôt."""
+    _TABLEAUX.add(arbre)
+    styler_tableaux(arbre)
+
+
+class ListeNative(ctk.CTkFrame):
+    """Tableau prêt à l'emploi : Treeview, barre de défilement, message vide.
+
+    `colonnes` : identifiant → (en-tête, largeur, alignement), comme
+    ENTETES_VIDEOS. `au_clic(iid)` reçoit l'identifiant de la ligne cliquée.
+    La sélection native est coupée : c'est l'appelant qui marque les lignes
+    choisies (teinte « courante »), comme dans l'onglet Vidéos.
+
+    `multi=True` : le tableau gère lui-même une sélection MULTIPLE (`choix`)
+    comme un explorateur de fichiers (clic, Ctrl ou Cmd+clic, Maj+clic),
+    teinte « multi », et appelle `au_changement(choix)` à chaque changement.
+    `au_double(iid)` : double-clic sur une ligne."""
+
+    def __init__(self, master, colonnes: dict, au_clic=None, entetes: bool = True,
+                 hauteur: int = 200, multi: bool = False, au_changement=None,
+                 au_double=None, **kw):
+        kw.setdefault("fg_color", "transparent")
+        super().__init__(master, **kw)
+        self._cadre = ctk.CTkFrame(self, fg_color="transparent")
+        self._cadre.pack(fill="both", expand=True)
+        self.arbre = ttk.Treeview(
+            self._cadre, columns=tuple(colonnes), show="headings" if entetes else "",
+            style="Pod.Treeview", selectmode="none",
+            height=max(3, hauteur // 28))           # en lignes, pas en pixels
+        for col, (titre, largeur, ancre) in colonnes.items():
+            self.arbre.heading(col, text=titre, anchor=ancre)
+            self.arbre.column(col, width=largeur, minwidth=30, anchor=ancre,
+                              stretch=(largeur == max(l for _t, l, _a in colonnes.values())))
+        barre = ctk.CTkScrollbar(self._cadre, command=self.arbre.yview)
+        self.arbre.configure(yscrollcommand=barre.set)
+        barre.pack(side="right", fill="y")
+        self.arbre.pack(side="left", fill="both", expand=True)
+        self._au_clic = au_clic
+        self.multi = multi
+        self._au_changement = au_changement
+        self.choix: set = set()           # sélection multiple (multi=True)
+        self._ancre = None                # dernière ligne cliquée, pour Maj+clic
+        self.arbre.bind("<Button-1>", self._clic)
+        if multi:
+            self.arbre.bind("<Control-Button-1>", lambda e: self._clic(e, "ctrl"))
+            self.arbre.bind("<Shift-Button-1>", lambda e: self._clic(e, "maj"))
+            if sys.platform == "darwin":          # Ctrl+clic = clic droit sur Mac
+                self.arbre.bind("<Command-Button-1>", lambda e: self._clic(e, "ctrl"))
+        if au_double:
+            self.arbre.bind("<Double-Button-1>", lambda e: self._double(e, au_double))
+        self._message = None
+        self._message_widgets: list = []
+        enregistrer_tableau(self.arbre)
+
+    def _clic(self, evt, modificateur=None):
+        if self.arbre.identify_region(evt.x, evt.y) == "heading":
+            return None
+        iid = self.arbre.identify_row(evt.y)
+        if not iid:
+            return "break"
+        if self.multi:
+            self._choisir(iid, modificateur)
+        elif self._au_clic:
+            self._au_clic(iid)
+        return "break"
+
+    def _double(self, evt, rappel):
+        iid = self.arbre.identify_row(evt.y)
+        if iid:
+            rappel(iid)
+        return "break"
+
+    def _choisir(self, iid, modificateur=None):
+        """Sélection multiple : clic simple (cette ligne seule), Ctrl (ajoute
+        ou retire), Maj (plage depuis la dernière ligne cliquée)."""
+        avant = set(self.choix)
+        lignes = self.arbre.get_children()
+        if modificateur == "ctrl":
+            self.choix ^= {iid}
+        elif modificateur == "maj" and self._ancre in lignes:
+            i, j = sorted((lignes.index(self._ancre), lignes.index(iid)))
+            self.choix |= set(lignes[i:j + 1])
+        else:
+            self.choix = {iid}
+        if modificateur != "maj":
+            self._ancre = iid
+        self._reteinter(avant ^ self.choix)
+        if self._au_changement:
+            self._au_changement(set(self.choix))
+
+    def _reteinter(self, iids) -> None:
+        for iid in iids:
+            if self.arbre.exists(iid):
+                rang = self.arbre.index(iid)
+                self.arbre.item(iid, tags=("multi" if iid in self.choix
+                                           else self._teinte(rang, False),))
+
+    def vider_choix(self) -> None:
+        """Annule la sélection multiple."""
+        avant, self.choix = self.choix, set()
+        self._reteinter(avant)
+        if self._au_changement:
+            self._au_changement(set())
+
+    def remplir(self, lignes) -> None:
+        """Remplace le contenu. `lignes` : (iid, valeurs, choisie) ; une ligne
+        choisie prend la teinte « courante », les autres alternent."""
+        self.montrer_message(None)
+        arbre = self.arbre
+        arbre.delete(*arbre.get_children())
+        rang = 0
+        for iid, valeurs, choisie in lignes:
+            if not iid or arbre.exists(iid):
+                continue                      # identifiant vide ou en double
+            # En sélection multiple, la marque vient de `choix`, qui survit
+            # ainsi à un nouveau filtrage ou à un rafraîchissement.
+            teinte = ("multi" if iid in self.choix else self._teinte(rang, False)) \
+                if self.multi else self._teinte(rang, choisie)
+            arbre.insert("", "end", iid=iid, values=valeurs, tags=(teinte,))
+            rang += 1
+        if self.multi:
+            self.choix &= set(arbre.get_children())   # lignes disparues : retirées
+
+    @staticmethod
+    def _teinte(rang: int, choisie: bool) -> str:
+        return "courante" if choisie else ("alt" if rang % 2 else "pair")
+
+    def marquer(self, iid, valeurs, choisie: bool) -> None:
+        """Met à jour UNE ligne (coche, teinte) sans reconstruire le tableau."""
+        if self.arbre.exists(iid):
+            self.arbre.item(iid, values=valeurs,
+                            tags=(self._teinte(self.arbre.index(iid), choisie),))
+
+    def montrer_message(self, texte, icone: str | None = None, aide: str = "") -> None:
+        """Affiche `texte` à la place du tableau (None : retour au tableau).
+        Avec `icone`, c'est un état vide complet (voir etat_vide)."""
+        for w in self._message_widgets:
+            w.destroy()
+        self._message_widgets = []
+        self._message = None
+        if texte is None:
+            if not self._cadre.winfo_manager():
+                self._cadre.pack(fill="both", expand=True)
+            return
+        self.arbre.delete(*self.arbre.get_children())
+        if self.multi and self.choix:
+            self.vider_choix()
+        self._cadre.pack_forget()
+        if icone:
+            avant = set(self.winfo_children())
+            etat_vide(self, icone, texte, aide)
+            self._message_widgets = [w for w in self.winfo_children() if w not in avant]
+            self._message = self._message_widgets[1]          # la phrase
+        else:
+            self._message = ctk.CTkLabel(self, text=texte, text_color=T_SECONDAIRE,
+                                         wraplength=420, justify="center")
+            self._message.pack(pady=12)
+            self._message_widgets = [self._message]
+
+    def lignes(self) -> tuple:
+        """Identifiants des lignes affichées, dans l'ordre."""
+        return self.arbre.get_children()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  FILTRES EN PASTILLES
+# ════════════════════════════════════════════════════════════════════════════
+#
+#  Remplacent les menus déroulants à intitulé au-dessus (1.13.0) : chaque menu
+#  s'élargissait pour afficher la valeur choisie, et un nom de chaîne long
+#  poussait « Type » hors de la fenêtre en écrasant la recherche. Une pastille
+#  ne prend que la place de son nom ; active, elle passe en bleu, montre son
+#  choix (abrégé) et se retire d'un clic sur ✕.
+
+# Pastille active : le bleu de la sélection, texte foncé sur clair et
+# inversement (contraste supérieur à 7:1 dans les deux modes).
+C_FILTRE_ACTIF = ("#dbeafe", "#1e3a8a")
+T_FILTRE_ACTIF = ("#1e3a8a", "#dbeafe")
+# Lien d'action discret (souligné), même bleu que T_EN_COURS.
+T_LIEN = ("#1d4ed8", "#93c5fd")
+
+
+def abreger(texte: str, maxi: int = 22) -> str:
+    """Raccourcit un libellé trop long pour une pastille (« Faculté de san… »)."""
+    texte = str(texte)
+    return texte if len(texte) <= maxi else texte[:maxi - 1].rstrip() + "…"
+
+
+class PastilleFiltre(ctk.CTkButton):
+    """Filtre compact : « Statut ▾ » au repos, « Statut : Brouillon ✕ » actif.
+
+    Garde l'interface d'un CTkOptionMenu dont le code se sert (get, set,
+    configure(values=…), cget("values")) : le filtrage n'a pas changé. La
+    PREMIÈRE valeur est la valeur neutre (« Tous », « Toutes », « Aucune ») ;
+    la pastille est active dès que la valeur choisie en diffère."""
+
+    def __init__(self, master, nom: str, valeurs, command=None,
+                 libelles: dict | None = None, **kw):
+        self.nom = nom
+        self._valeurs = list(valeurs)
+        self._valeur = self._valeurs[0]
+        self._rappel = command
+        self._libelles = dict(libelles or {})   # valeur → texte court dans la pastille
+        self._x_clic = 0
+        super().__init__(master, text="", width=0, height=28, corner_radius=14,
+                         border_width=1, font=ctk.CTkFont(size=12),
+                         command=self._clic, **kw)
+        # Position du clic, pour distinguer le ✕ du reste de la pastille : la
+        # commande d'un bouton ne reçoit pas l'événement.
+        self.bind("<Button-1>", self._noter_clic, add="+")
+        self._menu = None
+        self._maj()
+
+    # ── Interface d'un menu déroulant ──
+    def get(self) -> str:
+        return self._valeur
+
+    def set(self, valeur) -> None:
+        """Choisit une valeur SANS prévenir (comme CTkOptionMenu.set)."""
+        self._valeur = valeur
+        self._maj()
+
+    def configure(self, require_redraw=False, **kw):
+        if "values" in kw:
+            self._valeurs = list(kw.pop("values")) or [self._valeurs[0]]
+            if self._valeur not in self._valeurs:
+                self._valeur = self._valeurs[0]
+            self._menu = None                  # reconstruit à la prochaine ouverture
+            self._maj()
+        if kw:
+            super().configure(require_redraw, **kw)
+
+    def cget(self, cle):
+        if cle == "values":
+            return list(self._valeurs)
+        return super().cget(cle)
+
+    def est_active(self) -> bool:
+        return self._valeur != self._valeurs[0]
+
+    def effacer(self) -> None:
+        """Revient à la valeur neutre, et prévient."""
+        if self.est_active():
+            self.set(self._valeurs[0])
+            if self._rappel:
+                self._rappel(self._valeur)
+
+    # ── Aspect et gestes ──
+    def _maj(self) -> None:
+        if self.est_active():
+            choix = self._libelles.get(self._valeur, self._valeur)
+            super().configure(text=f"{self.nom} : {abreger(choix)}  ✕",
+                              fg_color=C_FILTRE_ACTIF, hover_color=C_FILTRE_ACTIF,
+                              border_color=C_FILTRE_ACTIF, text_color=T_FILTRE_ACTIF,
+                              font=ctk.CTkFont(size=12, weight="bold"))
+        else:
+            super().configure(text=f"{self.nom}  ▾", fg_color=C_CHAMP,
+                              hover_color=C_CHAMP_SURV, border_color=S_FILET,
+                              text_color=T_CHAMP, font=ctk.CTkFont(size=12))
+
+    def _noter_clic(self, evt) -> None:
+        self._x_clic = evt.x_root - self.winfo_rootx()
+
+    def _clic(self) -> None:
+        # Le ✕ occupe les 30 derniers pixels d'une pastille active.
+        zone_croix = round(30 * ctk.ScalingTracker.get_widget_scaling(self))
+        if self.est_active() and self._x_clic >= self.winfo_width() - zone_croix:
+            self.effacer()
+        else:
+            self.ouvrir()
+
+    def ouvrir(self) -> None:
+        """Ouvre la liste des choix sous la pastille (celle de CustomTkinter,
+        comme les menus déroulants : même aspect, même défilement)."""
+        from customtkinter.windows.widgets.core_widget_classes import DropdownMenu
+        if self._menu is None:
+            self._menu = DropdownMenu(self, values=self._valeurs, command=self._choisir,
+                                      fg_color=C_CHAMP, hover_color=C_CHAMP_SURV,
+                                      text_color=T_CHAMP, font=ctk.CTkFont(size=12))
+        self._menu.open(self.winfo_rootx(), self.winfo_rooty() + self.winfo_height())
+
+    def _choisir(self, valeur) -> None:
+        self.set(valeur)
+        if self._rappel:
+            self._rappel(valeur)
+
+
+class RangeeFluide(ctk.CTkFrame):
+    """Rangée qui passe à la ligne quand ses éléments ne tiennent plus.
+
+    Chaque ligne est un cadre intérieur ; les éléments, enfants de la rangée,
+    y sont rangés par `pack(in_=…)`. Une grille ne convenait pas : ses colonnes
+    sont communes à toutes les lignes, une pastille large aurait élargi la
+    colonne entière."""
+
+    ECART = 6
+
+    def __init__(self, master, **kw):
+        kw.setdefault("fg_color", "transparent")
+        super().__init__(master, **kw)
+        self.elements: list = []
+        self._lignes: list = []
+        self._derniere_largeur = None
+        self._prevu = None
+        self.bind("<Configure>", lambda e: self.reorganiser_plus_tard())
+
+    def ajouter(self, widget) -> None:
+        self.elements.append(widget)
+        self.reorganiser_plus_tard()
+
+    def reorganiser_plus_tard(self) -> None:
+        """Regroupe les demandes : une seule réorganisation par passage."""
+        if self._prevu is None:
+            self._prevu = self.after_idle(self.reorganiser)
+
+    def reorganiser(self) -> None:
+        self._prevu = None
+        # Une pastille qui vient de changer de texte n'a pas encore sa nouvelle
+        # taille : sans ce calcul préalable, la largeur lue serait l'ancienne
+        # et la dernière pastille déborderait au lieu de passer à la ligne.
+        self.update_idletasks()
+        largeur = self.winfo_width()
+        if largeur <= 1:
+            largeur = 10 ** 6                  # pas encore affichée : une seule ligne
+        ligne, x, rangs = 0, 0, []
+        for w in self.elements:
+            besoin = w.winfo_reqwidth() + self.ECART
+            if x and x + besoin > largeur:
+                ligne, x = ligne + 1, 0
+            rangs.append(ligne)
+            x += besoin
+        nb = (max(rangs) + 1) if rangs else 0
+        while len(self._lignes) < nb:
+            self._lignes.append(ctk.CTkFrame(self, fg_color="transparent"))
+        for i, cadre in enumerate(self._lignes):
+            if i < nb:
+                cadre.pack(fill="x", pady=(0 if i == 0 else self.ECART, 0))
+            else:
+                cadre.pack_forget()
+        for w, l in zip(self.elements, rangs):
+            w.pack_forget()
+            w.pack(in_=self._lignes[l], side="left", padx=(0, self.ECART))
+            w.lift()                           # créé avant le cadre : sinon caché dessous
+
+    def nombre_de_lignes(self) -> int:
+        return sum(1 for c in self._lignes if c.winfo_manager())
+
+
+class ValeurSimple:
+    """Valeur choisie sans widget (get / set), pour un réglage qui n'a plus de
+    menu à l'écran : le tri de l'onglet Vidéos se règle par les en-têtes."""
+
+    def __init__(self, valeur):
+        self._valeur = valeur
+
+    def get(self):
+        return self._valeur
+
+    def set(self, valeur):
+        self._valeur = valeur
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1151,7 +1551,7 @@ class App(_AppBase):
             pass
         self._maj_libelle_theme()
         self._maj_couleur_titres_aide()
-        self._browse_styler_liste()      # le tableau Vidéos n'accepte que des couleurs simples
+        styler_tableaux(self)            # les tableaux n'acceptent que des couleurs simples
         self._browse_teinter()
         self._log(f"Thème : mode {'clair' if nouveau == 'light' else 'sombre'}.")
 
@@ -3419,7 +3819,10 @@ class App(_AppBase):
                                             font=ctk.CTkFont(size=11))
         self.users_count_lbl.grid(row=3, column=0, columnspan=3, padx=12, sticky="w")
 
-        self.agent_results = ctk.CTkScrollableFrame(agent_box, height=220, fg_color=S_CARTE)
+        # Tableau natif (voir ListeNative) : tous les comptes, sans plafond.
+        self.agent_results = ListeNative(agent_box, {"compte": ("Compte", 400, "w")},
+                                         au_clic=self._pick_agent_iid, entetes=False,
+                                         hauteur=220, fg_color=S_CARTE)
         self.agent_results.grid(row=4, column=0, columnspan=3, padx=12, pady=(0, 10), sticky="ew")
         agent_box.columnconfigure(1, weight=1)
 
@@ -4547,36 +4950,25 @@ class App(_AppBase):
     def _render_users(self):
         """Affiche la liste filtrée des comptes pour choisir l'agent déposant."""
         flt = self.agent_filter.get().strip().lower() if hasattr(self, "agent_filter") else ""
-        for w in self.agent_results.winfo_children():
-            w.destroy()
-
         if not self.all_users:
-            ctk.CTkLabel(self.agent_results,
-                         text="Liste non chargée. Cliquez sur « Recharger ».",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            self.agent_results.montrer_message("Liste non chargée. Cliquez sur « Recharger ».")
             return
-
         matches = [u for u in self.all_users if not flt or flt in self._user_label(u).lower()]
-        CAP = 300  # éviter de créer des milliers de boutons (Tk gèlerait)
-        current_username = self.config_data.get("agent_username", "")
+        if not matches:
+            self.agent_results.montrer_message("Aucun résultat ne correspond au filtre.")
+            return
+        actuel = self.config_data.get("agent_username", "")
+        self.agent_results.remplir(
+            (u.get("username"),
+             (("✅  " if u.get("username") == actuel else "      ") + self._user_label(u),),
+             u.get("username") == actuel)
+            for u in matches)
 
-        for u in matches[:CAP]:
-            is_current = (u.get("username", "") == current_username)
-            label = ("✅  " if is_current else "      ") + self._user_label(u)
-            ctk.CTkButton(self.agent_results, text=label, anchor="w",
-                          fg_color=S_SELECTION if is_current else "transparent",
-                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                          height=28, font=ctk.CTkFont(size=12),
-                          command=lambda uu=u: self._pick_agent(uu)).pack(fill="x", pady=1)
-
-        if len(matches) > CAP:
-            ctk.CTkLabel(self.agent_results,
-                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
-        elif not matches:
-            ctk.CTkLabel(self.agent_results,
-                         text="Aucun résultat ne correspond au filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=8)
+    def _pick_agent_iid(self, username: str):
+        """Clic dans le tableau des comptes : retrouve le compte, puis le choisit."""
+        u = next((x for x in self.all_users or [] if x.get("username") == username), None)
+        if u is not None:
+            self._pick_agent(u)
 
     def _pick_agent(self, user: dict):
         """Enregistre le compte choisi comme propriétaire par défaut des dépôts."""
@@ -4673,10 +5065,30 @@ class App(_AppBase):
                                             font=ctk.CTkFont(size=11))
         self.encode_progress.pack(side="left", padx=6)
 
-        # — Liste —
-        self.encode_list = ctk.CTkScrollableFrame(frame, label_text="Vidéos", fg_color=S_CARTE, label_anchor="w",
-                                                  label_font=ctk.CTkFont(size=12, weight="bold"))
-        self.encode_list.pack(fill="both", expand=True, pady=(4, 0))
+        # — Sélection : relance des vidéos choisies dans le tableau —
+        # Le tableau natif ne peut pas porter un bouton par ligne (l'ancien
+        # « 🔁 Relancer » de chaque ligne) : on sélectionne (clic, Ctrl ou
+        # Cmd+clic, Maj+clic) puis on relance la sélection. Double-clic :
+        # relance d'une seule vidéo, avec la même confirmation.
+        ligne_sel = ctk.CTkFrame(frame, fg_color="transparent")
+        ligne_sel.pack(fill="x", pady=(4, 2))
+        self.encode_sel_lbl = ctk.CTkLabel(
+            ligne_sel, text="", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11), anchor="w")
+        self.encode_sel_lbl.pack(side="left")
+        self.encode_sel_btn = ctk.CTkButton(
+            ligne_sel, text="🔁  Relancer la sélection", width=220, height=H_COMPACT,
+            fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+            state="disabled", command=self._encode_relaunch_selection)
+        self.encode_sel_btn.pack(side="right")
+
+        # — Liste (tableau natif) —
+        self.encode_list = ListeNative(
+            frame, {"etat": ("État", 130, "w"), "titre": ("Titre", 380, "w"),
+                    "slug": ("Slug", 150, "w"), "etape": ("Étape", 170, "w")},
+            hauteur=400, multi=True, au_changement=self._encode_maj_selection,
+            au_double=self._encode_double_clic, fg_color=S_CARTE)
+        self.encode_list.pack(fill="both", expand=True, pady=(2, 0))
+        self._encode_maj_selection(set())
 
         # — Données —
         self.encode_videos = []      # scan complet (cache)
@@ -4732,13 +5144,10 @@ class App(_AppBase):
         """Met à jour les compteurs par état et la liste filtrée."""
         if not hasattr(self, "encode_list"):
             return
-        for w in self.encode_list.winfo_children():
-            w.destroy()
-
         if not self.encode_videos:
             self.encode_counters.configure(text="")
-            ctk.CTkLabel(self.encode_list, text="Cliquez sur « Scanner ».",
-                         text_color=T_SECONDAIRE).pack(pady=10)
+            self.encode_filtered = []
+            self.encode_list.montrer_message("Cliquez sur « Rafraîchir ».")
             return
 
         # Comptage par état
@@ -4766,34 +5175,53 @@ class App(_AppBase):
         self.encode_relaunch_btn.configure(state="normal" if (vids and relaunchable) else "disabled")
 
         if not vids:
-            etat_vide(self.encode_list, "🎬", "Aucune vidéo dans cet état.",
-                      "Changez de filtre d'état, ou rafraîchissez la liste.")
+            self.encode_list.montrer_message(
+                "Aucune vidéo dans cet état.", icone="🎬",
+                aide="Changez de filtre d'état, ou rafraîchissez la liste.")
             return
 
-        # Une ligne par vidéo : [pastille état] titre · slug · étape  [Relancer]
-        CAP = 400
-        for v in vids[:CAP]:
-            st = self._encode_state(v)
-            row = ctk.CTkFrame(self.encode_list, fg_color=S_LIGNE,
-                               corner_radius=6)
-            row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=self._ENCODE_LABELS[st], width=110, anchor="w",
-                         font=ctk.CTkFont(size=12)).pack(side="left", padx=(10, 4), pady=6)
-            title = (v.get("title") or "(sans titre)")[:46]
-            step = v.get("get_encoding_step", "")
-            ctk.CTkLabel(row, text=f"{title}   ·   {v.get('slug','?')}   ·   {step}",
-                         anchor="w", font=ctk.CTkFont(size=12)).pack(
-                side="left", padx=4, pady=6, fill="x", expand=True)
-            # Bouton de relance individuelle (sauf si déjà encodée — relance possible quand même,
-            # mais on la réserve aux états non terminés pour éviter les clics inutiles)
-            if st != "ok":
-                ctk.CTkButton(row, text="🔁 Relancer", width=100, height=26, fg_color=C_NEUTRE,
-                              command=lambda vv=v: self._encode_relaunch_one(vv), text_color=T_SUR_NEUTRE).pack(
-                    side="right", padx=8)
-        if len(vids) > CAP:
-            ctk.CTkLabel(self.encode_list,
-                         text=f"… +{len(vids) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
+        # Une ligne par vidéo : état, titre, slug, étape. Plus de plafond.
+        self.encode_list.remplir(
+            (v.get("slug"),
+             (self._ENCODE_LABELS[self._encode_state(v)], v.get("title") or "(sans titre)",
+              v.get("slug", "?"), v.get("get_encoding_step", "") or ""),
+             False)
+            for v in vids)
+        self._encode_maj_selection(self.encode_list.choix)
+
+    def _encode_videos_choisies(self) -> list:
+        """Vidéos affichées ET sélectionnées dans le tableau."""
+        choix = self.encode_list.choix
+        return [v for v in getattr(self, "encode_filtered", []) if v.get("slug") in choix]
+
+    def _encode_maj_selection(self, _choix=None):
+        """Compteur et bouton « Relancer la sélection » selon le tableau."""
+        n = len(self._encode_videos_choisies()) if hasattr(self, "encode_list") else 0
+        self.encode_sel_lbl.configure(
+            text=(f"{n} vidéo(s) sélectionnée(s)" if n else
+                  "Cliquez sur une vidéo pour la sélectionner (Ctrl ou Cmd+clic, "
+                  "Maj+clic pour plusieurs ; double-clic pour relancer une vidéo)."))
+        self.encode_sel_btn.configure(
+            state="normal" if n else "disabled",
+            text=f"🔁  Relancer la sélection ({n})" if n else "🔁  Relancer la sélection")
+
+    def _encode_double_clic(self, slug: str):
+        """Double-clic : relance d'une seule vidéo (après confirmation)."""
+        v = next((x for x in self.encode_filtered if x.get("slug") == slug), None)
+        if v is not None:
+            self._encode_relaunch_one(v)
+
+    def _encode_relaunch_selection(self):
+        """Relance l'encodage des vidéos sélectionnées, après confirmation."""
+        vids = self._encode_videos_choisies()
+        if not vids:
+            return
+        if not messagebox.askyesno(
+                "Relancer la sélection",
+                f"Relancer l'encodage de {len(vids)} vidéo(s) sélectionnée(s) ?\n\n"
+                "Chaque vidéo sera renvoyée dans la file d'encodage du serveur."):
+            return
+        self._run(self._do_encode_relaunch, vids)
 
     # ── Relance de l'encodage ────────────────────────────────────────────────
 
@@ -4851,8 +5279,9 @@ class App(_AppBase):
         ctk.CTkLabel(
             frame,
             text="Le statut « équipe » (is_staff) autorise un compte à ajouter et gérer "
-                 "des vidéos sur Pod. Activez l'interrupteur pour l'accorder, désactivez-le "
-                 "pour le retirer. Chaque changement est confirmé puis appliqué immédiatement.",
+                 "des vidéos sur Pod. Cliquez sur un compte : sa fiche, à droite, permet "
+                 "d'accorder ou de retirer ce statut et de préparer son jeton d'accès. "
+                 "Chaque changement est confirmé puis appliqué immédiatement.",
             text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12),
             justify="left", wraplength=860).pack(anchor="w", pady=(0, 10))
 
@@ -4903,14 +5332,31 @@ class App(_AppBase):
                           "Copie toutes les adresses « équipe » dans le "
                           "presse-papiers, séparées par « ; »")
 
-        # Retour visuel des actions « 🔑 Token » et « ✉️ » de chaque ligne.
+        # Retour visuel des actions de la fiche (jeton, courriel).
         self.comptes_msg = ctk.CTkLabel(frame, text="", text_color=T_SECONDAIRE,
                                         font=ctk.CTkFont(size=11),
                                         anchor="w", wraplength=900, justify="left")
         self.comptes_msg.pack(anchor="w", fill="x", pady=(0, 4))
 
-        self.comptes_results = ctk.CTkScrollableFrame(frame, fg_color=S_CARTE)
-        self.comptes_results.pack(fill="both", expand=True, pady=(0, 4))
+        # — Corps : tableau des comptes (gauche) + fiche du compte (droite) —
+        # Même geste que l'onglet Vidéos : on clique à gauche, on agit à
+        # droite. Les actions, qui étaient des icônes sur chaque ligne, sont
+        # dans la fiche avec un libellé qui dit ce qu'elles font.
+        corps = ctk.CTkFrame(frame, fg_color="transparent")
+        corps.pack(fill="both", expand=True, pady=(0, 4))
+        corps.columnconfigure(0, weight=3)
+        corps.columnconfigure(1, weight=2)
+        corps.rowconfigure(0, weight=1)
+        self.comptes_results = ListeNative(
+            corps, {"id": ("Identifiant", 140, "w"), "nom": ("Nom", 240, "w"),
+                    "equipe": ("Équipe", 90, "center"), "mail": ("Courriel", 80, "center")},
+            au_clic=self._comptes_choisir, hauteur=400, fg_color=S_CARTE)
+        self.comptes_results.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        self.comptes_fiche = ctk.CTkScrollableFrame(
+            corps, label_text="Fiche du compte", fg_color=S_CARTE, label_anchor="w",
+            label_font=ctk.CTkFont(size=12, weight="bold"))
+        self.comptes_fiche.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        self.comptes_choisi = None        # identifiant du compte affiché dans la fiche
 
         self._render_comptes()
 
@@ -4940,13 +5386,12 @@ class App(_AppBase):
         if not hasattr(self, "comptes_results"):
             return
         flt = self.comptes_filter.get().strip().lower() if hasattr(self, "comptes_filter") else ""
-        for w in self.comptes_results.winfo_children():
-            w.destroy()
-
         if not self.all_users:
-            etat_vide(self.comptes_results, "👤", "Liste non chargée.",
-                      "Connectez-vous, puis cliquez sur « Recharger ».")
+            self.comptes_results.montrer_message(
+                "Liste non chargée.", icone="👤",
+                aide="Connectez-vous, puis cliquez sur « Recharger ».")
             self.comptes_count_lbl.configure(text="")
+            self._comptes_render_fiche()
             return
 
         matches = [u for u in self.all_users
@@ -4973,43 +5418,79 @@ class App(_AppBase):
             text=f"{len(self.all_users)} compte(s) — {staff_n} avec statut équipe. "
                  f"{len(matches)} affiché(s).")
 
-        CAP = 300
-        for u in matches[:CAP]:
-            row = ctk.CTkFrame(self.comptes_results, fg_color=S_LIGNE,
-                               corner_radius=6)
-            row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=self._user_label(u), anchor="w",
-                         font=ctk.CTkFont(size=12)).pack(
-                side="left", padx=12, pady=6, fill="x", expand=True)
-            # Bouton « mail » : prépare la réponse au demandeur (grisé sans adresse).
-            a_un_mail = bool((u.get("email") or "").strip())
-            ctk.CTkButton(row, text="✉️", width=34, height=26,
-                          fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV,
-                          state="normal" if a_un_mail else "disabled",
-                          command=lambda uu=u: self._compte_mail_token(uu), text_color=T_SUR_NEUTRE).pack(
-                side="right", padx=(0, 8))
-            # Bouton « token » : ouvre le formulaire d'admin Django, utilisateur
-            # pré-sélectionné. La création reste faite dans le navigateur, sous
-            # l'identité d'administrateur de l'utilisateur — l'application ne
-            # manipule aucun identifiant privilégié.
-            ctk.CTkButton(row, text="🔑 Token", width=80, height=26,
-                          fg_color=C_ACCENT, hover_color=C_ACCENT_SURV,
-                          command=lambda uu=u: self._compte_creer_token(uu)).pack(
-                side="right", padx=(0, 6))
+        if not matches:
+            self.comptes_results.montrer_message("Aucun résultat ne correspond au filtre.")
+        else:
+            self.comptes_results.remplir(
+                (u.get("username"),
+                 (u.get("username", "?"),
+                  f"{u.get('first_name', '')} {u.get('last_name', '')}".strip(),
+                  "✓ Équipe" if u.get("is_staff") else "",
+                  "✓" if (u.get("email") or "").strip() else "aucun"),
+                 u.get("username") == self.comptes_choisi)
+                for u in matches)
+        self._comptes_render_fiche()
 
-            var = ctk.BooleanVar(value=bool(u.get("is_staff")))
-            sw = ctk.CTkSwitch(row, text="Équipe", variable=var, width=80,
-                               command=lambda uu=u, vv=var: self._on_staff_toggle(uu, vv))
-            sw.pack(side="right", padx=12, pady=4)
+    def _comptes_choisir(self, username: str):
+        """Clic sur un compte : il devient le compte de la fiche."""
+        ancien, self.comptes_choisi = self.comptes_choisi, username
+        liste = self.comptes_results
+        for iid in (ancien, username):
+            if iid and liste.arbre.exists(iid):
+                liste.marquer(iid, liste.arbre.item(iid, "values"), iid == username)
+        self._comptes_render_fiche()
 
-        if len(matches) > CAP:
-            ctk.CTkLabel(self.comptes_results,
-                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
-        elif not matches:
-            ctk.CTkLabel(self.comptes_results,
-                         text="Aucun résultat ne correspond au filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=8)
+    def _comptes_compte_choisi(self):
+        return next((u for u in self.all_users or []
+                     if self.comptes_choisi and u.get("username") == self.comptes_choisi), None)
+
+    def _comptes_render_fiche(self):
+        """Fiche du compte choisi : identité, statut équipe, jeton d'accès."""
+        fiche = self.comptes_fiche
+        for w in fiche.winfo_children():
+            w.destroy()
+        u = self._comptes_compte_choisi()
+        if u is None:
+            etat_vide(fiche, "👈", "Sélectionnez un compte.",
+                      "Son statut équipe et son jeton d'accès s'afficheront ici.")
+            return
+        nom = f"{u.get('first_name', '')} {u.get('last_name', '')}".strip() or u.get("username", "?")
+        email = (u.get("email") or "").strip()
+        ctk.CTkLabel(fiche, text=nom, font=ctk.CTkFont(size=18, weight="bold"),
+                     anchor="w", wraplength=360, justify="left").pack(fill="x", padx=8, pady=(4, 0))
+        ctk.CTkLabel(fiche, text=f"identifiant : {u.get('username', '?')}\n"
+                                 f"courriel : {email or '(aucun)'}",
+                     justify="left", anchor="w", text_color=T_SECONDAIRE).pack(
+            fill="x", padx=8, pady=(2, 12))
+
+        ctk.CTkLabel(fiche, text="Statut équipe", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=8)
+        var = ctk.BooleanVar(value=bool(u.get("is_staff")))
+        ctk.CTkSwitch(fiche, text="Membre de l'équipe", variable=var,
+                      command=lambda: self._on_staff_toggle(u, var)).pack(anchor="w", padx=8, pady=(4, 2))
+        # Explication sous l'interrupteur, et non dans son libellé : trop long,
+        # il était coupé dans une fiche étroite.
+        ctk.CTkLabel(fiche, text="Peut ajouter et gérer des vidéos sur Pod. Une confirmation "
+                                 "est demandée avant tout changement.",
+                     font=ctk.CTkFont(size=11), text_color=T_DISCRET, anchor="w",
+                     wraplength=340, justify="left").pack(fill="x", padx=8, pady=(0, 12))
+
+        ctk.CTkLabel(fiche, text="Jeton d'accès (Pod Téléverseur)", anchor="w",
+                     font=ctk.CTkFont(size=12, weight="bold")).pack(fill="x", padx=8)
+        # La création reste faite dans le navigateur, sous l'identité
+        # d'administrateur de l'utilisateur : l'application ne manipule aucun
+        # identifiant privilégié (voir _compte_creer_token).
+        ctk.CTkButton(fiche, text="🔑  Ouvrir son jeton dans l'administration Pod", anchor="w",
+                      fg_color=C_ACCENT, hover_color=C_ACCENT_SURV,
+                      command=lambda: self._compte_creer_token(u)).pack(fill="x", padx=8, pady=(4, 4))
+        ctk.CTkButton(fiche, text="✉️  Préparer le courriel de réponse", anchor="w",
+                      fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
+                      state="normal" if email else "disabled",
+                      command=lambda: self._compte_mail_token(u)).pack(fill="x", padx=8, pady=(0, 2))
+        if not email:
+            ctk.CTkLabel(fiche, text="Ce compte n'a pas d'adresse de courriel dans Pod.",
+                         font=ctk.CTkFont(size=11), text_color=T_DISCRET, anchor="w").pack(
+                fill="x", padx=8)
 
     def _on_staff_toggle(self, user: dict, var):
         """Confirme puis applique le changement de statut équipe."""
@@ -5076,110 +5557,64 @@ class App(_AppBase):
                                           font=ctk.CTkFont(size=11))
         self.browse_status.pack(side="left", padx=10)
 
-        # — Ligne : filtres —
-        # BARRE DE FILTRES SUR DEUX RANGÉES.
-        # Sur une seule ligne, les huit contrôles réclamaient 1237 px alors que
-        # la zone utile en fenêtre minimale (1000 px) n'en offre que 752 :
-        # 485 px étaient purement TRONQUÉS à droite. Le tri et les filtres de
-        # détection, placés en fin de ligne, étaient donc invisibles — présents
-        # dans le code, inutilisables à l'écran.
-        filt = ctk.CTkFrame(frame, fg_color="transparent")
-        filt.pack(fill="x", pady=(8, 4))
-        bloc_texte = bloc_filtre(filt, "Rechercher")
-        bloc_texte.pack(side="left", fill="x", expand=True)
-        self.browse_text = ctk.CTkEntry(bloc_texte,
-                                        placeholder_text="🔍 titre / slug / propriétaire…")
-        self.browse_text.pack(fill="x")
+        # — Recherche, puis filtres en pastilles (1.13.0) —
+        # La recherche est le geste le plus fréquent : elle passe en premier,
+        # sur toute la largeur. Les filtres deviennent des pastilles compactes
+        # (voir PastilleFiltre) rangées dans une RangeeFluide, qui passe à la
+        # ligne au lieu de sortir de la fenêtre. Le tri n'a plus de menu : il
+        # se règle d'un clic sur les en-têtes du tableau (browse_tri garde la
+        # valeur). « Détecter » devient la pastille « Anomalies », dont les
+        # choix portent l'ancienneté des brouillons (plus de case « mois »).
+        self.browse_text = ctk.CTkEntry(
+            frame, height=36, font=ctk.CTkFont(size=13),
+            placeholder_text="🔍  Rechercher une vidéo : titre, slug ou propriétaire")
+        self.browse_text.pack(fill="x", pady=(10, 8))
         self.browse_text.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
 
-        bloc_statut = bloc_filtre(filt, "Statut")
-        bloc_statut.pack(side="left", padx=6)
-        self.browse_statut = ctk.CTkOptionMenu(
-            bloc_statut, width=130, values=["Tous", "Brouillon", "Public", "Restreinte"],
-            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_statut.set("Tous")
-        self.browse_statut.pack()
+        self.browse_pastilles = RangeeFluide(frame)
+        self.browse_pastilles.pack(fill="x")
+        rappel = (lambda _v: self._browse_apply_filter())
+        self.browse_statut = PastilleFiltre(
+            self.browse_pastilles, "Statut", ["Tous", "Brouillon", "Public", "Restreinte"],
+            command=rappel)
+        self.browse_encode = PastilleFiltre(
+            self.browse_pastilles, "Encodage", ["Tout", "Encodées", "Non-encodées"],
+            command=rappel)
+        self.browse_chan = PastilleFiltre(self.browse_pastilles, "Chaîne", ["Toutes"],
+                                          command=rappel)
+        self.browse_type = PastilleFiltre(self.browse_pastilles, "Type", ["Tous"],
+                                          command=rappel)
+        # Discipline : sert autant à retrouver les vidéos classées qu'à repérer
+        # CELLES QUI NE LE SONT PAS.
+        self.browse_discipline = PastilleFiltre(self.browse_pastilles, "Discipline",
+                                                ["Toutes"], command=rappel)
+        # Anomalies : filtres de DIAGNOSTIC, qui révèlent des problèmes du fonds.
+        self.browse_detect = PastilleFiltre(
+            self.browse_pastilles, "Anomalies", list(ANOMALIES_VIDEOS), command=rappel,
+            libelles={v: v.replace("Brouillons de plus de", "Brouillons >")
+                      for v in ANOMALIES_VIDEOS})
+        for p in (self.browse_statut, self.browse_encode, self.browse_chan,
+                  self.browse_type, self.browse_discipline, self.browse_detect):
+            self.browse_pastilles.ajouter(p)
+        self.browse_tri = ValeurSimple("Plus récentes")
 
-        bloc_encode = bloc_filtre(filt, "Encodage")
-        bloc_encode.pack(side="left", padx=6)
-        self.browse_encode = ctk.CTkOptionMenu(
-            bloc_encode, width=150, values=["Tout", "Encodées", "Non-encodées"],
-            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_encode.set("Tout")
-        self.browse_encode.pack()
-        bloc_chan = bloc_filtre(filt, "Chaîne")
-        bloc_chan.pack(side="left", padx=6)
-        self.browse_chan = ctk.CTkOptionMenu(bloc_chan, width=150, values=["Toutes"],
-                                             command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_chan.set("Toutes")
-        self.browse_chan.pack()
-
-        bloc_type = bloc_filtre(filt, "Type")
-        bloc_type.pack(side="left", padx=6)
-        self.browse_type = ctk.CTkOptionMenu(bloc_type, width=132, values=["Tous"],
-                                             command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_type.set("Tous")
-        self.browse_type.pack()
-
-        # ── Seconde rangée : tri et détection ────────────────────────────
-        filt2 = ctk.CTkFrame(frame, fg_color="transparent")
-        filt2.pack(fill="x", pady=(4, 6))
-
-
-        # Ordre d'affichage. Par défaut « Plus récentes » : c'est l'ordre
-        # renvoyé par l'API, celui auquel on est habitué. Le tri alphabétique
-        # sert à retrouver une vidéo dont on connaît le titre.
-        # Filtre Discipline — sur la SECONDE rangée.
-        #
-        # Mesuré : en sixième position sur la première, il la faisait déborder
-        # de 160 px en fenêtre minimale (1000 px) et écrasait le champ de
-        # recherche à 140 px. La seconde rangée était à moitié vide.
-        #
-        # Il sert autant à retrouver les vidéos classées qu'à repérer CELLES
-        # QUI NE LE SONT PAS : sans cela, on ne sait pas ce qu'il reste à faire.
-        bloc_disc = bloc_filtre(filt2, "Discipline")
-        bloc_disc.pack(side="left", padx=(0, 14))
-        self.browse_discipline = ctk.CTkOptionMenu(
-            bloc_disc, width=150, values=["Toutes"],
-            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_discipline.set("Toutes")
-        self.browse_discipline.pack()
-
-        bloc_tri = bloc_filtre(filt2, "Trier")
-        bloc_tri.pack(side="left", padx=(0, 14))
-        self.browse_tri = ctk.CTkOptionMenu(
-            bloc_tri, width=160,
-            values=list(TRIS_VIDEOS),
-            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_tri.set("Plus récentes")
-        self.browse_tri.pack()
-
-        # Filtres de DIAGNOSTIC, repris de l'Explorateur : ils ne cherchent pas
-        # une vidéo précise mais révèlent des anomalies dans le fonds.
-        bloc_detect = bloc_filtre(filt2, "Détecter")
-        bloc_detect.pack(side="left", padx=(0, 6))
-        self.browse_detect = ctk.CTkOptionMenu(
-            bloc_detect, width=175,
-            values=["Aucune", "Doublons de titre", "Vieux brouillons"],
-            command=lambda _c: self._browse_apply_filter(), **STYLE_CHAMP)
-        self.browse_detect.set("Aucune")
-        self.browse_detect.pack()
-
-        # Ancienneté retenue pour « Vieux brouillons ».
-        ctk.CTkLabel(filt2, text="plus de", font=ctk.CTkFont(size=11),
-                     text_color=T_SECONDAIRE).pack(side="left", padx=(4, 2))
-        self.browse_months = ctk.CTkEntry(filt2, width=44)
-        self.browse_months.insert(0, "6")
-        self.browse_months.pack(side="left", padx=2)
-        self.browse_months.bind("<KeyRelease>", lambda e: self._browse_apply_filter())
-        ctk.CTkLabel(filt2, text="mois", font=ctk.CTkFont(size=11),
-                     text_color=T_SECONDAIRE).pack(side="left")
-
-        # La barre « En masse » (type / discipline des vidéos AFFICHÉES) a été
-        # RETIRÉE : ces actions passent par la sélection (« Tout sélectionner »
-        # puis le panneau de lot), avec confirmation. Deux chemins pour la même
-        # action, dont l'un agissait sur tout ce qu'affichait le filtre, prêtaient
-        # à confusion.
+        # Compteur, lien d'effacement (visible seulement s'il y a quelque chose
+        # à effacer) et sélection globale, sur toute la largeur.
+        ligne_compte = ctk.CTkFrame(frame, fg_color="transparent")
+        ligne_compte.pack(fill="x", pady=(8, 4))
+        self.browse_count_lbl = ctk.CTkLabel(ligne_compte, text="", text_color=T_SECONDAIRE,
+                                             font=ctk.CTkFont(size=11), anchor="w")
+        self.browse_count_lbl.pack(side="left")
+        self.browse_effacer_btn = ctk.CTkButton(
+            ligne_compte, text="✕ Effacer la recherche et les filtres", width=0,
+            height=H_COMPACT, fg_color="transparent", hover_color=S_LIGNE,
+            text_color=T_LIEN, font=ctk.CTkFont(size=11, underline=True),
+            command=self._browse_effacer_filtres)
+        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées.
+        ctk.CTkButton(ligne_compte, text="☑ Tout sélectionner", width=140, height=H_COMPACT,
+                      font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
+                      hover_color=C_NEUTRE_SURV,
+                      command=self._browse_tout_selectionner, text_color=T_SUR_NEUTRE).pack(side="right")
 
         # — Corps : liste (gauche) + détail (droite) —
         body = ctk.CTkFrame(frame, fg_color="transparent")
@@ -5188,20 +5623,6 @@ class App(_AppBase):
         body.columnconfigure(1, weight=3)
         body.rowconfigure(1, weight=1)
 
-        # Ligne d'en-tête : compteur à gauche, sélection globale à droite.
-        entete = ctk.CTkFrame(body, fg_color="transparent")
-        entete.grid(row=0, column=0, sticky="ew", pady=(0, 2))
-        entete.columnconfigure(0, weight=1)
-
-        self.browse_count_lbl = ctk.CTkLabel(entete, text="", text_color=T_SECONDAIRE,
-                                             font=ctk.CTkFont(size=11), anchor="w")
-        self.browse_count_lbl.grid(row=0, column=0, sticky="w")
-
-        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées.
-        ctk.CTkButton(entete, text="☑ Tout sélectionner", width=140, height=H_COMPACT,
-                      font=ctk.CTkFont(size=11), fg_color=C_NEUTRE,
-                      hover_color=C_NEUTRE_SURV,
-                      command=self._browse_tout_selectionner, text_color=T_SUR_NEUTRE).grid(row=0, column=1, padx=4)
         # LISTE NATIVE (ttk.Treeview) et non plus un bouton CustomTkinter par
         # vidéo. Mesure du 2026-10-21 sur ~600 vidéos : reconstruire 300
         # boutons prenait 7 à 8 s à CHAQUE filtrage ou frappe dans la
@@ -5404,6 +5825,10 @@ class App(_AppBase):
         touche), soit plusieurs secondes de blocage pour neuf rendus jetés
         aussitôt. On attend donc une courte pause dans la frappe avant de
         recalculer : une seule reconstruction au lieu de dix."""
+        # Une pastille qui change de texte change de largeur : la rangée se
+        # réorganise (passage à la ligne si besoin).
+        if hasattr(self, "browse_pastilles"):
+            self.browse_pastilles.reorganiser_plus_tard()
         job = getattr(self, "_browse_filter_job", None)
         if job:
             try:
@@ -5492,7 +5917,7 @@ class App(_AppBase):
         detect = self.browse_detect.get() if hasattr(self, "browse_detect") else ""
         if detect == "Doublons de titre":
             vids = self._duplicate_title_videos(vids)
-        elif detect == "Vieux brouillons":
+        elif detect.startswith("Brouillons de plus de"):
             cutoff = self._months_ago_iso(self._browse_months_value())
             vids = [v for v in vids if PodAPI.is_stale_draft(v, cutoff)]
 
@@ -5513,7 +5938,7 @@ class App(_AppBase):
     def _render_browse_list(self):
         """Affiche TOUTE la liste filtrée dans le tableau (plus de plafond :
         le Treeview reste fluide avec des milliers de lignes)."""
-        self.browse_count_lbl.configure(text=f"{len(self.browse_filtered)} vidéo(s) trouvée(s).")
+        self._browse_maj_compteur()
         arbre = self.browse_tree
         arbre.delete(*arbre.get_children())
         # slug → identifiant de ligne. L'identifiant EST le slug (unique dans
@@ -5531,6 +5956,34 @@ class App(_AppBase):
             self.browse_rows[slug] = slug
         self._browse_teinter()
         self._browse_maj_entetes()
+
+    def _browse_pastilles_actives(self) -> list:
+        return [p for p in self.browse_pastilles.elements if p.est_active()]
+
+    def _browse_maj_compteur(self):
+        """« 600 vidéos » au repos ; « 12 vidéos sur 600 · 2 filtres actifs »
+        dès qu'une recherche ou un filtre restreint la liste."""
+        n, total = len(self.browse_filtered), len(self.videos)
+        actifs = len(self._browse_pastilles_actives())
+        texte = bool(self.browse_text.get().strip())
+        if not actifs and not texte:
+            self.browse_count_lbl.configure(text=f"{n} vidéo(s)")
+            self.browse_effacer_btn.pack_forget()
+            return
+        msg = f"{n} vidéo(s) sur {total}"
+        if actifs:
+            msg += f"  ·  {actifs} filtre{'s' if actifs > 1 else ''} actif{'s' if actifs > 1 else ''}"
+        self.browse_count_lbl.configure(text=msg)
+        if not self.browse_effacer_btn.winfo_manager():
+            self.browse_effacer_btn.pack(side="left", padx=(8, 0))
+
+    def _browse_effacer_filtres(self):
+        """Remet la recherche et toutes les pastilles à leur valeur neutre."""
+        self.browse_text.delete(0, "end")
+        for p in self.browse_pastilles.elements:
+            p.set(p.cget("values")[0])
+        self.browse_pastilles.reorganiser_plus_tard()
+        self._browse_do_filter()
 
     def _browse_valeurs(self, v) -> tuple:
         """Valeurs affichées dans les colonnes pour une vidéo."""
@@ -5591,37 +6044,8 @@ class App(_AppBase):
                 arbre.item(slug, tags=(self._browse_teinte(slug),))
 
     def _browse_styler_liste(self):
-        """Couleurs et police du tableau selon le thème courant.
-
-        Un Treeview n'accepte que des couleurs SIMPLES, pas les couples
-        (clair, sombre) de CustomTkinter : on choisit la teinte du mode actif,
-        et _basculer_theme rappelle cette méthode à chaque changement. Le thème
-        ttk « clam » est le seul qui respecte les couleurs sur Windows ET sur
-        macOS (« aqua » les ignore)."""
-        sombre = ctk.get_appearance_mode().lower() == "dark"
-        c = (lambda paire: paire[1] if sombre else paire[0])
-        style = ttk.Style(self)
-        if style.theme_use() != "clam":
-            style.theme_use("clam")
-        echelle = ctk.ScalingTracker.get_widget_scaling(self)
-        police = tkfont.nametofont("TkDefaultFont").copy()
-        police.configure(size=-round(13 * echelle))         # négatif = pixels
-        gras = police.copy()
-        gras.configure(weight="bold")
-        self._browse_polices = (police, gras)   # gardées : Tk n'en tient qu'une référence faible
-        fond, texte = c(S_CARTE), c(("gray10", "gray90"))
-        style.configure("Pod.Treeview", background=fond, fieldbackground=fond,
-                        foreground=texte, rowheight=round(28 * echelle), font=police,
-                        borderwidth=0, relief="flat")
-        style.layout("Pod.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
-        style.configure("Pod.Treeview.Heading", background=c(S_PUCE), foreground=texte,
-                        font=gras, relief="flat", borderwidth=0)
-        style.map("Pod.Treeview.Heading", background=[("active", c(S_SELECTION))])
-        arbre = self.browse_tree
-        arbre.tag_configure("pair", background=fond)
-        arbre.tag_configure("alt", background=c(S_LIGNE))
-        arbre.tag_configure("courante", background=c(S_SELECTION))
-        arbre.tag_configure("multi", background=c(C_MULTI))
+        """Couleurs du tableau Vidéos selon le thème (voir styler_tableaux)."""
+        enregistrer_tableau(self.browse_tree)
 
     def _browse_maj_entetes(self):
         """Flèche ▲ ou ▼ sur l'en-tête de la colonne qui fixe le tri."""
@@ -5711,11 +6135,9 @@ class App(_AppBase):
         return "break"
 
     def _browse_months_value(self) -> int:
-        """Lit le champ « mois » de l'onglet Vidéos (entier ≥ 0, défaut 6)."""
-        try:
-            return max(0, int(self.browse_months.get().strip()))
-        except Exception:
-            return 6
+        """Ancienneté, en mois, choisie dans la pastille « Anomalies » (défaut 6)."""
+        chiffres = "".join(c for c in self.browse_detect.get() if c.isdigit())
+        return int(chiffres) if chiffres else 6
 
     def _lot_interrompre(self):
         """Demande l'arrêt du traitement par lot en cours.
@@ -7529,7 +7951,8 @@ class App(_AppBase):
         fe = ctk.CTkEntry(box, placeholder_text="🔍 nom / identifiant…")
         fe.pack(fill="x", padx=10, pady=(0, 6))
         # Liste défilante des comptes correspondant au filtre
-        res = ctk.CTkScrollableFrame(box, height=150, fg_color=S_CARTE)
+        res = ListeNative(box, {"compte": ("Compte", 300, "w")}, entetes=False,
+                          hauteur=150, fg_color=S_CARTE)
         res.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         # Rappel du compte actuellement sélectionné
         chosen = ctk.CTkLabel(box, text="Sélection : (aucune)", text_color=T_SECONDAIRE,
@@ -7538,6 +7961,7 @@ class App(_AppBase):
         # État partagé entre le picker et son moteur de rendu
         state = {"frame": box, "filter": fe, "results": res,
                  "chosen": chosen, "on_pick": on_pick, "selected": None}
+        res._au_clic = lambda username, s=state: self._mini_pick_iid(s, username)
         # Re-render à chaque frappe dans le filtre
         fe.bind("<KeyRelease>",
                 lambda e, s=state: self._debounce("mini", lambda: self._render_mini_picker(s)))
@@ -7548,36 +7972,28 @@ class App(_AppBase):
     def _render_mini_picker(self, state):
         """(Ré)affiche la liste filtrée d'un sélecteur de compte."""
         flt = state["filter"].get().strip().lower()
-        # Vider la liste précédente
-        for w in state["results"].winfo_children():
-            w.destroy()
-        # Aucun compte encore chargé
+        liste = state["results"]
         if not self.all_users:
-            ctk.CTkLabel(state["results"], text="Connectez-vous puis rechargez les comptes.",
-                         text_color=T_SECONDAIRE).pack(pady=8)
+            liste.montrer_message("Connectez-vous puis rechargez les comptes.")
             return
-        # Filtrage client + plafond d'affichage (Tk gèle au-delà de quelques centaines)
+        # Filtrage client, sans plafond : le tableau natif tient des milliers de lignes.
         matches = [u for u in self.all_users
                    if not flt or flt in self._user_label(u).lower()]
-        CAP = 200
-        sel = state["selected"]
-        for u in matches[:CAP]:
-            # Marque ✅ le compte sélectionné dans ce picker
-            is_sel = sel is not None and u.get("username") == sel.get("username")
-            label = ("✅  " if is_sel else "      ") + self._user_label(u)
-            ctk.CTkButton(
-                state["results"], text=label, anchor="w", height=26,
-                fg_color=S_SELECTION if is_sel else "transparent",
-                text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                font=ctk.CTkFont(size=12),
-                command=lambda uu=u, s=state: self._mini_pick(s, uu)).pack(fill="x", pady=1)
-        # Indications de fin de liste
-        if len(matches) > CAP:
-            ctk.CTkLabel(state["results"],
-                         text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
-        elif not matches:
-            ctk.CTkLabel(state["results"], text="Aucun compte.", text_color=T_SECONDAIRE).pack(pady=6)
+        if not matches:
+            liste.montrer_message("Aucun compte.")
+            return
+        choisi = (state["selected"] or {}).get("username")
+        liste.remplir(
+            (u.get("username"),
+             (("✅  " if u.get("username") == choisi else "      ") + self._user_label(u),),
+             u.get("username") == choisi)
+            for u in matches)
+
+    def _mini_pick_iid(self, state, username: str):
+        """Clic dans un sélecteur compact : retrouve le compte, puis le choisit."""
+        u = next((x for x in self.all_users or [] if x.get("username") == username), None)
+        if u is not None:
+            self._mini_pick(state, u)
 
     def _mini_pick(self, state, user):
         """Enregistre le compte choisi dans un sélecteur et notifie l'appelant."""
@@ -9633,14 +10049,15 @@ class App(_AppBase):
             "Circuit complet, depuis l'onglet Comptes :\n"
             "1. L'enseignant se connecte une fois à Pod (cela CRÉE son compte) puis "
             "remplit le questionnaire.\n"
-            "2. Filtrez son nom dans Comptes, puis activez l'interrupteur « Équipe » : "
-            "ce statut est nécessaire pour que ses dépôts de gros fichiers soient "
-            "réattribués correctement.\n"
-            "3. Bouton « 🔑 Token » : ouvre les jetons de l'administration Pod dans votre "
-            "navigateur, recherche déjà remplie au nom du compte.\n"
+            "2. Filtrez son nom dans Comptes et cliquez dessus. Dans sa fiche, à droite, "
+            "activez « Membre de l'équipe » : ce statut est nécessaire pour que ses "
+            "dépôts de gros fichiers soient réattribués correctement.\n"
+            "3. Bouton « 🔑 Ouvrir son jeton dans l'administration Pod » : ouvre les "
+            "jetons dans votre navigateur, recherche déjà remplie au nom du compte.\n"
             "   • S'il a DÉJÀ un jeton : recopiez-le simplement.\n"
             "   • Sinon : « Ajouter », choisir le compte, « Enregistrer », copier.\n"
-            "4. Bouton « ✉️ » : ouvre votre messagerie avec le message d'accueil déjà "
+            "4. Bouton « ✉️ Préparer le courriel de réponse » : ouvre votre messagerie "
+            "avec le message d'accueil déjà "
             "rédigé, avec le support en copie cachée. Remplacez le repère\n"
             "   « >>> COLLER ICI LA CLÉ <<< » par le jeton copié, puis envoyez.\n"
             "   (Le message parle de « clé d'activation » : le mot « token » ne dit "
@@ -9750,11 +10167,14 @@ class App(_AppBase):
             "Le bouton « ☑ Tout sélectionner », à droite du compteur (ou Ctrl + A "
             "hors d'un champ de saisie), retient TOUTES les vidéos filtrées.\n\n"
             "Deux filtres de DÉTECTION complètent la recherche :\n"
-            "• « Doublons de titre » — vidéos portant le même titre ;\n"
-            "• « Vieux brouillons » — brouillons plus anciens que le nombre de mois "
-            "indiqué à côté.\n\n"
-            "La liste peut être triée par le menu « Trier » ou d'un clic sur un "
-            "en-tête de colonne : Titre (un second clic inverse l'ordre), Ajoutée le "
+            "• « Doublons de titre » : vidéos portant le même titre ;\n"
+            "• « Brouillons de plus de 3, 6 ou 12 mois » : brouillons plus anciens que "
+            "la durée choisie.\n\n"
+            "Les filtres sont des pastilles : un clic ouvre les choix ; un filtre actif "
+            "passe en bleu et se retire d'un clic sur ✕. « Effacer la recherche et les "
+            "filtres », à côté du compteur, remet tout à zéro.\n\n"
+            "La liste se trie d'un clic sur un en-tête de colonne : Titre (un second "
+            "clic inverse l'ordre), Ajoutée le "
             "(plus récentes ou plus anciennes), Propriétaire. Les flèches haut et bas "
             "parcourent la liste.\n\n"
             "Pour l'affectation à une chaîne, deux modes sont proposés :\n"
@@ -10334,8 +10754,14 @@ class OwnerPicker(ctk.CTkToplevel):
         self.count_lbl = ctk.CTkLabel(self, text="", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11))
         self.count_lbl.pack(anchor="w", padx=14, pady=(4, 0))
 
-        self.listbox = ctk.CTkScrollableFrame(self, height=320, fg_color=S_CARTE)
+        # Tableau natif : tous les comptes sans plafond, et un clic ne met à
+        # jour que SA ligne (l'ancienne liste de boutons était entièrement
+        # reconstruite à chaque case cochée).
+        self.listbox = ListeNative(self, {"compte": ("Compte", 440, "w")},
+                                   au_clic=self._toggle_iid, entetes=False,
+                                   hauteur=320, fg_color=S_CARTE)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
+        self._par_iid: dict = {}          # identifiant de ligne → compte
 
         self.chosen_lbl = ctk.CTkLabel(self, text="Sélection : aucun", text_color=T_SECONDAIRE,
                                        wraplength=460, justify="left")
@@ -10402,35 +10828,41 @@ class OwnerPicker(ctk.CTkToplevel):
     def _render(self):
         """Affiche la liste filtrée (cases à cocher)."""
         flt = self.filter.get().strip().lower()
-        for w in self.listbox.winfo_children():
-            w.destroy()
         users = self.master_app.all_users
         if not users:
-            ctk.CTkLabel(self.listbox, text="Liste non disponible.", text_color=T_SECONDAIRE).pack(pady=10)
+            self.listbox.montrer_message("Liste non disponible.")
             return
         matches = [u for u in users if not flt or flt in self._label(u).lower()]
-        CAP = 300
-        for u in matches[:CAP]:
-            url = u.get("url", "")
-            sel = url in self.selected
-            if self.single:
-                prefix = "   "
-            else:
-                prefix = "☑  " if sel else "☐  "
-            ctk.CTkButton(self.listbox, text=prefix + self._label(u), anchor="w",
-                          fg_color=S_SELECTION if (sel and not self.single) else "transparent",
-                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                          height=28, font=ctk.CTkFont(size=12),
-                          command=lambda uu=u: self._toggle(uu)).pack(fill="x", pady=1)
-        self.count_lbl.configure(text=f"{len(matches)} affiché(s) sur {len(users)} — "
-                                      f"{len(self.selected)} sélectionné(s)", text_color=T_SECONDAIRE)
-        if len(matches) > CAP:
-            ctk.CTkLabel(self.listbox, text=f"… affinez le filtre ({len(matches) - CAP} de plus)",
-                         text_color=T_SECONDAIRE).pack(pady=4)
-        elif not matches:
-            ctk.CTkLabel(self.listbox, text="Aucun résultat.", text_color=T_SECONDAIRE).pack(pady=8)
+        self._maj_compteur(len(matches))
+        if not matches:
+            self.listbox.montrer_message("Aucun résultat.")
+            return
+        # Identifiant de ligne : l'URL du compte, sinon son nom (un compte
+        # sans URL reste choisissable en sélection unique).
+        self._par_iid = {(u.get("url") or f"nom:{u.get('username', '')}"): u for u in matches}
+        self.listbox.remplir((iid, self._valeurs(u), self._est_coche(u))
+                             for iid, u in self._par_iid.items())
 
-    def _toggle(self, u: dict):
+    def _est_coche(self, u: dict) -> bool:
+        return not self.single and u.get("url", "") in self.selected
+
+    def _valeurs(self, u: dict) -> tuple:
+        prefixe = "   " if self.single else ("☑  " if self._est_coche(u) else "☐  ")
+        return (prefixe + self._label(u),)
+
+    def _maj_compteur(self, affiches: int | None = None):
+        if affiches is None:
+            affiches = len(self.listbox.lignes())
+        self.count_lbl.configure(
+            text=f"{affiches} affiché(s) sur {len(self.master_app.all_users or [])} — "
+                 f"{len(self.selected)} sélectionné(s)", text_color=T_SECONDAIRE)
+
+    def _toggle_iid(self, iid: str):
+        u = self._par_iid.get(iid)
+        if u is not None:
+            self._toggle(u, iid)
+
+    def _toggle(self, u: dict, iid: str | None = None):
         """Coche/décoche un compte (ou valide directement en mode sélection unique)."""
         if self.single:
             if self.on_single:
@@ -10444,7 +10876,9 @@ class OwnerPicker(ctk.CTkToplevel):
             del self.selected[url]
         else:
             self.selected[url] = self._label(u)
-        self._render()
+        # Seule la ligne cliquée change : pas de reconstruction du tableau.
+        self.listbox.marquer(iid or url, self._valeurs(u), self._est_coche(u))
+        self._maj_compteur()
         self._update_chosen()
 
     def _update_chosen(self):
@@ -10489,8 +10923,13 @@ class VideoPicker(ctk.CTkToplevel):
         # Temporisation : évite de reconstruire toute la liste à chaque caractère.
         self.filter.bind("<KeyRelease>", lambda e: self._render_differe())
 
-        self.listbox = ctk.CTkScrollableFrame(self, height=360, fg_color=S_CARTE)
+        # Tableau natif : voir OwnerPicker (un clic ne met à jour que sa ligne).
+        self.listbox = ListeNative(self, {"coche": ("", 36, "center"),
+                                          "titre": ("Titre", 330, "w"),
+                                          "slug": ("Slug", 110, "w")},
+                                   au_clic=self._toggle_iid, hauteur=360, fg_color=S_CARTE)
         self.listbox.pack(fill="both", expand=True, padx=14, pady=8)
+        self._par_iid: dict = {}          # slug → vidéo
 
         self.chosen_lbl = ctk.CTkLabel(self, text="0 vidéo sélectionnée", text_color=T_SECONDAIRE)
         self.chosen_lbl.pack(padx=14, anchor="w")
@@ -10522,26 +10961,23 @@ class VideoPicker(ctk.CTkToplevel):
     def _render(self):
         """Affiche la liste filtrée des vidéos (cases à cocher)."""
         flt = self.filter.get().strip().lower()
-        for w in self.listbox.winfo_children():
-            w.destroy()
         matches = [v for v in self.videos
                    if not flt or flt in f"{v.get('title','')} {v.get('slug','')}".lower()]
-        CAP = 500
-        for v in matches[:CAP]:
-            slug = v.get("slug", "")
-            sel = slug in self.selected
-            title = (v.get("title") or "(sans titre)")[:54]
-            ctk.CTkButton(self.listbox, text=("☑  " if sel else "☐  ") + f"{title}  ·  {slug}",
-                          anchor="w", height=26,
-                          fg_color=S_SELECTION if sel else "transparent",
-                          text_color=("gray10", "gray90"), hover_color=("gray75", "gray28"),
-                          font=ctk.CTkFont(size=12),
-                          command=lambda vv=v: self._toggle(vv)).pack(fill="x", pady=1)
-        if len(matches) > CAP:
-            ctk.CTkLabel(self.listbox, text=f"… +{len(matches) - CAP} autres. Affinez le filtre.",
-                         text_color=T_SECONDAIRE).pack(pady=4)
-        elif not matches:
-            ctk.CTkLabel(self.listbox, text="Aucune vidéo.", text_color=T_SECONDAIRE).pack(pady=8)
+        if not matches:
+            self.listbox.montrer_message("Aucune vidéo.")
+            return
+        self._par_iid = {v.get("slug"): v for v in matches if v.get("slug")}
+        self.listbox.remplir((slug, self._valeurs(v), slug in self.selected)
+                             for slug, v in self._par_iid.items())
+
+    def _valeurs(self, v: dict) -> tuple:
+        return ("☑" if v.get("slug") in self.selected else "☐",
+                v.get("title") or "(sans titre)", v.get("slug", ""))
+
+    def _toggle_iid(self, slug: str):
+        v = self._par_iid.get(slug)
+        if v is not None:
+            self._toggle(v)
 
     def _toggle(self, v: dict):
         """Coche/décoche une vidéo dans la sélection."""
@@ -10552,7 +10988,8 @@ class VideoPicker(ctk.CTkToplevel):
             del self.selected[slug]
         else:
             self.selected[slug] = v.get("title", "?")
-        self._render()
+        # Seule la ligne cliquée change : pas de reconstruction du tableau.
+        self.listbox.marquer(slug, self._valeurs(v), slug in self.selected)
         self._update_chosen()
 
     def _update_chosen(self):

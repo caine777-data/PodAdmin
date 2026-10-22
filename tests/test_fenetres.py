@@ -3819,3 +3819,9 @@ class TestPanneauDeDetailReutilise:
         assert app._detail_w is None
         app._browse_select(app.videos[3])
         assert app._detail_w["titre"].cget("text") == "Vidéo 3"
+
+
+class TestEnteteColonneMail:
+    def test_colonne_nommee_mail(self, app):
+        """Décision de Cédric (2026-10-23) : « Mail » plutôt que « Courriel »."""
+        assert app.comptes_results.arbre.heading("mail", "text") == "Mail"

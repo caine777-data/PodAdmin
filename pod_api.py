@@ -27,6 +27,7 @@ __date__ = "2026"
 __license__ = "Usage interne — Université de Toulouse"
 
 
+import math
 import os
 import re
 import time
@@ -34,6 +35,10 @@ from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
+
+# Garde-fou de la pagination : au-delà, la lecture s'arrête et la liste est
+# signalée INCOMPLÈTE. 5 000 pages de 12 éléments = 60 000 éléments.
+PAGES_MAX_ABSOLU = 5000
 
 # Délai des ENVOIS DE FICHIER : (connexion, lecture).
 #
@@ -248,6 +253,13 @@ class PodAPI:
         """Récupère tous les éléments d'un endpoint paginé en suivant le champ
         'next' jusqu'au bout. progress_cb(nb_cumulé) optionnel.
 
+        `max_pages` est un MINIMUM, relevé d'après le total annoncé par Pod
+        (champ `count` de la première page). Le serveur de l'université
+        impose 12 éléments par page et ignore `limit` : un plafond fixe
+        coupait les consultations (1 001 entrées pour 60 pages, soit 720),
+        les images et les dossiers (mesuré le 2026-10-23). PAGES_MAX_ABSOLU
+        reste le garde-fou contre une pagination qui ne finirait jamais.
+
         (Le paramètre skip_cb est conservé pour compatibilité d'appel mais n'est
         plus utilisé : on est revenu à la pagination simple et fiable par 'next'.)
         """
@@ -266,6 +278,8 @@ class PodAPI:
                 verify=self.verify_ssl,
             )
             data = self._json(r)
+            if pages == 0:
+                max_pages = self._pages_necessaires(data, max_pages)
             if isinstance(data, dict):
                 items.extend(data.get("results", []))
                 # `next` est fourni par le serveur : même contrôle que toute
@@ -286,6 +300,20 @@ class PodAPI:
         # peut l'écraser. Utiliser `est_tronque()`.
         self.last_scan_truncated = tronque
         return items
+
+    @staticmethod
+    def _pages_necessaires(premiere_page, max_pages: int) -> int:
+        """Nombre de pages à lire : au moins `max_pages`, davantage si le
+        total annoncé l'exige (taille de page réelle = celle de la 1re page)."""
+        if not isinstance(premiere_page, dict):
+            return max_pages
+        total = premiere_page.get("count")
+        par_page = len(premiere_page.get("results") or [])
+        if not isinstance(total, int) or par_page <= 0:
+            return max_pages
+        # +1 : un élément ajouté pendant la lecture ne doit pas tronquer la fin.
+        besoin = math.ceil(total / par_page) + 1
+        return max(max_pages, min(besoin, PAGES_MAX_ABSOLU))
 
     # ╔══════════════════════════════════════════════════════════════════╗
     # ║  TÉLÉVERSEUR (conservé tel quel)                                  ║

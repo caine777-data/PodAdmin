@@ -6203,7 +6203,7 @@ class App(_AppBase):
                 "id": ("Identifiant", 140, "w"),
                 "nom": ("Nom", 240, "w"),
                 "equipe": ("Équipe", 90, "center"),
-                "mail": ("Courriel", 80, "center"),
+                "mail": ("Mail", 80, "center"),
             },
             au_clic=self._comptes_choisir,
             hauteur=400,

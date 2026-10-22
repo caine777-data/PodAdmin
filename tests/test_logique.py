@@ -1585,3 +1585,71 @@ class TestCouleursDuPanneauDeLot:
             "groups": ("#7c3aed", "#7c3aed"),
             "channels": ("#2563eb", "#2563eb"),
         }
+
+
+class TestPaginationSuitLeTotal:
+    """Le serveur de l'université renvoie 12 éléments par page et ignore
+    `limit` : un plafond fixe de pages tronquait les consultations de
+    l'Inventaire (1 001 entrées, 720 lues), les images et les dossiers."""
+
+    class _Serveur:
+        """Faux /view_count/ : `total` éléments, 12 par page, liens `next`."""
+
+        def __init__(self, total):
+            self.total, self.appels = total, 0
+
+        def get(self, url, params=None, **k):
+            from urllib.parse import parse_qs, urlsplit
+
+            self.appels += 1
+            page = int(parse_qs(urlsplit(url).query).get("page", ["1"])[0])
+            debut = (page - 1) * 12
+            fin = min(debut + 12, self.total)
+            suivante = (
+                f"https://pod.exemple.fr/rest/view_count/?page={page + 1}"
+                if fin < self.total
+                else None
+            )
+            return {
+                "count": self.total,
+                "next": suivante,
+                "results": [{"n": i} for i in range(debut, fin)],
+            }
+
+    def _api(self, total):
+        from pod_api import PodAPI
+
+        api = PodAPI.__new__(PodAPI)
+        api.troncatures, api.verify_ssl = {}, True
+        serveur = self._Serveur(total)
+        api.session = serveur
+        api._abs = lambda u: u if u.startswith("http") else "https://pod.exemple.fr/rest" + u
+        api._json = lambda r: r
+        return api, serveur
+
+    def test_tout_est_lu_malgre_un_plafond_trop_bas(self):
+        api, _ = self._api(1001)
+        items = api._paginate("/view_count/", {"limit": 200}, max_pages=60)
+        assert len(items) == 1001
+        assert api.est_tronque("/view_count/") is False
+
+    def test_le_plafond_reste_un_minimum(self):
+        api, serveur = self._api(30)
+        assert len(api._paginate("/view_count/", max_pages=60)) == 30
+        assert serveur.appels == 3
+
+    def test_garde_fou_absolu(self, monkeypatch):
+        import pod_api
+
+        monkeypatch.setattr(pod_api, "PAGES_MAX_ABSOLU", 5)
+        api, _ = self._api(1001)
+        items = api._paginate("/view_count/", max_pages=2)
+        assert len(items) == 60, "le garde-fou doit arrêter la lecture"
+        assert api.est_tronque("/view_count/") is True
+
+    def test_reponse_sans_total(self):
+        from pod_api import PodAPI
+
+        assert PodAPI._pages_necessaires([], 7) == 7
+        assert PodAPI._pages_necessaires({"results": [1]}, 7) == 7
+        assert PodAPI._pages_necessaires({"count": 0, "results": []}, 7) == 7

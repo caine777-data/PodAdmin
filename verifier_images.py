@@ -48,13 +48,15 @@ PNG_TEST = base64.b64decode(
     "QMDIHOEH9zOxhmS5U9BH57PPgK+t2wH8k7FIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4Sx"
     "SBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFI"
     "GIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgYi4SxSBiLhLFIGIuEsUgY"
-    "i4SxSBiLhLFIGIuEsUgYi8QLJU4BXnyztY4AAAAASUVORK5CYII=")
+    "i4SxSBiLhLFIGIuEsUgYi8QLJU4BXnyztY4AAAAASUVORK5CYII="
+)
 
 
 def charger_requests():
     """Importe `requests`, en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -64,9 +66,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -82,11 +86,13 @@ def schema_images(sess, rest):
         if r.status_code != 200:
             print("   [X] Schéma inaccessible : impossible de savoir quoi envoyer.")
             return None
-        actions = (r.json().get("actions") or {})
+        actions = r.json().get("actions") or {}
         schema = actions.get("POST")
         if not schema:
-            print("   [X] Aucun schéma POST : la ressource est peut-être en "
-                  "LECTURE SEULE (dépôt impossible par l'API).")
+            print(
+                "   [X] Aucun schéma POST : la ressource est peut-être en "
+                "LECTURE SEULE (dépôt impossible par l'API)."
+            )
             print("       Actions disponibles :", ", ".join(actions.keys()) or "aucune")
             return None
         print(f"\n   {len(schema)} champ(s) acceptés au dépôt :\n")
@@ -102,8 +108,7 @@ def schema_images(sess, rest):
             # Un champ de type « file »/« image » impose un envoi multipart.
             if t in ("file upload", "image upload"):
                 print(f"        → envoi de FICHIER (multipart) attendu pour « {nom} »")
-        print("\n   Champs obligatoires :",
-              ", ".join(obligatoires) if obligatoires else "aucun")
+        print("\n   Champs obligatoires :", ", ".join(obligatoires) if obligatoires else "aucun")
         return schema
     except Exception as e:
         print(f"   [X] OPTIONS impossible : {e}")
@@ -192,8 +197,7 @@ def test_ecriture(sess, rest, requests):
 
     print("   Envoi en cours…")
     try:
-        r = sess.post(f"{rest}/images/", files=fichier, data=donnees,
-                      timeout=60)
+        r = sess.post(f"{rest}/images/", files=fichier, data=donnees, timeout=60)
         print(f"   POST → HTTP {r.status_code}")
         if r.status_code in (200, 201):
             cree = r.json()
@@ -204,12 +208,21 @@ def test_ecriture(sess, rest, requests):
             print("\n   → Une bannière se pose donc en deux temps :")
             print("        1. POST multipart sur /rest/images/  (champ « file »)")
             print("        2. PATCH de la chaîne : headband = <url de l'image>")
-            if url and input("\n   Supprimer cette image de test ? (O/n) : "
-                             ).strip().lower() in ("", "o", "oui", "y"):
+            if url and input("\n   Supprimer cette image de test ? (O/n) : ").strip().lower() in (
+                "",
+                "o",
+                "oui",
+                "y",
+            ):
                 rd = sess.delete(url, timeout=30)
-                print(f"   Suppression → HTTP {rd.status_code}"
-                      + ("  (nettoyée)" if rd.status_code in (204, 200) else
-                         "  ⚠ à supprimer à la main"))
+                print(
+                    f"   Suppression → HTTP {rd.status_code}"
+                    + (
+                        "  (nettoyée)"
+                        if rd.status_code in (204, 200)
+                        else "  ⚠ à supprimer à la main"
+                    )
+                )
         else:
             print("   ❌ DÉPÔT REFUSÉ. Réponse du serveur :")
             print("      " + r.text[:500])
@@ -224,8 +237,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -233,8 +248,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     schema_images(sess, rest)
     exemple_image(sess, rest)
@@ -261,6 +275,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

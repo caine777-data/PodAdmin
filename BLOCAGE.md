@@ -42,8 +42,7 @@ d'état, `etat.json`, est publié à côté de `version.json`, sur le même dép
 L'adresse est déjà renseignée dans `config.py` :
 
 ```python
-BLOCAGE_URL = ("https://raw.githubusercontent.com/"
-               "caine777-data/podadmin-releases/main/etat.json")
+BLOCAGE_URL = "https://raw.githubusercontent.com/caine777-data/podadmin-releases/main/etat.json"
 ```
 
 ## Bloquer ou débloquer

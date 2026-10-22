@@ -39,11 +39,36 @@ __version__ = "1.0.0"
 import json
 
 # Mots-clés recherchés dans les noms de champs, par thématique.
-MOTS_HABILLAGE = ("image", "banner", "headband", "logo", "thumbnail", "poster",
-                  "cover", "color", "couleur", "style", "css", "background",
-                  "description", "visible", "title")
-MOTS_ACCUEIL = ("home", "accueil", "front", "featured", "highlight", "carousel",
-                "slider", "block", "bloc", "banner", "welcome")
+MOTS_HABILLAGE = (
+    "image",
+    "banner",
+    "headband",
+    "logo",
+    "thumbnail",
+    "poster",
+    "cover",
+    "color",
+    "couleur",
+    "style",
+    "css",
+    "background",
+    "description",
+    "visible",
+    "title",
+)
+MOTS_ACCUEIL = (
+    "home",
+    "accueil",
+    "front",
+    "featured",
+    "highlight",
+    "carousel",
+    "slider",
+    "block",
+    "bloc",
+    "banner",
+    "welcome",
+)
 
 
 def afficher_champs(schema: dict, mots: tuple, titre: str):
@@ -74,14 +99,16 @@ def sonder_ressource(sess, rest: str, chemin: str, mots: tuple, libelle: str):
         print(f"   OPTIONS → HTTP {r.status_code}")
         if r.status_code == 200:
             data = r.json()
-            actions = (data.get("actions") or {})
+            actions = data.get("actions") or {}
             schema = actions.get("POST") or actions.get("PUT") or {}
             if schema:
                 afficher_champs(schema, mots, "Champs pertinents (schéma d'écriture) :")
                 print(f"\n      Total : {len(schema)} champ(s) modifiable(s).")
             else:
-                print("      (aucun schéma d'écriture exposé — ressource peut-être "
-                      "en lecture seule pour ce compte)")
+                print(
+                    "      (aucun schéma d'écriture exposé — ressource peut-être "
+                    "en lecture seule pour ce compte)"
+                )
         else:
             print("      (OPTIONS refusé : impossible de connaître les champs modifiables)")
     except Exception as e:
@@ -129,9 +156,12 @@ def explorer_racine(sess, rest: str):
             marque = "  ← à examiner" if any(m in n.lower() for m in MOTS_ACCUEIL) else ""
             print(f"      • {n}{marque}")
         candidats = [n for n in noms if any(m in n.lower() for m in MOTS_ACCUEIL)]
-        print("\n   Ressource liée à la page d'accueil :",
-              ", ".join(candidats) if candidats else
-              "AUCUNE — la page d'accueil n'est probablement pas pilotable par l'API.")
+        print(
+            "\n   Ressource liée à la page d'accueil :",
+            ", ".join(candidats)
+            if candidats
+            else "AUCUNE — la page d'accueil n'est probablement pas pilotable par l'API.",
+        )
     except Exception as e:
         print(f"   [X] Exploration impossible : {e}")
 
@@ -143,6 +173,7 @@ def charger_requests():
     installé le projet : ce module est sa seule dépendance."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -153,9 +184,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -168,8 +201,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -177,8 +212,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     explorer_racine(sess, rest)
     sonder_ressource(sess, rest, "/channels/", MOTS_HABILLAGE, "CHAÎNES — habillage")
@@ -208,6 +242,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

@@ -4,6 +4,7 @@ Le serveur de l'éditeur lance, suit et reprend des demandes SÉPARÉES
 (« meta », « quiz », « trad:en »…). Faux Aristote en mémoire, dossier de
 projets temporaire. Aucun réseau.
 """
+
 import json
 import os
 import sys
@@ -26,14 +27,34 @@ class FauxAristote:
         self.envois, self.portes, self.echecs = [], {}, set()
 
     def langues(self):
-        return [{"code": "fr", "name": "Français"}, {"code": "en", "name": "Anglais"},
-                {"code": "pt", "name": "Portugais"}]
+        return [
+            {"code": "fr", "name": "Français"},
+            {"code": "en", "name": "Anglais"},
+            {"code": "pt", "name": "Portugais"},
+        ]
 
-    def enrichir_sous_titres(self, vtt, nom, langue="fr", traduire_vers=None,
-                             metadonnees=True, quiz=True, disciplines=None, types_media=None):
+    def enrichir_sous_titres(
+        self,
+        vtt,
+        nom,
+        langue="fr",
+        traduire_vers=None,
+        metadonnees=True,
+        quiz=True,
+        disciplines=None,
+        types_media=None,
+    ):
         eid = f"e{len(self.envois) + 1}"
-        self.envois.append({"eid": eid, "traduire_vers": traduire_vers, "metadonnees": metadonnees,
-                            "quiz": quiz, "langue": langue, "vtt": vtt})
+        self.envois.append(
+            {
+                "eid": eid,
+                "traduire_vers": traduire_vers,
+                "metadonnees": metadonnees,
+                "quiz": quiz,
+                "langue": langue,
+                "vtt": vtt,
+            }
+        )
         self.portes[eid] = threading.Event()
         return eid
 
@@ -50,21 +71,36 @@ class FauxAristote:
         return {"status": "SUCCESS"}
 
     def version_finale(self, eid):
-        e = next((x for x in self.envois if x["eid"] == eid),
-                 {"traduire_vers": "en", "metadonnees": True, "quiz": True})
+        e = next(
+            (x for x in self.envois if x["eid"] == eid),
+            {"traduire_vers": "en", "metadonnees": True, "quiz": True},
+        )
         v = {"multipleChoiceQuestions": [], "enrichmentVersionMetadata": None, "transcript": {}}
         if e["metadonnees"]:
-            v["enrichmentVersionMetadata"] = {"title": "Titre IA", "description": "D",
-                                              "topics": ["néolithique"], "discipline": "Archéologie",
-                                              "mediaType": "Cours"}
+            v["enrichmentVersionMetadata"] = {
+                "title": "Titre IA",
+                "description": "D",
+                "topics": ["néolithique"],
+                "discipline": "Archéologie",
+                "mediaType": "Cours",
+            }
         if e["quiz"]:
-            v["multipleChoiceQuestions"] = [{"question": f"Question de la demande {eid} sur les toits ?",
-                                             "explanation": "", "choices": [
-                                                 {"optionText": "oui", "correctAnswer": True},
-                                                 {"optionText": "non"}]}]
+            v["multipleChoiceQuestions"] = [
+                {
+                    "question": f"Question de la demande {eid} sur les toits ?",
+                    "explanation": "",
+                    "choices": [
+                        {"optionText": "oui", "correctAnswer": True},
+                        {"optionText": "non"},
+                    ],
+                }
+            ]
         if e["traduire_vers"]:
-            v["transcript"] = {"translatedSentences": [
-                {"start": 0, "end": 6, "text": "Hello everyone. We walk on the roofs."}]}
+            v["transcript"] = {
+                "translatedSentences": [
+                    {"start": 0, "end": 6, "text": "Hello everyone. We walk on the roofs."}
+                ]
+            }
         return v
 
 
@@ -72,18 +108,25 @@ class FauxAristote:
 def banc(tmp_path, monkeypatch):
     import app as A
     from enrichissement import editeur, projet
+
     monkeypatch.setattr(projet, "DOSSIER_PROJETS", str(tmp_path / "projets"))
     p = projet.nouveau(str(tmp_path / "cours.mp4"), "fr")
-    p["sous_titres"] = [{"start": 0, "end": 3, "text": "Bonjour à tous."},
-                        {"start": 3, "end": 6, "text": "On circule par les toits."}]
+    p["sous_titres"] = [
+        {"start": 0, "end": 3, "text": "Bonjour à tous."},
+        {"start": 3, "end": 6, "text": "On circule par les toits."},
+    ]
     p["etat"] = "a_corriger"
     projet.enregistrer(p)
     aristote = FauxAristote()
     enregistres = []
-    srv = editeur.ServeurEditeur(client=lambda: aristote, message_erreur=A.message_editeur,
-                                 sur_enregistrement=enregistres.append)
-    yield SimpleNamespace(srv=srv, aristote=aristote, pid=p["id"], pj=projet,
-                          enregistres=enregistres, editeur=editeur)
+    srv = editeur.ServeurEditeur(
+        client=lambda: aristote,
+        message_erreur=A.message_editeur,
+        sur_enregistrement=enregistres.append,
+    )
+    yield SimpleNamespace(
+        srv=srv, aristote=aristote, pid=p["id"], pj=projet, enregistres=enregistres, editeur=editeur
+    )
     srv.arreter()
 
 
@@ -106,12 +149,17 @@ class TestDemandesSeparees:
             banc.srv.lancer_demande(banc.pid, cle)
         envois = banc.aristote.envois
         assert [(e["metadonnees"], e["quiz"], e["traduire_vers"]) for e in envois] == [
-            (True, False, None), (False, True, None), (False, False, "en")]
+            (True, False, None),
+            (False, True, None),
+            (False, False, "en"),
+        ]
         assert all(e["langue"] == "fr" for e in envois)
         assert {etat(banc, c)["etat"] for c in ("meta", "quiz", "trad:en")} == {"en_cours"}
         for e in envois:
             banc.aristote.liberer(e["eid"])
-        assert attendre(lambda: all(etat(banc, c)["etat"] == "pret" for c in ("meta", "quiz", "trad:en")))
+        assert attendre(
+            lambda: all(etat(banc, c)["etat"] == "pret" for c in ("meta", "quiz", "trad:en"))
+        )
         e = banc.pj.enrichissement(banc.pj.charger(banc.pid))
         assert e["metadonnees"]["titre"] == "Titre IA" and len(e["quiz"]) == 1
         assert e["traductions"]["en"]
@@ -120,7 +168,7 @@ class TestDemandesSeparees:
         banc.srv.lancer_demande(banc.pid, "quiz")
         with pytest.raises(ValueError, match="déjà chez Aristote"):
             banc.srv.lancer_demande(banc.pid, "quiz")
-        banc.srv.lancer_demande(banc.pid, "meta")      # une AUTRE partie reste possible
+        banc.srv.lancer_demande(banc.pid, "meta")  # une AUTRE partie reste possible
         assert len(banc.aristote.envois) == 2
 
     def test_autres_questions_s_ajoutent(self, banc):
@@ -133,8 +181,15 @@ class TestDemandesSeparees:
         quiz = banc.pj.enrichissement(banc.pj.charger(banc.pid))["quiz"]
         assert [q["nouvelle"] for q in quiz] == [False, True]
 
-    @pytest.mark.parametrize("cle, motif", [("trad:es", "ne traduit pas"), ("trad:fr", "ne traduit pas"),
-                                            ("notes", "inconnue"), ("", "inconnue")])
+    @pytest.mark.parametrize(
+        "cle, motif",
+        [
+            ("trad:es", "ne traduit pas"),
+            ("trad:fr", "ne traduit pas"),
+            ("notes", "inconnue"),
+            ("", "inconnue"),
+        ],
+    )
     def test_demandes_refusees(self, banc, cle, motif):
         with pytest.raises(ValueError, match=motif):
             banc.srv.lancer_demande(banc.pid, cle)
@@ -153,12 +208,14 @@ class TestDemandesSeparees:
         banc.aristote.echecs.add("e1")
         banc.aristote.liberer("e1")
         banc.aristote.liberer("e2")
-        assert attendre(lambda: etat(banc, "meta")["etat"] == "erreur" and etat(banc, "quiz")["etat"] == "pret")
+        assert attendre(
+            lambda: etat(banc, "meta")["etat"] == "erreur" and etat(banc, "quiz")["etat"] == "pret"
+        )
         assert etat(banc, "meta")["detail"].startswith("Instance injoignable"), etat(banc, "meta")
 
     def test_corrections_faites_pendant_l_attente_preservees(self, banc):
         banc.srv.lancer_demande(banc.pid, "meta")
-        with banc.srv.verrou:            # comme la page, qui passe par la route HTTP
+        with banc.srv.verrou:  # comme la page, qui passe par la route HTTP
             p = banc.pj.charger(banc.pid)
             p["sous_titres"][0]["text"] = "Bonjour à toutes et à tous."
             banc.pj.enregistrer(p)
@@ -170,8 +227,9 @@ class TestDemandesSeparees:
 
     def test_ancienne_route_groupee_eclatee(self, banc):
         banc.srv.lancer_enrichissement(banc.pid, "pt", True, False)
-        assert [(e["traduire_vers"], e["metadonnees"], e["quiz"]) for e in banc.aristote.envois] == [
-            ("pt", False, False), (None, True, False)]
+        assert [
+            (e["traduire_vers"], e["metadonnees"], e["quiz"]) for e in banc.aristote.envois
+        ] == [("pt", False, False), (None, True, False)]
 
 
 class TestEcrituresSimultanees:
@@ -180,7 +238,7 @@ class TestEcrituresSimultanees:
         mutuellement (FileNotFoundError, puis projet perdu). Puis, sous charge,
         une seconde de tentatives ne suffisait pas (« Accès refusé », audit O7)."""
         p = banc.pj.charger(banc.pid)
-        p["mots"] = [["mot", 0, 1]] * 20000          # ~ une heure de vidéo
+        p["mots"] = [["mot", 0, 1]] * 20000  # ~ une heure de vidéo
         banc.pj.enregistrer(p)
         erreurs = []
 
@@ -190,8 +248,9 @@ class TestEcrituresSimultanees:
                     p = banc.pj.charger(banc.pid)
                     p[f"fil{n}"] = i
                     banc.pj.enregistrer(p)
-            except Exception as e:                              # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 erreurs.append(repr(e))
+
         fils = [threading.Thread(target=ecrire, args=(n,)) for n in range(6)]
         for f in fils:
             f.start()
@@ -199,8 +258,11 @@ class TestEcrituresSimultanees:
             f.join()
         assert erreurs == []
         assert banc.pj.charger(banc.pid)["id"] == banc.pid
-        reste = [f for f in os.listdir(os.path.dirname(banc.pj.chemin_projet(banc.pid)))
-                 if f.endswith(".tmp")]
+        reste = [
+            f
+            for f in os.listdir(os.path.dirname(banc.pj.chemin_projet(banc.pid)))
+            if f.endswith(".tmp")
+        ]
         assert reste == [], "fichiers temporaires abandonnés"
 
 
@@ -210,8 +272,10 @@ class TestReprise:
         # les suit plus (lancer_demande en aurait démarré un, qui masquait
         # une reprise incomplète).
         p = banc.pj.charger(banc.pid)
-        for eid, cle, envoi in (("e1", "meta", {"metadonnees": True, "quiz": False, "traduire_vers": None}),
-                                ("e2", "trad:pt", {"metadonnees": False, "quiz": False, "traduire_vers": "pt"})):
+        for eid, cle, envoi in (
+            ("e1", "meta", {"metadonnees": True, "quiz": False, "traduire_vers": None}),
+            ("e2", "trad:pt", {"metadonnees": False, "quiz": False, "traduire_vers": "pt"}),
+        ):
             banc.pj.nouvelle_demande(p, cle, eid, [cle], groupes=p["sous_titres"])
             banc.aristote.envois.append({"eid": eid, **envoi})
         banc.pj.enregistrer(p)
@@ -220,20 +284,31 @@ class TestReprise:
             assert autre.reprendre(banc.pid) == 2
             for eid in ("e1", "e2"):
                 banc.aristote.liberer(eid)
-            assert attendre(lambda: etat(banc, "meta")["etat"] == "pret"
-                            and etat(banc, "trad:pt")["etat"] == "pret")
+            assert attendre(
+                lambda: (
+                    etat(banc, "meta")["etat"] == "pret" and etat(banc, "trad:pt")["etat"] == "pret"
+                )
+            )
         finally:
             autre.arreter()
 
     def test_ancienne_demande_groupee_reprise(self, banc):
         p = banc.pj.charger(banc.pid)
-        p["enrichissement"] = {"etat": "en_cours", "eid": "vieux", "traduire_vers": "en",
-                               "groupes": [{"start": 0, "end": 6, "text": "Bonjour à tous. On circule…"}],
-                               "metadonnees": {}, "quiz": [], "traductions": {}}
+        p["enrichissement"] = {
+            "etat": "en_cours",
+            "eid": "vieux",
+            "traduire_vers": "en",
+            "groupes": [{"start": 0, "end": 6, "text": "Bonjour à tous. On circule…"}],
+            "metadonnees": {},
+            "quiz": [],
+            "traductions": {},
+        }
         banc.pj.enregistrer(p)
         assert banc.srv.reprendre(banc.pid) == 1
         banc.aristote.liberer("vieux")
-        assert attendre(lambda: all(etat(banc, c)["etat"] == "pret" for c in ("meta", "quiz", "trad:en")))
+        assert attendre(
+            lambda: all(etat(banc, c)["etat"] == "pret" for c in ("meta", "quiz", "trad:en"))
+        )
 
     def test_sans_identifiants_rien_n_est_repris(self, banc):
         banc.srv.lancer_demande(banc.pid, "meta")
@@ -246,12 +321,16 @@ class TestReprise:
     def test_l_onglet_reprend_les_demandes_par_partie(self, banc):
         """PanneauEnrichissement.reprendre_travaux lit les demandes séparées."""
         import app as A
+
         banc.srv.lancer_demande(banc.pid, "quiz")
         lignes, reprises = [], []
-        faux = SimpleNamespace(journal=lignes.append,
-                               serveur=SimpleNamespace(reprendre=reprises.append),
-                               hote=SimpleNamespace(_run=lambda *a: None),
-                               _client=lambda: None, _maj_ligne=lambda p: None)
+        faux = SimpleNamespace(
+            journal=lignes.append,
+            serveur=SimpleNamespace(reprendre=reprises.append),
+            hote=SimpleNamespace(_run=lambda *a: None),
+            _client=lambda: None,
+            _maj_ligne=lambda p: None,
+        )
         A.PanneauEnrichissement.reprendre_travaux(faux)
         assert reprises == [banc.pid]
         assert lignes == ["Reprise du suivi Aristote : cours.mp4 (quiz)"]
@@ -261,8 +340,12 @@ class TestVueEtRoutes:
     def _appel(self, banc, chemin, corps=None):
         url = f"http://127.0.0.1:{banc.srv.port}/api/{banc.pid}{chemin}?t={banc.srv.jeton}"
         data = None if corps is None else json.dumps(corps).encode("utf-8")
-        req = urllib.request.Request(url, data=data, method="GET" if corps is None else "POST",
-                                     headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="GET" if corps is None else "POST",
+            headers={"Content-Type": "application/json"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read())

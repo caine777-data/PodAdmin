@@ -4,14 +4,15 @@
 chaque carte, une pastille, un texte et UNE action dont le libellé suit
 l'état. Testée sans fenêtre.
 """
+
 import os
 import sys
 
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
-import app as A                                   # noqa: E402
-from enrichissement import projet as pj           # noqa: E402
+import app as A  # noqa: E402
+from enrichissement import projet as pj  # noqa: E402
 
 PRM = pj.st.Parametres()
 
@@ -50,7 +51,9 @@ class TestTranscription:
         assert c["meta"]["action"] == "enchainer_meta"
         p["a_enchainer"] = ["meta"]
         c = A.cartes_ia(p, True)
-        assert c["meta"]["action"] == "" and c["meta"]["pastille"] == "demandé après la transcription"
+        assert (
+            c["meta"]["action"] == "" and c["meta"]["pastille"] == "demandé après la transcription"
+        )
         assert c["quiz"]["action"] == "enchainer_quiz"
 
     def test_echec(self):
@@ -99,8 +102,16 @@ class TestParcours:
     def test_quiz_compte_et_autres_questions(self):
         p = projet()
         pj.nouvelle_demande(p, "quiz", "e1", ["quiz"])
-        pj.appliquer_demande(p, "quiz", {"multipleChoiceQuestions": [
-            {"question": "Q ?", "choices": [{"optionText": "a", "correctAnswer": True}]}]}, PRM)
+        pj.appliquer_demande(
+            p,
+            "quiz",
+            {
+                "multipleChoiceQuestions": [
+                    {"question": "Q ?", "choices": [{"optionText": "a", "correctAnswer": True}]}
+                ]
+            },
+            PRM,
+        )
         c = A.cartes_ia(p, True)
         assert c["quiz"]["pastille"] == "1 question, 1 retenue"
         assert c["quiz"]["action2"] == "demander_quiz"
@@ -108,8 +119,16 @@ class TestParcours:
     def test_traductions_resumees(self):
         p = projet()
         pj.nouvelle_demande(p, "trad:en", "e1", ["trad:en"], groupes=p["sous_titres"])
-        pj.appliquer_demande(p, "trad:en", {"transcript": {"translatedSentences": [
-            {"start": 0, "end": 2, "text": "Hello everyone."}]}}, PRM)
+        pj.appliquer_demande(
+            p,
+            "trad:en",
+            {
+                "transcript": {
+                    "translatedSentences": [{"start": 0, "end": 2, "text": "Hello everyone."}]
+                }
+            },
+            PRM,
+        )
         pj.nouvelle_demande(p, "trad:pt", "e2", ["trad:pt"])
         assert "anglais (prête), portugais (en cours)" in A.cartes_ia(p, True)["st"]["detail"]
 
@@ -136,12 +155,24 @@ class TestBoutonEnrichirDansVideos:
         """Raccourci de l'onglet Vidéos vers l'onglet Enrichissement IA
         (décision de Cédric) : neutre, ce n'est pas l'action de l'écran."""
         import ast
+
         src = open(os.path.join(RACINE, "app.py"), encoding="utf-8").read()
-        fn = next(n for n in ast.walk(ast.parse(src))
-                  if isinstance(n, ast.FunctionDef) and n.name == "_browse_construire_detail")
-        bouton = next(n for n in ast.walk(fn) if isinstance(n, ast.Call)
-                      and any(k.arg == "text" and isinstance(k.value, ast.Constant)
-                              and "Enrichir" in str(k.value.value) for k in n.keywords))
+        fn = next(
+            n
+            for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.FunctionDef) and n.name == "_browse_construire_detail"
+        )
+        bouton = next(
+            n
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Call)
+            and any(
+                k.arg == "text"
+                and isinstance(k.value, ast.Constant)
+                and "Enrichir" in str(k.value.value)
+                for k in n.keywords
+            )
+        )
         code = ast.unparse(bouton)
         assert "_enrichir_video" in code and "fg_color=C_NEUTRE" in code, code
 
@@ -151,7 +182,7 @@ class TestAFaire:
 
     def test_transcription_ou_relecture(self):
         assert A.projet_a_faire_ia(projet(etat="attente"))
-        assert A.projet_a_faire_ia(projet())                       # à relire
+        assert A.projet_a_faire_ia(projet())  # à relire
 
     def test_relu_sans_rien_d_autre_est_termine(self):
         p = projet()
@@ -172,8 +203,12 @@ class TestAFaire:
         p = projet()
         pj.marquer_relu(p)
         pj.nouvelle_demande(p, "trad:en", "e1", ["trad:en"], groupes=p["sous_titres"])
-        pj.appliquer_demande(p, "trad:en", {"transcript": {"translatedSentences": [
-            {"start": 0, "end": 2, "text": "Hello."}]}}, PRM)
+        pj.appliquer_demande(
+            p,
+            "trad:en",
+            {"transcript": {"translatedSentences": [{"start": 0, "end": 2, "text": "Hello."}]}},
+            PRM,
+        )
         assert A.projet_a_faire_ia(p)
 
     def test_enchainement_en_attente(self):
@@ -183,7 +218,6 @@ class TestAFaire:
         assert A.projet_a_faire_ia(p)
 
 
-
 class TestRafraichissementsRegroupes:
     """Audit O6 : la page enregistre pendant la frappe ; l'onglet regroupe
     ces rafraîchissements au lieu de tout recalculer à chaque fois."""
@@ -191,13 +225,19 @@ class TestRafraichissementsRegroupes:
     def test_un_seul_rafraichissement_programme(self):
         import queue
         from types import SimpleNamespace
+
         q = queue.Queue()
         for _ in range(8):
             q.put(("recharger", "pod1"))
         programmes = []
-        faux = SimpleNamespace(evenements=q, _a_recharger=set(), _recharge_prevue=False,
-                               after=lambda ms, f: programmes.append(ms), winfo_exists=lambda: True,
-                               hote=SimpleNamespace(_log=lambda *a: None))
+        faux = SimpleNamespace(
+            evenements=q,
+            _a_recharger=set(),
+            _recharge_prevue=False,
+            after=lambda ms, f: programmes.append(ms),
+            winfo_exists=lambda: True,
+            hote=SimpleNamespace(_log=lambda *a: None),
+        )
         faux._recharger_attente = lambda: None
         A.PanneauEnrichissement._traiter_evenements(faux)
         assert programmes.count(500) == 1 and faux._a_recharger == {"pod1"}, programmes

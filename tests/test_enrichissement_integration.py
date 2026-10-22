@@ -5,6 +5,7 @@ que les modules copiés dans `enrichissement/` vivent bien dans PodAdmin : ils
 s'importent, retrouvent leurs ressources, et ne dépendent d'aucun fichier
 resté dans le dossier de SousTitreur.
 """
+
 import ast
 import importlib
 import os
@@ -22,8 +23,17 @@ DOSSIER_PAQUET = os.path.join(RACINE, "enrichissement")
 # `config`, `charte`, `media` sont ceux de SousTitreur : les importer ici
 # chargerait en silence le `config.py` de PodAdmin, sans les mêmes noms.
 IMPORTS_POD_ADMIN_PERMIS = {"__version__", "pod_api"}
-MODULES_SOUSTITREUR = {"config", "charte", "media", "app", "projet", "sous_titres",
-                       "editeur", "journal", "aristote_api"}
+MODULES_SOUSTITREUR = {
+    "config",
+    "charte",
+    "media",
+    "app",
+    "projet",
+    "sous_titres",
+    "editeur",
+    "journal",
+    "aristote_api",
+}
 
 
 @pytest.mark.parametrize("nom", MODULES)
@@ -34,9 +44,10 @@ def test_le_module_s_importe_depuis_podadmin(nom):
 def test_les_donnees_restent_dans_le_dossier_de_soustitreur():
     """Les projets commencés dans SousTitreur doivent se retrouver tels quels."""
     from enrichissement import journal, projet, reglages
+
     attendu = os.path.join(os.path.expanduser("~"), ".soustitreur")
-    assert reglages.DOSSIER == attendu
-    assert projet.DOSSIER_PROJETS == os.path.join(attendu, "projets")
+    assert attendu == reglages.DOSSIER
+    assert os.path.join(attendu, "projets") == projet.DOSSIER_PROJETS
     assert os.path.dirname(journal.CHEMIN) == attendu
 
 
@@ -45,6 +56,7 @@ def test_l_editeur_trouve_ses_ressources(ressource):
     """L'éditeur vit dans un sous-dossier : il doit chercher `assets/` à la
     racine de PodAdmin, et non à côté de son propre fichier."""
     from enrichissement import editeur
+
     assert os.path.isfile(editeur._ressource(ressource))
 
 
@@ -59,8 +71,9 @@ def test_aucune_dependance_a_un_fichier_reste_dans_soustitreur(nom):
             noms = [n.module.split(".")[0]]
         else:
             continue
-        fautifs += [m for m in noms if m in MODULES_SOUSTITREUR
-                    and m not in IMPORTS_POD_ADMIN_PERMIS]
+        fautifs += [
+            m for m in noms if m in MODULES_SOUSTITREUR and m not in IMPORTS_POD_ADMIN_PERMIS
+        ]
     assert not fautifs, f"{nom}.py importe en absolu : {fautifs} (utiliser « from . import »)"
 
 
@@ -70,6 +83,7 @@ class TestEnregistrementSousWindows:
 
     def _projet(self, tmp_path, monkeypatch):
         from enrichissement import projet
+
         monkeypatch.setattr(projet, "DOSSIER_PROJETS", str(tmp_path))
         p = projet.nouveau("cours.mp4", "fr")
         return projet, p
@@ -83,6 +97,7 @@ class TestEnregistrementSousWindows:
                 refus[0] -= 1
                 raise PermissionError("Accès refusé")
             vrai_replace(a, b)
+
         monkeypatch.setattr(projet.os, "replace", replace_capricieux)
         projet.enregistrer(p)
         assert projet.charger(p["id"])["nom"] == "cours.mp4"
@@ -92,14 +107,18 @@ class TestEnregistrementSousWindows:
 
         def toujours_refuse(a, b):
             raise PermissionError("Accès refusé")
+
         monkeypatch.setattr(projet.os, "replace", toujours_refuse)
         monkeypatch.setattr("time.sleep", lambda s: None)
         with pytest.raises(PermissionError):
             projet.enregistrer(p)
 
 
-@pytest.mark.parametrize("fichier", [f"enrichissement/{m}.py" for m in MODULES]
-                         + ["enrichissement/__init__.py", "assets/editeur.html"])
+@pytest.mark.parametrize(
+    "fichier",
+    [f"enrichissement/{m}.py" for m in MODULES]
+    + ["enrichissement/__init__.py", "assets/editeur.html"],
+)
 def test_aucune_adresse_personnelle(fichier):
     """Ces fichiers sont livrés dans l'exécutable, publié sur un dépôt public."""
     assert "gmail" not in open(os.path.join(RACINE, fichier), encoding="utf-8").read().lower()

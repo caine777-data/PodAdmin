@@ -74,8 +74,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import config as cfg                                            # noqa: E402
-from enrichissement import reglages                            # noqa: E402
+import config as cfg  # noqa: E402
+from enrichissement import reglages  # noqa: E402
 from enrichissement.aristote_api import AristoteAPI, AristoteErreur  # noqa: E402
 
 PHRASES = [
@@ -106,54 +106,98 @@ def vtt() -> str:
 RIEN = {"generateMetadata": False, "generateQuiz": False, "generateNotes": False}
 SERIE_1 = {
     "A_traduction_seule": {**RIEN, "translateTo": "en"},
-    "B_quiz_seul":        {**RIEN, "generateQuiz": True},
-    "C_metadonnees":      {**RIEN, "generateMetadata": True,
-                           "disciplines": ["Histoire", "Archéologie", "Autres"],
-                           "mediaTypes": ["Cours", "Conférence"]},
+    "B_quiz_seul": {**RIEN, "generateQuiz": True},
+    "C_metadonnees": {
+        **RIEN,
+        "generateMetadata": True,
+        "disciplines": ["Histoire", "Archéologie", "Autres"],
+        "mediaTypes": ["Cours", "Conférence"],
+    },
 }
 SERIE_2 = {
     "D_notes_seules": {**RIEN, "generateNotes": True},
-    "E_quiz_bis":     {**RIEN, "generateQuiz": True},
+    "E_quiz_bis": {**RIEN, "generateQuiz": True},
 }
 # Listes réelles de videos.utoulouse.fr, relevées dans la demande en échec
 # du 2026-10-14 (projet pod164).
-DISCIPLINES_POD = ["Biologie", "Chimie", "Informatique", "Mathématiques", "Médecine",
-                   "Odontologie", "Pharmacie", "Physique", "Santé",
-                   "Sciences de la Terre et de l'Univers",
-                   "Sciences du sport et du mouvement humain"]
+DISCIPLINES_POD = [
+    "Biologie",
+    "Chimie",
+    "Informatique",
+    "Mathématiques",
+    "Médecine",
+    "Odontologie",
+    "Pharmacie",
+    "Physique",
+    "Santé",
+    "Sciences de la Terre et de l'Univers",
+    "Sciences du sport et du mouvement humain",
+]
 TYPES_POD = ["capsule d'enseignement", "Communication", "Tutoriels", "vidéo"]
 SERIE_3 = {
-    "F_meta_listes_courtes": {**RIEN, "generateMetadata": True,
-                              "disciplines": ["Histoire", "Archéologie", "Autres"],
-                              "mediaTypes": ["Cours", "Conférence"]},
-    "G_meta_listes_pod":     {**RIEN, "generateMetadata": True,
-                              "disciplines": DISCIPLINES_POD, "mediaTypes": TYPES_POD},
-    "H_quiz_seul":           {**RIEN, "generateQuiz": True},
+    "F_meta_listes_courtes": {
+        **RIEN,
+        "generateMetadata": True,
+        "disciplines": ["Histoire", "Archéologie", "Autres"],
+        "mediaTypes": ["Cours", "Conférence"],
+    },
+    "G_meta_listes_pod": {
+        **RIEN,
+        "generateMetadata": True,
+        "disciplines": DISCIPLINES_POD,
+        "mediaTypes": TYPES_POD,
+    },
+    "H_quiz_seul": {**RIEN, "generateQuiz": True},
 }
 SERIE_4 = {
-    "I_groupee": {**RIEN, "translateTo": "en", "generateMetadata": True, "generateQuiz": True,
-                  "disciplines": ["Histoire", "Archéologie", "Autres"],
-                  "mediaTypes": ["Cours", "Conférence"]},
+    "I_groupee": {
+        **RIEN,
+        "translateTo": "en",
+        "generateMetadata": True,
+        "generateQuiz": True,
+        "disciplines": ["Histoire", "Archéologie", "Autres"],
+        "mediaTypes": ["Cours", "Conférence"],
+    },
 }
 # Second modèle proposé par l'instance (route ai_model_infrastructure_combinations) :
 # le modèle par défaut, gpt-oss-120b, échoue sur tout enrichissement depuis le 11/10.
 LLAMA = {"aiModel": "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic", "infrastructure": "ILaaS"}
 SERIE_5 = {
-    "J_meta_llama": {**RIEN, **LLAMA, "generateMetadata": True,
-                     "disciplines": ["Histoire", "Archéologie", "Autres"],
-                     "mediaTypes": ["Cours", "Conférence"]},
+    "J_meta_llama": {
+        **RIEN,
+        **LLAMA,
+        "generateMetadata": True,
+        "disciplines": ["Histoire", "Archéologie", "Autres"],
+        "mediaTypes": ["Cours", "Conférence"],
+    },
     "K_quiz_llama": {**RIEN, **LLAMA, "generateQuiz": True},
 }
 SERIE2 = "--serie2" in sys.argv
 SERIE3 = "--serie3" in sys.argv
 SERIE4 = "--serie4" in sys.argv
 SERIE5 = "--serie5" in sys.argv
-DEMANDES = (SERIE_5 if SERIE5 else SERIE_4 if SERIE4 else SERIE_3 if SERIE3 else
-            SERIE_2 if SERIE2 else SERIE_1)
-FICHIER = ("sonde_aristote_demandes_5.json" if SERIE5 else
-           "sonde_aristote_demandes_4.json" if SERIE4 else
-           "sonde_aristote_demandes_3.json" if SERIE3 else
-           "sonde_aristote_demandes_2.json" if SERIE2 else "sonde_aristote_demandes.json")
+DEMANDES = (
+    SERIE_5
+    if SERIE5
+    else SERIE_4
+    if SERIE4
+    else SERIE_3
+    if SERIE3
+    else SERIE_2
+    if SERIE2
+    else SERIE_1
+)
+FICHIER = (
+    "sonde_aristote_demandes_5.json"
+    if SERIE5
+    else "sonde_aristote_demandes_4.json"
+    if SERIE4
+    else "sonde_aristote_demandes_3.json"
+    if SERIE3
+    else "sonde_aristote_demandes_2.json"
+    if SERIE2
+    else "sonde_aristote_demandes.json"
+)
 
 
 def envoyer_vtt(client: AristoteAPI, texte: str, nom: str, parametres: dict) -> str:
@@ -163,8 +207,9 @@ def envoyer_vtt(client: AristoteAPI, texte: str, nom: str, parametres: dict) -> 
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(texte)
-        return client.envoyer_fichier(chemin, "fr", nom_original=f"sonde_{nom}.vtt",
-                                      parametres_sup=parametres)
+        return client.envoyer_fichier(
+            chemin, "fr", nom_original=f"sonde_{nom}.vtt", parametres_sup=parametres
+        )
     finally:
         try:
             os.remove(chemin)
@@ -186,8 +231,10 @@ def main() -> int:
         print("✖", e)
         return 1
 
-    print(f"\n{len(DEMANDES)} demandes vont être créées chez Aristote (texte de 10 sous-titres) :",
-          ", ".join(DEMANDES))
+    print(
+        f"\n{len(DEMANDES)} demandes vont être créées chez Aristote (texte de 10 sous-titres) :",
+        ", ".join(DEMANDES),
+    )
     if input("Continuer ? (oui / non) : ").strip().lower() != "oui":
         return 0
 
@@ -197,7 +244,7 @@ def main() -> int:
     def envoyer(nom):
         try:
             ids[nom] = envoyer_vtt(client, texte, nom, DEMANDES[nom])
-        except Exception as e:                                  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             erreurs[nom] = f"{type(e).__name__} : {e}"
 
     fils = [threading.Thread(target=envoyer, args=(n,)) for n in DEMANDES]
@@ -212,11 +259,18 @@ def main() -> int:
 
     def suivre(nom):
         try:
-            client.attendre(ids[nom], intervalle=10, delai_max=45 * 60, jusqu_au_bout=True,
-                            rappel=lambda s, _d: print(f"  [{int(time.time() - debut):4d} s] {nom} : {s}"))
-            resultats[nom] = {"duree_s": round(time.time() - debut),
-                              "version": client.version_finale(ids[nom])}
-        except Exception as e:                                  # noqa: BLE001
+            client.attendre(
+                ids[nom],
+                intervalle=10,
+                delai_max=45 * 60,
+                jusqu_au_bout=True,
+                rappel=lambda s, _d: print(f"  [{int(time.time() - debut):4d} s] {nom} : {s}"),
+            )
+            resultats[nom] = {
+                "duree_s": round(time.time() - debut),
+                "version": client.version_finale(ids[nom]),
+            }
+        except Exception as e:  # noqa: BLE001
             erreurs[nom] = f"{type(e).__name__} : {e}"
 
     print("\nSuivi (peut prendre plusieurs minutes, Ctrl+C pour abandonner) :")
@@ -235,11 +289,15 @@ def main() -> int:
         tr = v.get("transcript") or {}
         meta = v.get("enrichmentVersionMetadata") or {}
         print(f"{nom} : terminé en {resultats[nom]['duree_s']} s")
-        print(f"    traduction : {len(tr.get('translatedSentences') or [])} phrase(s) "
-              f"pour {len(PHRASES)} envoyées")
+        print(
+            f"    traduction : {len(tr.get('translatedSentences') or [])} phrase(s) "
+            f"pour {len(PHRASES)} envoyées"
+        )
         print(f"    quiz       : {len(v.get('multipleChoiceQuestions') or [])} question(s)")
-        print(f"    métadonnées: titre « {meta.get('title') or ''} », discipline "
-              f"« {meta.get('discipline') or ''} », type « {meta.get('mediaType') or ''} »")
+        print(
+            f"    métadonnées: titre « {meta.get('title') or ''} », discipline "
+            f"« {meta.get('discipline') or ''} », type « {meta.get('mediaType') or ''} »"
+        )
         print(f"    clés de la réponse : {sorted(v)}")
         notes = v.get("notes")
         if notes:
@@ -253,7 +311,9 @@ def main() -> int:
             print(f"    question   : {q.get('question')}")
 
     # E : la question du deuxième quiz est-elle nouvelle ?
-    precedent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sonde_aristote_demandes.json")
+    precedent = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "sonde_aristote_demandes.json"
+    )
     if SERIE2 and "E_quiz_bis" in resultats and os.path.exists(precedent):
         with open(precedent, encoding="utf-8") as f:
             b = json.load(f).get("resultats", {}).get("B_quiz_seul", {}).get("version", {})
@@ -263,16 +323,26 @@ def main() -> int:
 
     chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), FICHIER)
     with open(chemin, "w", encoding="utf-8") as f:
-        json.dump({"ids": ids, "erreurs": erreurs, "resultats": resultats}, f,
-                  ensure_ascii=False, indent=2)
+        json.dump(
+            {"ids": ids, "erreurs": erreurs, "resultats": resultats},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
     print(f"\nRéponses brutes : {chemin}")
 
-    if ids and input("\nSupprimer les enrichissements créés chez Aristote ? (oui / non) : ").strip().lower() == "oui":
+    if (
+        ids
+        and input("\nSupprimer les enrichissements créés chez Aristote ? (oui / non) : ")
+        .strip()
+        .lower()
+        == "oui"
+    ):
         for nom, eid in ids.items():
             try:
                 client.supprimer(eid)
                 print(f"  {nom} : supprimé")
-            except Exception as e:                              # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 print(f"  {nom} : suppression impossible ({e})")
     return 0
 

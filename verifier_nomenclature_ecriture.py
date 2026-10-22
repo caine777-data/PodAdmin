@@ -40,7 +40,6 @@ l'autre. Tous les objets créés sont supprimés, y compris en cas d'erreur.
 __author__ = "Cédric MONNA"
 __version__ = "1.0.0"
 
-import json
 from datetime import datetime
 
 PREFIXE = "ZZ_SONDE_PODADMIN_"
@@ -49,6 +48,7 @@ PREFIXE = "ZZ_SONDE_PODADMIN_"
 def charger_requests():
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -58,9 +58,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -87,6 +89,7 @@ def lire_site(sess, rest):
 #  ESSAI A — renommer une discipline
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def essai_renommage(sess, rest, site_url):
     print(f"\n{'=' * 70}")
     print("  ESSAI A — peut-on RENOMMER une discipline ?")
@@ -101,11 +104,9 @@ def essai_renommage(sess, rest, site_url):
     url = None
     try:
         # `site` au SINGULIER et sous forme de CHAÎNE (établi par sonde).
-        r = sess.post(f"{rest}/discipline/",
-                      json={"title": titre, "site": site_url}, timeout=30)
+        r = sess.post(f"{rest}/discipline/", json={"title": titre, "site": site_url}, timeout=30)
         if r.status_code not in (200, 201):
-            print(f"\n   ❌ Création impossible (HTTP {r.status_code}) : "
-                  f"{(r.text or '')[:200]}")
+            print(f"\n   ❌ Création impossible (HTTP {r.status_code}) : {(r.text or '')[:200]}")
             return
         url = (r.json() or {}).get("url")
         print(f"\n   Discipline jetable créée : {url}")
@@ -134,8 +135,7 @@ def essai_renommage(sess, rest, site_url):
         if url:
             try:
                 r = sess.delete(url, timeout=25)
-                print(f"\n   Nettoyage : discipline jetable supprimée "
-                      f"(HTTP {r.status_code}).")
+                print(f"\n   Nettoyage : discipline jetable supprimée (HTTP {r.status_code}).")
             except Exception as e:
                 print(f"\n   ⚠️  NETTOYAGE ÉCHOUÉ : {e}")
                 print(f"      Supprimez « {titre} » manuellement.")
@@ -144,6 +144,7 @@ def essai_renommage(sess, rest, site_url):
 # ═══════════════════════════════════════════════════════════════════════════
 #  ESSAI B — sort des vidéos d'un type supprimé
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def choisir_video(sess, rest):
     """Retient de préférence une vidéo en BROUILLON, donc non publique."""
@@ -170,11 +171,10 @@ def essai_suppression_type(sess, rest, site_url):
         return
 
     type_origine = video.get("type")
-    type_origine = (type_origine.get("url") if isinstance(type_origine, dict)
-                    else type_origine)
+    type_origine = type_origine.get("url") if isinstance(type_origine, dict) else type_origine
     print(f"""
-   Vidéo retenue : {video.get('slug')}
-   Brouillon     : {'OUI (non publique)' if video.get('is_draft') else 'NON — vidéo PUBLIÉE'}
+   Vidéo retenue : {video.get("slug")}
+   Brouillon     : {"OUI (non publique)" if video.get("is_draft") else "NON — vidéo PUBLIÉE"}
    Type actuel   : {type_origine}
 
    Déroulement : un type jetable est créé, cette vidéo lui est rattachée, le
@@ -195,19 +195,19 @@ def essai_suppression_type(sess, rest, site_url):
     rattache = False
     try:
         # `sites` au PLURIEL et sous forme de LISTE, et il est obligatoire.
-        r = sess.post(f"{rest}/types/",
-                      json={"title": titre, "sites": [site_url]}, timeout=30)
+        r = sess.post(f"{rest}/types/", json={"title": titre, "sites": [site_url]}, timeout=30)
         if r.status_code not in (200, 201):
-            print(f"\n   ❌ Création du type impossible (HTTP {r.status_code}) : "
-                  f"{(r.text or '')[:200]}")
+            print(
+                f"\n   ❌ Création du type impossible (HTTP {r.status_code}) : "
+                f"{(r.text or '')[:200]}"
+            )
             return
         url_type = (r.json() or {}).get("url")
         print(f"\n   Type jetable créé : {url_type}")
 
         r = sess.patch(url_video, json={"type": url_type}, timeout=30)
         if r.status_code not in (200, 202):
-            print(f"   ❌ Rattachement refusé (HTTP {r.status_code}) : "
-                  f"{(r.text or '')[:200]}")
+            print(f"   ❌ Rattachement refusé (HTTP {r.status_code}) : {(r.text or '')[:200]}")
             return
         rattache = True
         print("   Vidéo rattachée au type jetable.")
@@ -221,13 +221,13 @@ def essai_suppression_type(sess, rest, site_url):
             print("      → Le serveur PROTÈGE les types utilisés. C'est le")
             print("        comportement le plus sûr : PodAdmin n'a qu'à relayer")
             print("        le refus, ce qu'il fait déjà.")
-            return                       # le type existe encore, nettoyé plus bas
+            return  # le type existe encore, nettoyé plus bas
 
         if r.status_code not in (200, 202, 204):
             print(f"\n   ⚠  Réponse inattendue : {(r.text or '')[:250]}")
             return
 
-        url_type = None                  # supprimé : plus rien à nettoyer
+        url_type = None  # supprimé : plus rien à nettoyer
         # Que devient la vidéo ?
         r = sess.get(url_video, timeout=25)
         if r.status_code == 404:
@@ -239,8 +239,7 @@ def essai_suppression_type(sess, rest, site_url):
             return
         apres = r.json()
         type_apres = apres.get("type")
-        type_apres = (type_apres.get("url") if isinstance(type_apres, dict)
-                      else type_apres)
+        type_apres = type_apres.get("url") if isinstance(type_apres, dict) else type_apres
         print(f"\n   Vidéo toujours présente. Son type vaut : {type_apres!r}")
         if not type_apres:
             print("\n   🟠 TYPE VIDÉ — la vidéo survit mais perd son classement.")
@@ -279,8 +278,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Jeton : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -288,8 +289,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  NOMENCLATURES — les deux comportements non confirmés")
@@ -317,6 +317,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

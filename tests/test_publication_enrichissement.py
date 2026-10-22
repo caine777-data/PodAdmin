@@ -6,6 +6,7 @@ vérifie ce que PodAdmin y raccorde : une ligne dans SON Journal pour chaque
 Faux serveur Pod en mémoire (repris de test_pod_enrichissement) ; dossier
 personnel temporaire (conftest.py). Aucun réseau.
 """
+
 import json
 import os
 import sys
@@ -28,6 +29,7 @@ def banc(tmp_path, monkeypatch):
     import app as A
     from enrichissement import editeur, journal, projet
     from pod_api import PodAPI
+
     monkeypatch.setattr(projet, "DOSSIER_PROJETS", str(tmp_path / "projets"))
     monkeypatch.setattr(journal, "CHEMIN", str(tmp_path / "journal_pod.jsonl"))
     api = PodAPI(BASE, "jeton")
@@ -39,18 +41,28 @@ def banc(tmp_path, monkeypatch):
     p["etat"] = "corrige"
     projet.enregistrer(p)
     lignes, modifiees = [], []
-    srv = editeur.ServeurEditeur(pod=lambda: api, message_erreur=A.message_editeur,
-                                 journal_hote=lignes.append,
-                                 sur_video_modifiee=modifiees.append)
-    yield SimpleNamespace(srv=srv, api=api, pid=p["id"], lignes=lignes, modifiees=modifiees,
-                          jsonl=tmp_path / "journal_pod.jsonl")
+    srv = editeur.ServeurEditeur(
+        pod=lambda: api,
+        message_erreur=A.message_editeur,
+        journal_hote=lignes.append,
+        sur_video_modifiee=modifiees.append,
+    )
+    yield SimpleNamespace(
+        srv=srv,
+        api=api,
+        pid=p["id"],
+        lignes=lignes,
+        modifiees=modifiees,
+        jsonl=tmp_path / "journal_pod.jsonl",
+    )
     srv.arreter()
 
 
 class TestPublicationDesPistes:
     def test_ajout_journalise_des_deux_cotes(self, banc):
-        r = banc.srv.publier_pod(banc.pid, [{"source": "original", "lang": "en",
-                                             "kind": "subtitles"}])
+        r = banc.srv.publier_pod(
+            banc.pid, [{"source": "original", "lang": "en", "kind": "subtitles"}]
+        )
         assert r[0]["ok"] and r[0]["lang"] == "fr", "la correction va TOUJOURS en « fr »"
         assert len(banc.lignes) == 1 and "sous-titres « fr » ajoutés" in banc.lignes[0]
         assert "n° 202" in banc.lignes[0]
@@ -58,7 +70,9 @@ class TestPublicationDesPistes:
         assert noter[-1]["action"] == "piste_ajoutee"
 
     def test_refus_lisible_dans_la_page_et_detaille_au_journal(self, banc):
-        banc.api.session.ajouter_piste("fr", "subtitles")   # piste déjà là, pas de remplacement demandé
+        banc.api.session.ajouter_piste(
+            "fr", "subtitles"
+        )  # piste déjà là, pas de remplacement demandé
         r = banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
         assert not r[0]["ok"]
         assert r[0]["erreur"].startswith("Les pistes « fr / subtitles » ont changé"), r[0]["erreur"]
@@ -67,6 +81,7 @@ class TestPublicationDesPistes:
     def test_coupure_reseau_traduite(self, banc, monkeypatch):
         def coupure(*a, **k):
             raise ConnectionError("Max retries exceeded with url: /rest/files/")
+
         monkeypatch.setattr(banc.api, "upload_subtitle_file", coupure)
         r = banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
         assert r[0]["erreur"].startswith("Instance injoignable"), r[0]["erreur"]
@@ -78,17 +93,20 @@ class TestMarquagePublie:
 
     def test_sous_titres_publies(self, banc):
         from enrichissement import projet
+
         banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
         assert projet.etat_partie(projet.charger(banc.pid), "sous_titres")["etat"] == "fait"
 
     def test_refus_non_marque(self, banc):
         from enrichissement import projet
+
         banc.api.session.ajouter_piste("fr", "subtitles")
         banc.srv.publier_pod(banc.pid, [{"source": "original", "kind": "subtitles"}])
         assert projet.etat_partie(projet.charger(banc.pid), "sous_titres")["etat"] != "fait"
 
     def test_metadonnees_publiees(self, banc):
         from enrichissement import projet
+
         p = projet.charger(banc.pid)
         projet.enrichissement(p)["metadonnees"] = {"titre": "Nouveau titre"}
         projet.enregistrer(p)
@@ -100,8 +118,9 @@ class TestMarquagePublie:
 class TestPublicationDesMetadonnees:
     def test_journal_et_liste_des_videos_mis_a_jour(self, banc):
         avant = banc.srv.metadonnees_pod(banc.pid)["pod"]
-        banc.srv.publier_metadonnees(banc.pid, avant, {"titre": "Nouveau titre",
-                                                       "ajout_discipline": "Archéologie"})
+        banc.srv.publier_metadonnees(
+            banc.pid, avant, {"titre": "Nouveau titre", "ajout_discipline": "Archéologie"}
+        )
         assert "métadonnées modifiées sur Pod (titre, discipline ajoutée)" in banc.lignes[-1]
         assert banc.modifiees and banc.modifiees[0]["title"] == "Nouveau titre"
 
@@ -116,18 +135,27 @@ class TestPublicationDesMetadonnees:
         """Le raccordement passe par `_sync_video_caches`, point d'accroche
         unique des modifications de vidéos dans PodAdmin."""
         import app as A
+
         recues = []
-        hote = SimpleNamespace(_sync_video_caches=lambda slug, payload: recues.append((slug, payload)))
-        A.PanneauEnrichissement._video_modifiee(SimpleNamespace(hote=hote), {
-            "slug": "0202-x", "title": "T", "tags": "a b", "url": "u", "owner": "o"})
+        hote = SimpleNamespace(
+            _sync_video_caches=lambda slug, payload: recues.append((slug, payload))
+        )
+        A.PanneauEnrichissement._video_modifiee(
+            SimpleNamespace(hote=hote),
+            {"slug": "0202-x", "title": "T", "tags": "a b", "url": "u", "owner": "o"},
+        )
         assert recues == [("0202-x", {"title": "T", "tags": "a b"})]
 
 
 class TestRoutesHTTP:
     def _post(self, banc, chemin, corps):
         url = f"http://127.0.0.1:{banc.srv.port}/api/{banc.pid}/{chemin}?t={banc.srv.jeton}"
-        req = urllib.request.Request(url, data=json.dumps(corps).encode("utf-8"),
-                                     headers={"Content-Type": "application/json"}, method="POST")
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(corps).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, json.loads(r.read())
@@ -144,6 +172,7 @@ class TestRoutesHTTP:
 
         def refus(*a, **k):
             raise PodAPIError("HTTP 403 sur https://videos.exemple.fr/rest/videos/202/", status=403)
+
         monkeypatch.setattr(banc.api, "video", refus)
         code, d = self._post(banc, "pod/metadonnees", {"avant": {}, "nouveau": {"titre": "x"}})
         assert code == 400 and d["erreur"].startswith("Droits insuffisants"), d
@@ -154,11 +183,17 @@ class TestMessageEditeur:
     def test_messages_ecrits_pour_l_utilisateur_conserves(self):
         import app as A
         from pod_api import PodAPIError
+
         assert A.message_editeur(ValueError("langue invalide")) == "langue invalide"
-        assert A.message_editeur(A.AristoteErreur("Aristote a échoué : x")) == "Aristote a échoué : x"
+        assert (
+            A.message_editeur(A.AristoteErreur("Aristote a échoué : x")) == "Aristote a échoué : x"
+        )
         assert A.message_editeur(PodAPIError("Les pistes ont changé")) == "Les pistes ont changé"
 
     def test_codes_http_traduits(self):
         import app as A
         from pod_api import PodAPIError
-        assert A.message_editeur(PodAPIError("HTTP 401 sur u", status=401)).startswith("Jeton refusé")
+
+        assert A.message_editeur(PodAPIError("HTTP 401 sur u", status=401)).startswith(
+            "Jeton refusé"
+        )

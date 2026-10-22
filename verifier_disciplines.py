@@ -50,7 +50,6 @@ nécessaire. Seule dépendance : la bibliothèque « requests ».
 __author__ = "Cédric MONNA"
 __version__ = "1.0.0"
 
-import json
 
 # ---------------------------------------------------------------------------
 # Noms de ressource à tester.
@@ -59,11 +58,11 @@ import json
 # « fonctionnalité indisponible ».
 # ---------------------------------------------------------------------------
 CANDIDATS = [
-    ("discipline",   "Discipline (singulier — nom vu dans les sondes précédentes)"),
-    ("disciplines",  "Discipline (pluriel — convention DRF habituelle)"),
-    ("categories",   "Catégorie (pluriel)"),
-    ("category",     "Catégorie (singulier)"),
-    ("categorie",    "Catégorie (orthographe française, au cas où)"),
+    ("discipline", "Discipline (singulier — nom vu dans les sondes précédentes)"),
+    ("disciplines", "Discipline (pluriel — convention DRF habituelle)"),
+    ("categories", "Catégorie (pluriel)"),
+    ("category", "Catégorie (singulier)"),
+    ("categorie", "Catégorie (orthographe française, au cas où)"),
 ]
 
 # Champs dont la présence trahit un classement PERSONNEL et non
@@ -75,6 +74,7 @@ def charger_requests():
     """Importe « requests », en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -84,9 +84,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -97,9 +99,16 @@ def examiner(sess, rest, nom, libelle):
     """Examine une ressource candidate : existence, contenu, appartenance,
     et possibilité de création. Renvoie un bilan exploitable par la synthèse."""
     bilan = {
-        "nom": nom, "libelle": libelle, "existe": False, "nombre": None,
-        "creable": False, "champs_post": [], "requis": [],
-        "personnel": False, "indice_personnel": None, "exemple": None,
+        "nom": nom,
+        "libelle": libelle,
+        "existe": False,
+        "nombre": None,
+        "creable": False,
+        "champs_post": [],
+        "requis": [],
+        "personnel": False,
+        "indice_personnel": None,
+        "exemple": None,
     }
 
     # --- 1. La ressource existe-t-elle, et que contient-elle ? --------------
@@ -145,8 +154,7 @@ def examiner(sess, rest, nom, libelle):
             if isinstance(e, dict):
                 # On affiche ce qui ressemble à un libellé, sans présumer du nom
                 # exact du champ selon les versions.
-                titre = (e.get("title") or e.get("name")
-                         or e.get("libelle") or e.get("slug") or "?")
+                titre = e.get("title") or e.get("name") or e.get("libelle") or e.get("slug") or "?"
                 print(f"      • {titre}")
 
     if echantillon and isinstance(echantillon[0], dict):
@@ -168,44 +176,47 @@ def examiner(sess, rest, nom, libelle):
     try:
         ro = sess.options(f"{rest}/{nom}/", timeout=20)
         if ro.status_code == 200:
-            actions = (ro.json().get("actions") or {})
+            actions = ro.json().get("actions") or {}
             post = actions.get("POST")
             if post:
                 bilan["creable"] = True
                 bilan["champs_post"] = sorted(post.keys())
                 bilan["requis"] = sorted(
-                    k for k, v in post.items()
-                    if v.get("required") and not v.get("read_only")
+                    k for k, v in post.items() if v.get("required") and not v.get("read_only")
                 )
                 print(f"\n   ✏  CRÉATION POSSIBLE — {len(post)} champ(s) en écriture.")
                 print(f"      Champs modifiables  : {', '.join(bilan['champs_post'])}")
-                print(f"      Champs OBLIGATOIRES : "
-                      f"{', '.join(bilan['requis']) if bilan['requis'] else '(aucun)'}")
+                print(
+                    f"      Champs OBLIGATOIRES : "
+                    f"{', '.join(bilan['requis']) if bilan['requis'] else '(aucun)'}"
+                )
 
                 # Second contrôle d'appartenance, sur les champs d'écriture.
                 for champ in CHAMPS_APPARTENANCE:
                     if champ in post and not bilan["personnel"]:
                         bilan["personnel"] = True
-                        bilan["indice_personnel"] = (
-                            f"champ « {champ} » attendu à la création")
+                        bilan["indice_personnel"] = f"champ « {champ} » attendu à la création"
                         break
             else:
                 print("\n   👁  LECTURE SEULE — création impossible par l'API.")
                 print("      (Il resterait l'administration Django, à la main.)")
         else:
-            print(f"\n   ?  OPTIONS → HTTP {ro.status_code} : "
-                  f"impossible de savoir si la création est permise.")
+            print(
+                f"\n   ?  OPTIONS → HTTP {ro.status_code} : "
+                f"impossible de savoir si la création est permise."
+            )
     except Exception as e:
         print(f"\n   ?  OPTIONS impossible : {e}")
 
     if bilan["personnel"]:
         print(f"\n   🔴 CLASSEMENT PERSONNEL — {bilan['indice_personnel']}.")
         print("      Cette ressource appartient à un COMPTE, pas à l'établissement.")
-        print("      La créer depuis PodAdmin la rattacherait au compte "
-              "administrateur\n      et elle resterait invisible pour les enseignants.")
+        print(
+            "      La créer depuis PodAdmin la rattacherait au compte "
+            "administrateur\n      et elle resterait invisible pour les enseignants."
+        )
     elif bilan["existe"]:
-        print("\n   🟢 Aucun champ d'appartenance : classement d'ÉTABLISSEMENT, "
-              "a priori partagé.")
+        print("\n   🟢 Aucun champ d'appartenance : classement d'ÉTABLISSEMENT, a priori partagé.")
 
     return bilan
 
@@ -236,8 +247,10 @@ def examiner_champ_video(sess, rest):
                 lecture_seule = spec.get("read_only", False)
                 requis = spec.get("required", False)
                 etat = "LECTURE SEULE" if lecture_seule else "modifiable"
-                print(f"\n   ✅ Champ « {champ} » présent — {etat}"
-                      f"{', obligatoire' if requis else ''}.")
+                print(
+                    f"\n   ✅ Champ « {champ} » présent — {etat}"
+                    f"{', obligatoire' if requis else ''}."
+                )
                 print(f"      type    : {spec.get('type')}")
                 if spec.get("label"):
                     print(f"      libellé : {spec.get('label')}")
@@ -265,15 +278,13 @@ def synthese(bilans, champs_video):
     if not presentes:
         print("   Aucune des ressources testées n'existe sur cette instance.")
         print("   → Disciplines et catégories ne sont pas exposées par l'API.")
-        print("     Le classement resterait à faire dans l'administration "
-              "Django.\n")
+        print("     Le classement resterait à faire dans l'administration Django.\n")
         return
 
     for b in presentes:
         etiquette = "PERSONNEL ⛔" if b["personnel"] else "établissement ✅"
         creation = "création possible" if b["creable"] else "lecture seule"
-        print(f"   • {b['nom']:14} {str(b['nombre']):>4} élément(s)   "
-              f"[{etiquette}]  [{creation}]")
+        print(f"   • {b['nom']:14} {b['nombre']!s:>4} élément(s)   [{etiquette}]  [{creation}]")
 
     creables_partagees = [b for b in presentes if b["creable"] and not b["personnel"]]
     rattachable = any(not s.get("read_only") for s in champs_video.values())
@@ -313,8 +324,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Jeton (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -322,8 +335,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  DISCIPLINES & CATÉGORIES — création possible depuis PodAdmin ?")
@@ -343,6 +355,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

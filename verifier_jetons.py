@@ -43,6 +43,7 @@ def charger_requests():
     """Importe `requests`, en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -52,9 +53,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -64,8 +67,15 @@ def charger_requests():
 def essayer_ressources_rest(sess, rest):
     """Cherche une ressource REST exposant les jetons."""
     print(f"\n{'=' * 66}\n  1. RESSOURCES REST\n{'=' * 66}")
-    candidats = ["authtoken", "tokens", "token", "apikeys", "api_tokens",
-                 "auth_token", "authtokens"]
+    candidats = [
+        "authtoken",
+        "tokens",
+        "token",
+        "apikeys",
+        "api_tokens",
+        "auth_token",
+        "authtokens",
+    ]
     trouve = None
     for nom in candidats:
         try:
@@ -111,8 +121,9 @@ def champ_dans_users(sess, rest):
         champs = sorted(res[0].keys())
         print(f"   Champs d'un compte ({len(champs)}) :")
         print("      " + ", ".join(champs))
-        pertinents = [c for c in champs
-                      if any(m in c.lower() for m in ("token", "jeton", "key", "auth"))]
+        pertinents = [
+            c for c in champs if any(m in c.lower() for m in ("token", "jeton", "key", "auth"))
+        ]
         if pertinents:
             print(f"\n   ← Champ(s) lié(s) au jeton : {', '.join(pertinents)}")
             return True
@@ -150,8 +161,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -159,8 +172,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     ressource = essayer_ressources_rest(sess, rest)
     champ = champ_dans_users(sess, rest)
@@ -193,6 +205,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

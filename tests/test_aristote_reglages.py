@@ -4,6 +4,7 @@ Décision de Cédric : identifiants EMBARQUÉS (config.py), surcharge possible d
 le coffre-fort, réglage depuis Configuration. Aucun test ne touche au vrai
 coffre-fort ni au vrai dossier personnel.
 """
+
 import json
 import os
 import subprocess
@@ -20,12 +21,14 @@ sys.path.insert(0, RACINE)
 def coffre(monkeypatch):
     """Faux coffre-fort : remplace les accès aux secrets de config.py."""
     import config as cfg
+
     stock = {}
     monkeypatch.setattr(cfg, "_load_secret", lambda cle, suffixe: stock.get(cle, ""))
 
     def ranger(cle, suffixe, valeur):
         stock[cle] = valeur
         return "keyring"
+
     monkeypatch.setattr(cfg, "_save_secret", ranger)
     monkeypatch.setattr(cfg, "_clear_secret", lambda cle, suffixe: stock.pop(cle, None))
     return stock
@@ -34,13 +37,18 @@ def coffre(monkeypatch):
 class TestIdentifiants:
     def test_embarques_par_defaut(self, coffre):
         import config as cfg
+
         cid, secret, origine = cfg.load_aristote_credentials()
-        assert (cid, secret, origine) == (cfg.ARISTOTE_CLIENT_ID_EMBARQUE,
-                                          cfg.ARISTOTE_CLIENT_SECRET_EMBARQUE, "embarques")
+        assert (cid, secret, origine) == (
+            cfg.ARISTOTE_CLIENT_ID_EMBARQUE,
+            cfg.ARISTOTE_CLIENT_SECRET_EMBARQUE,
+            "embarques",
+        )
         assert cid and secret, "les identifiants embarqués sont vides"
 
     def test_coffre_prioritaire(self, coffre):
         import config as cfg
+
         assert cfg.save_aristote_credentials(" mon-id ", " mon-secret ") == "keyring"
         assert cfg.load_aristote_credentials() == ("mon-id", "mon-secret", "coffre")
 
@@ -48,14 +56,20 @@ class TestIdentifiants:
         """Une copie des embarqués restée au coffre masquerait, après une
         rotation, le nouveau secret embarqué."""
         import config as cfg
+
         cfg.save_aristote_credentials("mon-id", "mon-secret")
-        assert cfg.save_aristote_credentials(cfg.ARISTOTE_CLIENT_ID_EMBARQUE,
-                                             cfg.ARISTOTE_CLIENT_SECRET_EMBARQUE) == "embarques"
+        assert (
+            cfg.save_aristote_credentials(
+                cfg.ARISTOTE_CLIENT_ID_EMBARQUE, cfg.ARISTOTE_CLIENT_SECRET_EMBARQUE
+            )
+            == "embarques"
+        )
         assert not coffre
         assert cfg.load_aristote_credentials()[2] == "embarques"
 
     def test_effacer_revient_aux_embarques(self, coffre):
         import config as cfg
+
         cfg.save_aristote_credentials("mon-id", "mon-secret")
         cfg.clear_aristote_credentials()
         assert cfg.load_aristote_credentials()[2] == "embarques"
@@ -64,13 +78,17 @@ class TestIdentifiants:
         """Tous les secrets embarqués au même endroit : config.py, à côté de
         DEPOT. Une copie ailleurs échapperait à la prochaine rotation."""
         import config as cfg
+
         secret = cfg.ARISTOTE_CLIENT_SECRET_EMBARQUE
         fautifs = []
         for dossier, _d, fichiers in os.walk(RACINE):
             if any(p in dossier for p in (".git", "__pycache__", os.sep + "tests")):
                 continue
             for f in fichiers:
-                if f.endswith((".py", ".html", ".md", ".txt", ".yml", ".json")) and f != "config.py":
+                if (
+                    f.endswith((".py", ".html", ".md", ".txt", ".yml", ".json"))
+                    and f != "config.py"
+                ):
                     chemin = os.path.join(dossier, f)
                     if secret in open(chemin, encoding="utf-8", errors="ignore").read():
                         fautifs.append(os.path.relpath(chemin, RACINE))
@@ -81,6 +99,7 @@ class TestPreferences:
     @pytest.fixture
     def dossier(self, tmp_path, monkeypatch):
         from enrichissement import reglages
+
         monkeypatch.setattr(reglages, "DOSSIER", str(tmp_path))
         monkeypatch.setattr(reglages, "CONFIG_PATH", str(tmp_path / "config.json"))
         return reglages
@@ -89,12 +108,15 @@ class TestPreferences:
         p = dossier.charger()
         assert p["url_aristote"] == "https://stt.ilaas.fr/api"
         assert "langue" not in p and "extraire_audio" not in p, (
-            "réglages abandonnés : français imposé, pas de ffmpeg")
+            "réglages abandonnés : français imposé, pas de ffmpeg"
+        )
 
     def test_aller_retour_et_preferences_de_soustitreur_conservees(self, dossier, tmp_path):
         """Un config.json écrit par SousTitreur se relit sans perte."""
-        (tmp_path / "config.json").write_text(json.dumps(
-            {"url_aristote": "https://autre.exemple/api/", "theme": "dark"}), encoding="utf-8")
+        (tmp_path / "config.json").write_text(
+            json.dumps({"url_aristote": "https://autre.exemple/api/", "theme": "dark"}),
+            encoding="utf-8",
+        )
         p = dossier.charger()
         assert p["theme"] == "dark" and dossier.url_aristote() == "https://autre.exemple/api"
         p["formats"] = ["vtt", "srt"]
@@ -110,11 +132,16 @@ class TestPreferences:
 class TestTestDeConnexion:
     def _lancer(self, monkeypatch, comportement):
         import app as A
-        monkeypatch.setattr(A, "AristoteAPI", lambda cid, secret, url: SimpleNamespace(
-            tester=comportement))
-        etiquette = SimpleNamespace(winfo_exists=lambda: True, recu={},
-                                    configure=lambda **k: etiquette.recu.update(k))
-        bouton = SimpleNamespace(etat=None, configure=lambda **k: setattr(bouton, "etat", k["state"]))
+
+        monkeypatch.setattr(
+            A, "AristoteAPI", lambda cid, secret, url: SimpleNamespace(tester=comportement)
+        )
+        etiquette = SimpleNamespace(
+            winfo_exists=lambda: True, recu={}, configure=lambda **k: etiquette.recu.update(k)
+        )
+        bouton = SimpleNamespace(
+            etat=None, configure=lambda **k: setattr(bouton, "etat", k["state"])
+        )
         journal = []
         faux = SimpleNamespace(_ui=lambda fn, *a, **k: fn(*a, **k), _log=journal.append)
         A.App._aristote_tester(faux, "https://x/api", "id", "secret", etiquette, bouton)
@@ -122,6 +149,7 @@ class TestTestDeConnexion:
 
     def test_succes(self, monkeypatch):
         import app as A
+
         recu, etat, _j = self._lancer(monkeypatch, lambda: "Connexion réussie.")
         assert recu == {"text": "Connexion réussie.", "text_color": A.T_SUCCES} and etat == "normal"
 
@@ -130,6 +158,7 @@ class TestTestDeConnexion:
 
         def refus():
             raise A.AristoteErreur("Connexion refusée par Aristote (401). Vérifiez…")
+
         recu, etat, journal = self._lancer(monkeypatch, refus)
         assert recu["text"].startswith("Connexion refusée") and etat == "normal"
         assert not journal
@@ -139,12 +168,13 @@ class TestTestDeConnexion:
 
         def panne():
             raise ConnectionError("Max retries exceeded with url")
+
         recu, _e, journal = self._lancer(monkeypatch, panne)
         assert recu["text"] == A.message_utilisateur(ConnectionError("Max retries exceeded"))
         assert journal and "ConnectionError" in journal[0]
 
 
-SCENARIO_FENETRE = r'''
+SCENARIO_FENETRE = r"""
 import json, os, sys, tempfile
 sys.path.insert(0, RACINE)
 import config as cfg
@@ -191,7 +221,7 @@ assert not stock and reglages.url_aristote() == "https://stt.ilaas.fr/api"
 assert "fournis avec l'application" in a.aristote_etat_lbl.cget("text")
 print("SCENARIO OK")
 a.destroy()
-'''
+"""
 
 
 def test_fenetre_aristote_de_bout_en_bout(tmp_path):
@@ -200,6 +230,12 @@ def test_fenetre_aristote_de_bout_en_bout(tmp_path):
     script = tmp_path / "scenario.py"
     script.write_text(f"RACINE = {RACINE!r}\n" + SCENARIO_FENETRE, encoding="utf-8")
     env = {**os.environ, "USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1"}
-    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                       timeout=60, env=env, cwd=RACINE)
+    r = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+        cwd=RACINE,
+    )
     assert r.returncode == 0 and "SCENARIO OK" in r.stdout, r.stdout + r.stderr

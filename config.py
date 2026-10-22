@@ -13,19 +13,20 @@ config.py — Configuration et stockage sécurisé des identifiants (PodAdmin).
 
 from __future__ import annotations
 
-__author__      = "Cédric MONNA"
-__contact__     = "support-pod@utoulouse.fr"
+__author__ = "Cédric MONNA"
+__contact__ = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
-from __version__ import __version__   # source unique (voir __version__.py)
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+from __version__ import __version__  # noqa: F401  (source unique, voir __version__.py)
+
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
 
 import json
 import os
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".podadmin.json")
-KEYRING_SERVICE = "PodAdmin-UToulouse"          # ≠ "PodTeleverseur-UToulouse"
+KEYRING_SERVICE = "PodAdmin-UToulouse"  # ≠ "PodTeleverseur-UToulouse"
 KEYRING_TOKEN_KEY = "service_token"
 # Identifiants du COMPTE VÉHICULE (local) servant à ouvrir la session web pour
 # le téléversement chunké des gros fichiers. Stockés chiffrés (keyring), dans
@@ -65,15 +66,15 @@ VEHICLE_PASSWORD = "V&xehx7WB!iBWLoL%97HDjK&kg"
 # (voir App._replier_sur_chunked), mais après avoir perdu du temps en tentatives
 # inutiles. Abaisser ce seuil évite ces tentatives : 150 Mo correspond à environ
 # une minute d'envoi sur une liaison à 20 Mbit/s.
-CHUNK_THRESHOLD_BYTES = 150 * 1024 * 1024      # 150 Mo
-CHUNK_SIZE_BYTES      = 2 * 1024 * 1024         # 2 Mo par morceau (validé)
+CHUNK_THRESHOLD_BYTES = 150 * 1024 * 1024  # 150 Mo
+CHUNK_SIZE_BYTES = 2 * 1024 * 1024  # 2 Mo par morceau (validé)
 
 # ── Vérification « lancer puis vérifier » après un 504 de finalisation ────
 # Sur un gros fichier, nginx peut couper (504) avant que Pod ait fini d'assembler
 # — mais Pod termine en arrière-plan. On sonde l'API jusqu'à voir la vidéo.
 # Fenêtre portée à 30 min (des fichiers > 2 Go peuvent dépasser le quart d'heure).
-CHUNK_VERIFY_TIMEOUT_S  = 1800   # 30 minutes
-CHUNK_VERIFY_INTERVAL_S = 15     # intervalle entre deux sondages (secondes)
+CHUNK_VERIFY_TIMEOUT_S = 1800  # 30 minutes
+CHUNK_VERIFY_INTERVAL_S = 15  # intervalle entre deux sondages (secondes)
 
 # Après un 502 ou un 503, en revanche, l'attente est COURTE. Ces codes ne
 # disent pas « Pod est encore en train de travailler » (c'est le 504) mais
@@ -82,10 +83,11 @@ CHUNK_VERIFY_INTERVAL_S = 15     # intervalle entre deux sondages (secondes)
 # plus petit qu'un autre passé juste avant, et la vidéo n'est jamais apparue.
 # Attendre 30 min pour rien bloquait tout le lot. Trois minutes suffisent à
 # rattraper le cas où Pod aurait malgré tout terminé.
-CHUNK_VERIFY_TIMEOUT_502_S = 180   # 3 minutes
+CHUNK_VERIFY_TIMEOUT_502_S = 180  # 3 minutes
 
 try:
     import keyring
+
     HAS_KEYRING = True
 except ImportError:
     HAS_KEYRING = False
@@ -93,12 +95,12 @@ except ImportError:
 
 DEFAULTS = {
     "url": "https://videos.utoulouse.fr",
-    "type_url": "",          # URL du type par défaut (ex : .../rest/types/1/)
+    "type_url": "",  # URL du type par défaut (ex : .../rest/types/1/)
     "main_lang": "fr",
     "cursus": "0",
     "is_draft": True,
-    "agent_username": "",    # qui dépose (devient owner) — onglet Téléversement
-    "agent_owner_url": "",   # URL résolue de l'agent
+    "agent_username": "",  # qui dépose (devient owner) — onglet Téléversement
+    "agent_owner_url": "",  # URL résolue de l'agent
 }
 
 
@@ -107,7 +109,7 @@ def load_config() -> dict:
     cfg = dict(DEFAULTS)
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 cfg.update(json.load(f))
         except Exception:
             pass
@@ -149,8 +151,10 @@ def save_config(cfg: dict) -> None:
 # il ne transforme jamais une panne réseau générale en arrêt total du
 # service pour des postes qui n'ont jamais été notifiés.
 
-def enregistrer_blocage_confirme(version_bloquee: str, version_minimale: str,
-                                 url: str = "", notes: str = "") -> None:
+
+def enregistrer_blocage_confirme(
+    version_bloquee: str, version_minimale: str, url: str = "", notes: str = ""
+) -> None:
     """Mémorise qu'un blocage a été confirmé par le serveur pour cette version.
 
     `url` et `notes` sont conservées pour que la fenêtre bloquante rejouée
@@ -168,7 +172,7 @@ def enregistrer_blocage_confirme(version_bloquee: str, version_minimale: str,
         cfg["maj_obligatoire_notes"] = str(notes or "")
         save_config(cfg)
     except Exception:
-        pass          # ne jamais lever depuis un enregistrement de confort
+        pass  # ne jamais lever depuis un enregistrement de confort
 
 
 def blocage_local_actif(version_actuelle: str) -> dict | None:
@@ -256,7 +260,7 @@ def load_token() -> str:
     path = _token_file()
     if os.path.exists(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return f.read().strip()
         except Exception:
             pass
@@ -324,7 +328,7 @@ def _load_secret(key: str, suffix: str) -> str:
     path = _secret_file(suffix)
     if os.path.exists(path):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 return f.read().strip()
         except Exception:
             pass
@@ -355,8 +359,10 @@ def save_vehicle_credentials(username: str, password: str) -> str:
 
 def load_vehicle_credentials() -> tuple[str, str]:
     """Renvoie (identifiant, mot_de_passe) du compte véhicule — ('','') si absent."""
-    return (_load_secret(KEYRING_USER_KEY, "vehicle_user"),
-            _load_secret(KEYRING_PASS_KEY, "vehicle_pass"))
+    return (
+        _load_secret(KEYRING_USER_KEY, "vehicle_user"),
+        _load_secret(KEYRING_PASS_KEY, "vehicle_pass"),
+    )
 
 
 def clear_vehicle_credentials() -> None:
@@ -404,8 +410,7 @@ def save_aristote_credentials(client_id: str, client_secret: str) -> str:
     une copie qui y resterait masquerait le nouveau secret embarqué après une
     rotation, sans que rien ne le signale."""
     client_id, client_secret = client_id.strip(), client_secret.strip()
-    if (client_id, client_secret) == (ARISTOTE_CLIENT_ID_EMBARQUE,
-                                      ARISTOTE_CLIENT_SECRET_EMBARQUE):
+    if (client_id, client_secret) == (ARISTOTE_CLIENT_ID_EMBARQUE, ARISTOTE_CLIENT_SECRET_EMBARQUE):
         clear_aristote_credentials()
         return "embarques"
     _save_secret(KEYRING_ARISTOTE_ID, "aristote_id", client_id)
@@ -420,8 +425,18 @@ def clear_aristote_credentials() -> None:
 
 # Extensions vidéo reconnues lors du scan de dossier (onglet Téléversement)
 VIDEO_EXTENSIONS = {
-    ".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v",
-    ".wmv", ".flv", ".mpg", ".mpeg", ".ts", ".mts",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".m4v",
+    ".wmv",
+    ".flv",
+    ".mpg",
+    ".mpeg",
+    ".ts",
+    ".mts",
 }
 
 # ── Vérification des mises à jour ────────────────────────────────────────
@@ -433,8 +448,7 @@ VIDEO_EXTENSIONS = {
 # Voir MISE_A_JOUR.md pour la marche à suivre.
 #
 # Mettre à "" pour désactiver complètement la vérification.
-UPDATE_URL = ("https://raw.githubusercontent.com/"
-              "caine777-data/podadmin-releases/main/version.json")
+UPDATE_URL = "https://raw.githubusercontent.com/caine777-data/podadmin-releases/main/version.json"
 
 # Page de secours si un `version.json` (ou un verrou local ancien) n'a pas
 # d'URL renseignée : une fenêtre de blocage OBLIGATOIRE ne doit jamais se
@@ -459,10 +473,9 @@ UPDATE_TIMEOUT_S = 5
 # version.json ni exiger une installation supplémentaire.
 #
 # Mettre à "" pour désactiver complètement la vérification.
-BLOCAGE_URL = ("https://raw.githubusercontent.com/"
-               "caine777-data/podadmin-releases/main/etat.json")
-BLOCAGE_PERIODE_MS = 3600 * 1000     # délai entre deux vérifications (1 heure)
-BLOCAGE_TIMEOUT_S = 5                 # jamais bloquant : délai volontairement court
+BLOCAGE_URL = "https://raw.githubusercontent.com/caine777-data/podadmin-releases/main/etat.json"
+BLOCAGE_PERIODE_MS = 3600 * 1000  # délai entre deux vérifications (1 heure)
+BLOCAGE_TIMEOUT_S = 5  # jamais bloquant : délai volontairement court
 
 
 # ── Blocage à distance : mémorisation locale (tient hors ligne) ──────────
@@ -472,6 +485,7 @@ BLOCAGE_TIMEOUT_S = 5                 # jamais bloquant : délai volontairement 
 # coupé, un dépôt injoignable ou une adresse désactivée ne doivent JAMAIS
 # déclencher, ni lever, un blocage — sans quoi couper sa connexion
 # suffirait à contourner un blocage déjà notifié.
+
 
 def enregistrer_blocage_distant(bloque: bool) -> None:
     """Mémorise localement l'état de blocage confirmé par le serveur.
@@ -486,7 +500,7 @@ def enregistrer_blocage_distant(bloque: bool) -> None:
             cfg.pop("blocage_distant", None)
         save_config(cfg)
     except Exception:
-        pass          # ne jamais lever depuis un enregistrement de confort
+        pass  # ne jamais lever depuis un enregistrement de confort
 
 
 def blocage_distant_actif() -> bool:

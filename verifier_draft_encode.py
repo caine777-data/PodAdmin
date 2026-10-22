@@ -15,13 +15,14 @@ Ce script, sur UNE video :
 Lancer avec un token SUPERUTILISATEUR.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -56,8 +57,7 @@ def main():
     vurl = f"{rest}/videos/{ref}/"
     status, v = req("GET", vurl, headers)
     if status != 200:
-        status, data = req("GET", f"{rest}/videos/", headers,
-                           params={"search": ref, "limit": 50})
+        status, data = req("GET", f"{rest}/videos/", headers, params={"search": ref, "limit": 50})
         res = data.get("results", []) if isinstance(data, dict) else []
         v = next((x for x in res if x.get("slug") == ref), None)
         if v:
@@ -67,8 +67,14 @@ def main():
         return
 
     print(f"\n> 1. Etat actuel de {v.get('slug')!r} :")
-    for k in ("is_draft", "is_restricted", "encoded", "encoding_in_progress",
-              "get_encoding_step", "restrict_access_to_groups"):
+    for k in (
+        "is_draft",
+        "is_restricted",
+        "encoded",
+        "encoding_in_progress",
+        "get_encoding_step",
+        "restrict_access_to_groups",
+    ):
         print(f"   {k:26} = {json.dumps(v.get(k), ensure_ascii=False)}")
 
     print("\n> 2. PATCH is_draft=False (seul) ...")

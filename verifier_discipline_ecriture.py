@@ -69,6 +69,7 @@ def charger_requests():
     """Importe « requests », en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -78,9 +79,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -111,9 +114,9 @@ def tenter_creation(sess, rest, titre, site_url):
     (toutes deux sont des nomenclatures d'établissement, quand `channels` est
     d'une autre nature)."""
     formes = [
-        ("liste",  {"title": titre, "site": [site_url]}),
+        ("liste", {"title": titre, "site": [site_url]}),
         ("chaîne", {"title": titre, "site": site_url}),
-        ("omis",   {"title": titre}),
+        ("omis", {"title": titre}),
     ]
     for nom, charge in formes:
         try:
@@ -177,8 +180,7 @@ def essai_rattachement(sess, rest, url_discipline):
         # multiple.
         r = sess.patch(url_video, json={"discipline": [url_discipline]}, timeout=30)
         if r.status_code not in (200, 202):
-            print(f"   ❌ PATCH refusé (HTTP {r.status_code}) : "
-                  f"{(r.text or '')[:200]}")
+            print(f"   ❌ PATCH refusé (HTTP {r.status_code}) : {(r.text or '')[:200]}")
             return
         apres = (r.json() or {}).get("discipline")
         print(f"   Valeur APRÈS  : {json.dumps(apres, ensure_ascii=False)}")
@@ -206,8 +208,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Jeton : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -215,8 +219,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  DISCIPLINE — essai d'écriture réel")
@@ -263,8 +266,7 @@ def run():
                 print("\n   ⚠  Le champ « site » est VIDE après création.")
                 print("      La discipline risque de n'apparaître sur aucun site.")
             else:
-                print(f"\n   🟢 Site enregistré : "
-                      f"{json.dumps(site_stocke, ensure_ascii=False)}")
+                print(f"\n   🟢 Site enregistré : {json.dumps(site_stocke, ensure_ascii=False)}")
 
         if url_creee:
             essai_rattachement(sess, rest, url_creee)
@@ -288,9 +290,9 @@ def run():
                 print(f"      Supprimez manuellement « {titre} ».")
 
     print(f"""
-{'=' * 70}
+{"=" * 70}
   CE QUE PODADMIN FERA
-{'=' * 70}
+{"=" * 70}
 
    • Création  : champ « site » envoyé sous la forme « {forme} »
    • Rattachement : PATCH /rest/videos/<slug>/ avec une LISTE d'URLs
@@ -308,6 +310,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

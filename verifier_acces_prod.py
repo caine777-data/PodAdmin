@@ -16,13 +16,14 @@ Mais la LISTE /accessgroups/ n'expose pas l'id. Ce script :
 Lancer avec un token SUPERUTILISATEUR, sur l'instance de PRODUCTION.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -65,7 +66,7 @@ def main():
     # 1) Collecter les URLs d'accessgroups deja utilisees sur des videos
     # ------------------------------------------------------------------ #
     print("\n> 1. Collecte des URLs d'accessgroups depuis les videos ...")
-    used = {}                       # url -> nb d'usages
+    used = {}  # url -> nb d'usages
     next_url, params, pages = f"{rest}/videos/", {"limit": 100}, 0
     while next_url and pages < 80:
         status, data = req("GET", next_url, headers, params=(params if pages == 0 else None))
@@ -118,8 +119,7 @@ def main():
     vurl = f"{rest}/videos/{vslug}/"
     status, v = req("GET", vurl, headers)
     if status != 200:
-        status, data = req("GET", f"{rest}/videos/", headers,
-                           params={"search": vslug, "limit": 50})
+        status, data = req("GET", f"{rest}/videos/", headers, params={"search": vslug, "limit": 50})
         res = data.get("results", []) if isinstance(data, dict) else []
         v = next((x for x in res if x.get("slug") == vslug), None)
         if v:
@@ -130,8 +130,10 @@ def main():
     init_restr = v.get("is_restricted")
     init_g = norm_urls(v.get("restrict_access_to_groups"))
     print(f"   etat initial : is_restricted={init_restr}  groups={init_g}")
-    payload = {"restrict_access_to_groups": list(dict.fromkeys(init_g + [target])),
-               "is_restricted": True}
+    payload = {
+        "restrict_access_to_groups": list(dict.fromkeys(init_g + [target])),
+        "is_restricted": True,
+    }
     status, body = req("PATCH", vurl, headers, json=payload)
     print(f"   PATCH -> HTTP {status}")
     if status and status >= 400:
@@ -141,8 +143,12 @@ def main():
     took = target.rstrip("/") in [u.rstrip("/") for u in after]
     print(f"   groups apres = {after}")
     print(f"   => ECRITURE ACCEPTEE ? {'OUI 🎉' if took else 'NON'}")
-    req("PATCH", vurl, headers,
-        json={"restrict_access_to_groups": init_g, "is_restricted": init_restr})
+    req(
+        "PATCH",
+        vurl,
+        headers,
+        json={"restrict_access_to_groups": init_g, "is_restricted": init_restr},
+    )
     print("   (etat initial remis)")
 
     print("\n" + "=" * 70)

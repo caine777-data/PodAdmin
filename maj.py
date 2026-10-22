@@ -71,6 +71,7 @@ def comparer_versions(a: str, b: str) -> int:
     Les suffixes non numériques (« 1.2.0-beta ») sont ignorés, et les longueurs
     différentes sont complétées par des zéros (« 1.2 » équivaut à « 1.2.0 »).
     """
+
     def morceaux(v: str) -> list:
         """Découpe « 1.10.0 » en [1, 10, 0], en ignorant tout suffixe."""
         out = []
@@ -80,13 +81,13 @@ def comparer_versions(a: str, b: str) -> int:
                 if c.isdigit():
                     chiffres += c
                 else:
-                    break            # on s'arrête au premier caractère non numérique
+                    break  # on s'arrête au premier caractère non numérique
             out.append(int(chiffres) if chiffres else 0)
         return out
 
     ma, mb = morceaux(a), morceaux(b)
     taille = max(len(ma), len(mb))
-    ma += [0] * (taille - len(ma))       # « 1.2 » == « 1.2.0 »
+    ma += [0] * (taille - len(ma))  # « 1.2 » == « 1.2.0 »
     mb += [0] * (taille - len(mb))
     for x, y in zip(ma, mb):
         if x != y:
@@ -120,7 +121,7 @@ def _telecharger_json(url: str, timeout: float, journal=None) -> dict | None:
     erreur de vérification TLS — sans que rien ne l'indique.
     """
     if not url:
-        return None                      # vérification désactivée
+        return None  # vérification désactivée
 
     entetes = {"User-Agent": "PodAdmin-MAJ", "Accept": "application/json"}
     brut = None
@@ -128,6 +129,7 @@ def _telecharger_json(url: str, timeout: float, journal=None) -> dict | None:
     # 1. Voie principale : requests (certificats embarqués)
     try:
         import requests
+
         r = requests.get(url, headers=entetes, timeout=timeout)
         if r.status_code != 200:
             if journal:
@@ -135,7 +137,7 @@ def _telecharger_json(url: str, timeout: float, journal=None) -> dict | None:
             return None
         brut = r.text
     except ImportError:
-        pass                             # on tente urllib plus bas
+        pass  # on tente urllib plus bas
     except Exception as e:
         if journal:
             journal(f"vérification impossible ({type(e).__name__}) : {e}")
@@ -209,8 +211,9 @@ def etat_blocage(url: str, timeout: float = 5.0, journal=None) -> bool | None:
     return bloque
 
 
-def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
-                     journal=None, infos: dict | None = None) -> dict | None:
+def etat_mise_a_jour(
+    version_actuelle: str, url: str, timeout: float = 5.0, journal=None, infos: dict | None = None
+) -> dict | None:
     """Compare la version installée à celle publiée.
 
     Renvoie None si tout va bien (à jour, ou vérification impossible), sinon un
@@ -234,7 +237,7 @@ def etat_mise_a_jour(version_actuelle: str, url: str, timeout: float = 5.0,
         return None
     derniere = str(infos.get("version", "")).strip()
     if comparer_versions(version_actuelle, derniere) >= 0:
-        return None                      # déjà à jour (ou en avance : build local)
+        return None  # déjà à jour (ou en avance : build local)
 
     minimale = str(infos.get("version_minimale", "") or "").strip()
     urgent = bool(minimale) and comparer_versions(version_actuelle, minimale) < 0

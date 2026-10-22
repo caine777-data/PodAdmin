@@ -4,6 +4,7 @@ Avant : une micro-coupure Wi-Fi ou un 502 de la passerelle d'ILaaS faisait
 passer la demande en « échec » alors qu'Aristote continuait, et son identifiant
 était perdu ; « Réessayer » renvoyait tout. Faux réseau en mémoire.
 """
+
 import os
 import sys
 import threading
@@ -16,7 +17,7 @@ import requests
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
-from enrichissement import aristote_api as AA     # noqa: E402
+from enrichissement import aristote_api as AA  # noqa: E402
 
 
 class Reponse:
@@ -83,14 +84,23 @@ class TestLecture:
         c = client([])
         with pytest.raises(requests.ConnectionError):
             c.envoyer_fichier(str(f), "fr")
-        assert c.session.post_appels == 2      # le jeton, puis UN envoi
+        assert c.session.post_appels == 2  # le jeton, puis UN envoi
 
 
 class TestAttente:
     def test_panne_toleree_puis_reprise(self):
         etats = []
-        c = client([Reponse(200, {"status": "IN_PROGRESS"}), COUPURE, COUPURE, COUPURE,
-                    COUPURE, Reponse(503), Reponse(200, {"status": "SUCCESS"})])
+        c = client(
+            [
+                Reponse(200, {"status": "IN_PROGRESS"}),
+                COUPURE,
+                COUPURE,
+                COUPURE,
+                COUPURE,
+                Reponse(503),
+                Reponse(200, {"status": "SUCCESS"}),
+            ]
+        )
         d = c.attendre("e1", intervalle=0, jusqu_au_bout=True, rappel=lambda s, _d: etats.append(s))
         assert d["status"] == "SUCCESS"
         assert "RECONNEXION" in etats and etats[-1] == "SUCCESS"
@@ -114,17 +124,22 @@ class TestAttente:
         for _ in range(6):
             suite += [COUPURE] * 3 + [Reponse(200, {"status": "IN_PROGRESS"})]
         c = client(suite + [Reponse(200, {"status": "SUCCESS"})])
-        c.pauses_reprise = ()                  # chaque coupure remonte jusqu'à attendre()
+        c.pauses_reprise = ()  # chaque coupure remonte jusqu'à attendre()
         debut = time.time()
         # Chaque épisode (3 coupures, ~0,06 s) reste sous la tolérance ; leur
         # total (~0,4 s) la dépasse largement.
-        assert c.attendre("e1", intervalle=0.02, tolerance_panne=0.2, jusqu_au_bout=True)["status"] == "SUCCESS"
+        assert (
+            c.attendre("e1", intervalle=0.02, tolerance_panne=0.2, jusqu_au_bout=True)["status"]
+            == "SUCCESS"
+        )
         assert time.time() - debut > 0.2, "le banc ne teste rien"
 
 
 class TestDemandeReprenable:
     def test_reessayer_reprend_le_suivi_sans_nouvel_envoi(self, tmp_path, monkeypatch):
-        from enrichissement import editeur, projet as pj
+        from enrichissement import editeur
+        from enrichissement import projet as pj
+
         monkeypatch.setattr(pj, "DOSSIER_PROJETS", str(tmp_path / "projets"))
         p = pj.nouveau(str(tmp_path / "c.mp4"), "fr")
         p["sous_titres"] = [{"start": 0, "end": 2, "text": "Bonjour."}]
@@ -154,14 +169,19 @@ class TestDemandeReprenable:
         try:
             srv.lancer_demande(p["id"], "meta")
             fin = time.time() + 5
-            while time.time() < fin and pj.etat_partie(pj.charger(p["id"]), "meta")["etat"] != "erreur":
+            while (
+                time.time() < fin
+                and pj.etat_partie(pj.charger(p["id"]), "meta")["etat"] != "erreur"
+            ):
                 time.sleep(0.02)
             d = pj.enrichissement(pj.charger(p["id"]))["demandes"]["meta"]
             assert d["etat"] == "erreur" and d["reprenable"] is True
-            srv.lancer_demande(p["id"], "meta")             # « Reprendre le suivi »
+            srv.lancer_demande(p["id"], "meta")  # « Reprendre le suivi »
             assert porte.wait(5)
             fin = time.time() + 5
-            while time.time() < fin and pj.etat_partie(pj.charger(p["id"]), "meta")["etat"] != "pret":
+            while (
+                time.time() < fin and pj.etat_partie(pj.charger(p["id"]), "meta")["etat"] != "pret"
+            ):
                 time.sleep(0.02)
             assert pj.etat_partie(pj.charger(p["id"]), "meta")["etat"] == "pret"
             assert len(envois) == 1 and suivis == ["e1", "e1"], "la demande a été renvoyée"
@@ -173,25 +193,32 @@ class TestTranscription:
     def test_echec_passager_rend_la_transcription_reprenable(self, tmp_path, monkeypatch):
         import app as A
         from enrichissement import projet as pj
+
         monkeypatch.setattr(pj, "DOSSIER_PROJETS", str(tmp_path / "projets"))
         p = pj.nouveau(str(tmp_path / "c.mp4"), "fr")
         p.update(etat="attente", enrichment_id="t1", pod={"id": 7})
         evenements = []
-        faux = SimpleNamespace(evenements=SimpleNamespace(put=evenements.append),
-                               _signaler=lambda *a, **k: None, pid_courant=None,
-                               hote=SimpleNamespace(_ui=lambda *a: None, _log=lambda *a: None))
+        faux = SimpleNamespace(
+            evenements=SimpleNamespace(put=evenements.append),
+            _signaler=lambda *a, **k: None,
+            pid_courant=None,
+            hote=SimpleNamespace(_ui=lambda *a: None, _log=lambda *a: None),
+        )
         A.PanneauEnrichissement._echec(faux, p, AA.AristoteErreur("perdue", passagere=True))
         assert p["etat"] == "erreur" and p["reprenable"] is True
         cartes = A.cartes_ia(p, True)
-        assert cartes["st"]["action"] == "reessayer_st" and cartes["st"]["libelle"] == "Reprendre le suivi"
+        assert (
+            cartes["st"]["action"] == "reessayer_st"
+            and cartes["st"]["libelle"] == "Reprendre le suivi"
+        )
         A.PanneauEnrichissement._echec(faux, p, AA.AristoteErreur("Aristote a échoué : illisible"))
         assert p["reprenable"] is False, "un vrai échec ne se reprend pas"
-
 
 
 def test_aristote_voit_podadmin():
     """Audit O8 : nom vu dans les journaux d'ILaaS."""
     from __version__ import __version__
+
     assert AA.AristoteAPI("id", "s").session.headers["User-Agent"] == f"PodAdmin/{__version__}"
 
 
@@ -201,7 +228,7 @@ class ReponseBrute:
     def __init__(self, code, corps: str):
         self.status_code = code
         self.content = corps.encode("utf-8")
-        self.text = self.content.decode("latin-1")     # ce que lit requests sans charset
+        self.text = self.content.decode("latin-1")  # ce que lit requests sans charset
 
     def json(self):
         raise ValueError("pas du JSON")
@@ -210,7 +237,8 @@ class ReponseBrute:
 PAGE_MAINTENANCE = (
     '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n'
     "<title>Maintenance en cours · Maintenance in progress</title>\n"
-    "<style>:root{--bg:#fbfaf8}</style></head><body>…</body></html>")
+    "<style>:root{--bg:#fbfaf8}</style></head><body>…</body></html>"
+)
 
 
 class TestMaintenance:
@@ -229,8 +257,10 @@ class TestMaintenance:
         assert "<" not in msg
 
     def test_html_sans_titre(self):
-        assert AA._message_erreur(ReponseBrute(502, "<html><body>x</body></html>")) == \
-            "page HTML sans détail"
+        assert (
+            AA._message_erreur(ReponseBrute(502, "<html><body>x</body></html>"))
+            == "page HTML sans détail"
+        )
 
     def test_texte_simple_garde(self):
         assert AA._message_erreur(ReponseBrute(500, "Erreur interne")) == "Erreur interne"

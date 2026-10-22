@@ -22,17 +22,18 @@ Etapes testees :
 Lancer avec un token SUPERUTILISATEUR.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
-TEST_CODE = "zz_test_podadmin"     # code_name du groupe jetable
+TEST_CODE = "zz_test_podadmin"  # code_name du groupe jetable
 MAX_ID = 80
 
 
@@ -120,7 +121,7 @@ def main():
         "sites": [site_url],
     }
     if owner_a:
-        body_create["users"] = [owner_a]      # on tente de mettre un membre des la creation
+        body_create["users"] = [owner_a]  # on tente de mettre un membre des la creation
     status, created = req("POST", f"{rest}/accessgroups/", headers, json=body_create)
     print(f"   POST -> HTTP {status}")
     print(f"   reponse : {json.dumps(created, ensure_ascii=False)[:300]}")
@@ -131,8 +132,10 @@ def main():
     gurl = created.get("url") if isinstance(created, dict) else None
     members_at_create = norm_urls(created.get("users")) if isinstance(created, dict) else []
     print(f"   url renvoyee par le POST : {gurl or '(aucune)'}")
-    print(f"   membres a la creation    : {members_at_create}  "
-          f"=> membre pris des la creation ? {'OUI' if members_at_create else 'NON'}")
+    print(
+        f"   membres a la creation    : {members_at_create}  "
+        f"=> membre pris des la creation ? {'OUI' if members_at_create else 'NON'}"
+    )
 
     # ------------------------------------------------------------------ #
     # 4) Cibler le groupe cree (retrouver son URL si non fournie)
@@ -156,8 +159,10 @@ def main():
         if owner_b:
             new = list(dict.fromkeys(cur + [owner_b]))
             status, body = req("PATCH", gurl, headers, json={"users": new})
-            print(f"   [PATCH +B] -> HTTP {status}  "
-                  f"{'' if status==200 else json.dumps(body, ensure_ascii=False)[:120]}")
+            print(
+                f"   [PATCH +B] -> HTTP {status}  "
+                f"{'' if status == 200 else json.dumps(body, ensure_ascii=False)[:120]}"
+            )
             # 5b) Si PATCH refuse, tenter PUT (remplacement complet)
             if status != 200 and isinstance(g, dict):
                 put_body = {
@@ -167,13 +172,17 @@ def main():
                     "users": new,
                 }
                 status, body = req("PUT", gurl, headers, json=put_body)
-                print(f"   [PUT  +B] -> HTTP {status}  "
-                      f"{'' if status==200 else json.dumps(body, ensure_ascii=False)[:120]}")
+                print(
+                    f"   [PUT  +B] -> HTTP {status}  "
+                    f"{'' if status == 200 else json.dumps(body, ensure_ascii=False)[:120]}"
+                )
             # Verif
             status, g2 = req("GET", gurl, headers)
             after = norm_urls(g2.get("users")) if isinstance(g2, dict) else []
-            print(f"   membres apres ajout : {after}  "
-                  f"=> AJOUT PRIS ? {'OUI' if owner_b and owner_b.rstrip('/') in [u.rstrip('/') for u in after] else 'NON'}")
+            print(
+                f"   membres apres ajout : {after}  "
+                f"=> AJOUT PRIS ? {'OUI' if owner_b and owner_b.rstrip('/') in [u.rstrip('/') for u in after] else 'NON'}"
+            )
 
             # 5c) Tenter de RETIRER le membre B (PATCH puis PUT)
             back = [u for u in after if u.rstrip("/") != owner_b.rstrip("/")]
@@ -188,8 +197,10 @@ def main():
                 status, body = req("PUT", gurl, headers, json=put_body)
             status, g3 = req("GET", gurl, headers)
             after2 = norm_urls(g3.get("users")) if isinstance(g3, dict) else []
-            print(f"   membres apres retrait : {after2}  "
-                  f"=> RETRAIT PRIS ? {'OUI' if owner_b.rstrip('/') not in [u.rstrip('/') for u in after2] else 'NON'}")
+            print(
+                f"   membres apres retrait : {after2}  "
+                f"=> RETRAIT PRIS ? {'OUI' if owner_b.rstrip('/') not in [u.rstrip('/') for u in after2] else 'NON'}"
+            )
     else:
         print("\n> 5. (URL du groupe introuvable -> gestion des membres non testable)")
 
@@ -202,7 +213,9 @@ def main():
         print(f"   DELETE {gurl} -> HTTP {status}")
         # Verif
         check = find_group_url_by_code(rest, headers, TEST_CODE)
-        print(f"   => SUPPRESSION {'OK (groupe disparu)' if not check else 'NON (groupe encore present !)'}")
+        print(
+            f"   => SUPPRESSION {'OK (groupe disparu)' if not check else 'NON (groupe encore present !)'}"
+        )
         if check:
             print(f"   ⚠️  Le groupe '{TEST_CODE}' existe encore : {check}")
             print("      Supprimez-le a la main dans l'admin Django si besoin.")

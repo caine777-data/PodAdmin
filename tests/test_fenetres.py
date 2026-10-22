@@ -39,10 +39,11 @@ MARGE = 8
 def app():
     """Instancie l'application une seule fois pour tout le module."""
     import tempfile
+
     os.environ.setdefault("HOME", tempfile.mkdtemp())
     try:
         import app as module_app
-    except Exception as e:                       # pas d'affichage disponible
+    except Exception as e:  # pas d'affichage disponible
         pytest.skip(f"interface indisponible : {e}")
     a = module_app.App()
     a.update()
@@ -66,29 +67,37 @@ class TestDimensionsFenetres:
     def test_fenetre_progression_remplacement(self, app):
         """Cas long : message de finalisation interrompue (le plus verbeux)."""
         import app as module_app
+
         m = module_app.ProgressModal(
             app,
             title="Remplacer le fichier & ré-encoder",
             subtitle="« Cours magistral — séance 3 »\n"
-                     "cours_seance3_v2.mp4 (740 Mo) — méthode par MORCEAUX.",
-            intro="Étape 1/3 — Envoi du fichier par morceaux…")
+            "cours_seance3_v2.mp4 (740 Mo) — méthode par MORCEAUX.",
+            intro="Étape 1/3 — Envoi du fichier par morceaux…",
+        )
         app.update()
         try:
             requise, declaree, ok = _mesurer(m, 320)
-            assert ok, (f"contenu de {requise} px pour une fenêtre de {declaree} px : "
-                        "une partie serait invisible")
+            assert ok, (
+                f"contenu de {requise} px pour une fenêtre de {declaree} px : "
+                "une partie serait invisible"
+            )
 
             # Message de fin long : la fenêtre doit s'ajuster d'elle-même.
-            m.finish(False,
-                     "Le fichier est envoyé, mais le serveur termine encore son "
-                     "assemblage (cela peut prendre ~10 min). Vérifiez la vidéo sur "
-                     "le site, puis relancez le ré-encodage si besoin.")
+            m.finish(
+                False,
+                "Le fichier est envoyé, mais le serveur termine encore son "
+                "assemblage (cela peut prendre ~10 min). Vérifiez la vidéo sur "
+                "le site, puis relancez le ré-encodage si besoin.",
+            )
             app.update()
             m.update_idletasks()
             import re
+
             hauteur = int(re.search(r"x(\d+)", m.geometry()).group(1))
             assert m.winfo_reqheight() <= hauteur + MARGE, (
-                "après un message de fin long, le contenu dépasse encore")
+                "après un message de fin long, le contenu dépasse encore"
+            )
         finally:
             try:
                 m.destroy()
@@ -107,22 +116,26 @@ class TestDimensionsFenetres:
         réintroduction volontaire du bug. Un test doit reproduire le cas réel,
         pas le cas commode."""
         import app as module_app
+
         m = module_app.ProgressModal(
             app,
             title="Remplacer le fichier & ré-encoder",
             subtitle="« Cours magistral — séance 3 »\n"
-                     "cours_seance3_v2.mp4 (740 Mo) — méthode par MORCEAUX "
-                     "(compte véhicule).",
-            intro="Étape 1/3 — Envoi du fichier par morceaux…")
+            "cours_seance3_v2.mp4 (740 Mo) — méthode par MORCEAUX "
+            "(compte véhicule).",
+            intro="Étape 1/3 — Envoi du fichier par morceaux…",
+        )
         app.update()
         try:
             m.update_idletasks()
             import re
+
             hauteur = int(re.search(r"x(\d+)", m.geometry()).group(1))
             bas_du_bouton = m.close_btn.winfo_y() + m.close_btn.winfo_reqheight()
             assert bas_du_bouton <= hauteur, (
                 f"le bouton Fermer se termine à {bas_du_bouton} px, "
-                f"hors d'une fenêtre de {hauteur} px")
+                f"hors d'une fenêtre de {hauteur} px"
+            )
         finally:
             try:
                 m.destroy()
@@ -135,11 +148,13 @@ class TestDimensionsFenetres:
         Sans cela, ses dernières sections (réglages de l'instance) sont
         inaccessibles en fenêtre réduite."""
         import customtkinter as ctk
+
         app._show_tab("config")
         app.update()
         assert isinstance(app.tabs["config"], ctk.CTkScrollableFrame), (
             "l'onglet Configuration doit rester défilable : son contenu dépasse "
-            "la hauteur disponible en fenêtre réduite")
+            "la hauteur disponible en fenêtre réduite"
+        )
 
     def test_tous_les_onglets_s_affichent(self, app):
         """Garde-fou : aucun onglet ne doit lever d'erreur à l'affichage."""
@@ -164,9 +179,9 @@ class TestCorrectionsAudit:
         app._auto_loaded.clear()
         app._show_tab("browse")
         assert app.onglet_courant == "browse", (
-            "l'onglet courant doit être mémorisé pour pouvoir rejouer le chargement")
-        assert "browse" not in app._auto_loaded, (
-            "sans connexion, aucun chargement ne doit partir")
+            "l'onglet courant doit être mémorisé pour pouvoir rejouer le chargement"
+        )
+        assert "browse" not in app._auto_loaded, "sans connexion, aucun chargement ne doit partir"
 
     def test_b1_methode_de_reprise_existe(self, app):
         """La reprise doit être appelable depuis les deux points de connexion."""
@@ -178,10 +193,12 @@ class TestCorrectionsAudit:
         import inspect
 
         import app as module_app
+
         src = inspect.getsource(module_app.App._do_reassign_apply)
         assert "reassign_keep_var.get()" not in src, (
             "lecture d'une variable Tk depuis un thread de travail : "
-            "c'est la raison d'être du paramètre `keep`")
+            "c'est la raison d'être du paramètre `keep`"
+        )
 
     def test_b6_refus_meme_proprietaire(self, app):
         """Réaffecter vers le même compte n'a aucun sens : à refuser avant
@@ -189,7 +206,7 @@ class TestCorrectionsAudit:
         app._show_tab("reassign")
         compte = {"url": "https://v/rest/users/6/", "username": "test"}
         app.reassign_source = compte
-        app.reassign_target = dict(compte)       # même URL, objet distinct
+        app.reassign_target = dict(compte)  # même URL, objet distinct
         app.reassign_videos = []
         app.reassign_rowvars = {}
         app._reassign_confirm()
@@ -203,8 +220,10 @@ class TestCorrectionsAudit:
         `except` — n'était détectable que par analyse statique."""
         import subprocess
         import sys
-        r = subprocess.run([sys.executable, "-m", "pyflakes", "app.py"],
-                           capture_output=True, text=True)
+
+        r = subprocess.run(
+            [sys.executable, "-m", "pyflakes", "app.py"], capture_output=True, text=True
+        )
         indefinis = [l for l in r.stdout.splitlines() if "undefined name" in l]
         assert not indefinis, "noms indéfinis détectés :\n" + "\n".join(indefinis)
 
@@ -240,7 +259,8 @@ class TestLargeurDesBarres:
         requis, dispo = cadre.winfo_reqwidth(), cadre.winfo_width()
         assert requis <= dispo + MARGE, (
             f"la rangée de filtres réclame {requis} px pour {dispo} px "
-            f"disponibles : {requis - dispo} px seraient tronqués")
+            f"disponibles : {requis - dispo} px seraient tronqués"
+        )
 
     def test_pastilles_au_repos_sur_une_ligne(self, app):
         """Depuis la 1.13.0, les filtres sont des pastilles : au repos, les six
@@ -263,7 +283,8 @@ class TestLargeurDesBarres:
         p = app.browse_detect
         droite = p.winfo_rootx() - app.winfo_rootx() + p.winfo_width()
         assert p.winfo_ismapped() and droite <= app.winfo_width(), (
-            f"la pastille « Anomalies » finit à {droite} px")
+            f"la pastille « Anomalies » finit à {droite} px"
+        )
 
 
 class TestMagasinPartage:
@@ -282,10 +303,21 @@ class TestMagasinPartage:
 
             def get_all_videos(self, progress_cb=None):
                 FauxAPI.appels += 1
-                return [{"slug": f"s{i}", "title": f"V{i}", "is_draft": 0,
-                         "is_restricted": 0, "owner": "https://v/rest/users/6/",
-                         "type": "", "channel": [], "encoded": 1, "duration": 60,
-                         "date_added": "2026-08-01"} for i in range(5)]
+                return [
+                    {
+                        "slug": f"s{i}",
+                        "title": f"V{i}",
+                        "is_draft": 0,
+                        "is_restricted": 0,
+                        "owner": "https://v/rest/users/6/",
+                        "type": "",
+                        "channel": [],
+                        "encoded": 1,
+                        "duration": 60,
+                        "date_added": "2026-08-01",
+                    }
+                    for i in range(5)
+                ]
 
             def get_channels(self):
                 return []
@@ -301,6 +333,7 @@ class TestMagasinPartage:
 
             def get_owners_map(self, **kw):
                 return {}
+
         FauxAPI.appels = 0
         return FauxAPI()
 
@@ -311,6 +344,7 @@ class TestMagasinPartage:
         import re
 
         import app as module_app
+
         source = inspect.getsource(module_app)
         fautifs = []
         for methode in ("_do_encode_scan", "_do_reassign_preview", "_do_stats_scan"):
@@ -319,7 +353,8 @@ class TestMagasinPartage:
                 fautifs.append(methode)
         assert not fautifs, (
             "ces onglets rechargent l'instance au lieu d'utiliser le magasin "
-            f"partagé : {', '.join(fautifs)}")
+            f"partagé : {', '.join(fautifs)}"
+        )
 
     def test_suppression_propagee_a_tous_les_onglets(self, app):
         """Une vidéo retirée du magasin doit disparaître de PARTOUT."""
@@ -327,20 +362,18 @@ class TestMagasinPartage:
         app.videos[:] = app.api.get_all_videos()
         app.encode_videos = list(app.videos)
         app._stats_contexte = ({"https://v/rest/users/6": "u6"}, {}, {}, [])
-        app.stats_data = app._compute_stats(list(app.videos),
-                                            {"https://v/rest/users/6": "u6"},
-                                            {}, {}, [])
+        app.stats_data = app._compute_stats(
+            list(app.videos), {"https://v/rest/users/6": "u6"}, {}, {}, []
+        )
         app._show_tab("encode")
         app.update()
 
-        app.videos.pop(0)                       # suppression (mémoire seule)
+        app.videos.pop(0)  # suppression (mémoire seule)
         app._refresh_video_views()
         app.update()
 
-        assert len(app.encode_videos) == 4, (
-            "l'onglet Encodage garde une vidéo qui n'existe plus")
-        assert app.stats_data["total"] == 4, (
-            "l'Inventaire affiche un total périmé")
+        assert len(app.encode_videos) == 4, "l'onglet Encodage garde une vidéo qui n'existe plus"
+        assert app.stats_data["total"] == 4, "l'Inventaire affiche un total périmé"
 
 
 class TestInterruptionDesLots:
@@ -362,23 +395,35 @@ class TestInterruptionDesLots:
         le panneau reviendrait au détail et le bouton d'arrêt n'existerait plus.
         Un test dépendant de l'ordre d'exécution est un test qui ment."""
         app._show_tab("browse")
-        app.videos[:] = [{"slug": "s1", "title": "V", "is_draft": 0,
-                          "is_restricted": 0, "owner": "", "type": "", "channel": []}]
+        app.videos[:] = [
+            {
+                "slug": "s1",
+                "title": "V",
+                "is_draft": 0,
+                "is_restricted": 0,
+                "owner": "",
+                "type": "",
+                "channel": [],
+            }
+        ]
         app._browse_do_filter()
-        app._browse_vider_multi()                 # état de départ garanti
+        app._browse_vider_multi()  # état de départ garanti
         app._browse_toggle_multi(app.browse_filtered[0])
         app.update()
 
     def test_bouton_desactive_au_repos(self, app):
         self._preparer_selection(app)
         assert str(app.browse_stop_btn.cget("state")) == "disabled", (
-            "un bouton d'arrêt toujours cliquable laisserait croire qu'il agit")
+            "un bouton d'arrêt toujours cliquable laisserait croire qu'il agit"
+        )
 
     def test_cycle_activation(self, app):
         self._preparer_selection(app)
-        app._lot_debut(); app.update()
+        app._lot_debut()
+        app.update()
         assert str(app.browse_stop_btn.cget("state")) == "normal"
-        app._lot_fin(); app.update()
+        app._lot_fin()
+        app.update()
         assert str(app.browse_stop_btn.cget("state")) == "disabled"
 
     def test_demande_d_arret_leve_le_drapeau(self, app):
@@ -400,12 +445,28 @@ class TestErgonomie:
         import re
 
         import app as module_app
-        source = open(module_app.__file__.replace(".pyc", ".py"),
-                      encoding="utf-8").read()
+
+        source = open(module_app.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
         entrees = re.findall(r'\("(\S+)\s+([A-ZÀ-Ü][^"]*)",\s*"([a-z]+)"\)', source)
-        icones = [i for i, lib, cle in entrees
-                  if cle in ("upload", "encode", "comptes", "browse", "reassign",
-                             "stats", "ct", "groups", "config", "help", "log", "about")]
+        icones = [
+            i
+            for i, lib, cle in entrees
+            if cle
+            in (
+                "upload",
+                "encode",
+                "comptes",
+                "browse",
+                "reassign",
+                "stats",
+                "ct",
+                "groups",
+                "config",
+                "help",
+                "log",
+                "about",
+            )
+        ]
         doublons = [i for i, n in collections.Counter(icones).items() if n > 1]
         assert not doublons, f"icônes en double dans la navigation : {doublons}"
 
@@ -415,6 +476,7 @@ class TestErgonomie:
         Les cinq modales passent par `_focus_toplevel` : les raccourcis y sont
         posés une seule fois, ce qui évite d'en oublier une."""
         import app as module_app
+
         m = module_app.ProgressModal(app, title="T", subtitle="s", intro="i")
         app.update()
         try:
@@ -429,12 +491,13 @@ class TestErgonomie:
     def test_theme_bascule_et_se_memorise(self, app):
         """Le mode clair/sombre doit basculer et retenir le choix."""
         import customtkinter as ctk
+
         depart = ctk.get_appearance_mode().lower()
         app._basculer_theme()
         app.update()
         assert ctk.get_appearance_mode().lower() != depart
         assert app.config_data.get("theme") in ("dark", "light")
-        app._basculer_theme()                    # remettre l'état initial
+        app._basculer_theme()  # remettre l'état initial
         app.update()
 
     def test_palette_sans_couleur_en_dur(self):
@@ -446,14 +509,12 @@ class TestErgonomie:
         import re
 
         import app as module_app
-        source = open(module_app.__file__.replace(".pyc", ".py"),
-                      encoding="utf-8").read()
+
+        source = open(module_app.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
         # On ignore le bloc de définition de la palette lui-même.
-        corps = source[source.index("# Page Moodle où les enseignants"):]
-        restantes = re.findall(r'(?:fg_color|hover_color|text_color)="#[0-9a-fA-F]{6}"',
-                               corps)
-        assert len(restantes) <= 12, (
-            f"{len(restantes)} couleurs encore en dur : {set(restantes)}")
+        corps = source[source.index("# Page Moodle où les enseignants") :]
+        restantes = re.findall(r'(?:fg_color|hover_color|text_color)="#[0-9a-fA-F]{6}"', corps)
+        assert len(restantes) <= 12, f"{len(restantes)} couleurs encore en dur : {set(restantes)}"
 
 
 class TestHierarchieVisuelle:
@@ -490,17 +551,21 @@ class TestHierarchieVisuelle:
     @staticmethod
     def _source() -> str:
         import app as module_app
-        return open(module_app.__file__.replace(".pyc", ".py"),
-                    encoding="utf-8").read()
+
+        return open(module_app.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
 
     def test_aucune_liste_deroulante_au_bleu_par_defaut(self):
         """Tout CTkOptionMenu doit recevoir STYLE_CHAMP."""
         source = self._source()
-        fautifs = [ligne for ligne, appel in self._appels(source, "CTkOptionMenu")
-                   if "STYLE_CHAMP" not in appel]
+        fautifs = [
+            ligne
+            for ligne, appel in self._appels(source, "CTkOptionMenu")
+            if "STYLE_CHAMP" not in appel
+        ]
         assert not fautifs, (
             f"listes déroulantes sans STYLE_CHAMP, lignes {fautifs} : elles "
-            "reprendraient le bleu des boutons d'action.")
+            "reprendraient le bleu des boutons d'action."
+        )
 
     def test_aucun_bouton_sans_couleur_explicite(self):
         """Un CTkButton sans `fg_color` hérite du bleu du thème.
@@ -509,11 +574,13 @@ class TestHierarchieVisuelle:
         « Parcourir… », « Fermer » — se retrouvaient aussi accentués que
         l'action principale de leur écran."""
         source = self._source()
-        fautifs = [ligne for ligne, appel in self._appels(source, "CTkButton")
-                   if "fg_color" not in appel]
+        fautifs = [
+            ligne for ligne, appel in self._appels(source, "CTkButton") if "fg_color" not in appel
+        ]
         assert not fautifs, (
             f"boutons sans fg_color, lignes {fautifs} : ils prendraient le "
-            "bleu d'action par défaut.")
+            "bleu d'action par défaut."
+        )
 
     def test_boutons_secondaires_lisibles(self):
         """Un bouton gris garde le texte BLANC par défaut : en mode clair, il
@@ -523,18 +590,35 @@ class TestHierarchieVisuelle:
         filtres en neutre — le remède au premier défaut en avait créé un
         second, moins visible mais plus gênant."""
         source = self._source()
-        fautifs = [ligne for ligne, appel in self._appels(source, "CTkButton")
-                   if "fg_color=C_NEUTRE" in appel and "text_color" not in appel]
+        fautifs = [
+            ligne
+            for ligne, appel in self._appels(source, "CTkButton")
+            if "fg_color=C_NEUTRE" in appel and "text_color" not in appel
+        ]
         assert not fautifs, (
             f"boutons gris sans text_color, lignes {fautifs} : ils "
-            "paraîtraient désactivés en mode clair.")
+            "paraîtraient désactivés en mode clair."
+        )
 
     def test_navigation_groupee_couvre_tous_les_onglets(self):
         """Le regroupement en blocs ne doit avoir égaré aucune entrée."""
-        import app as module_app
-        attendus = {"upload", "encode", "browse", "reassign", "ct", "nomen",
-                    "stats", "comptes", "groups", "config", "log", "help",
-                    "about"}
+        import app as module_app  # noqa: F401  (import conservé tel quel)
+
+        attendus = {
+            "upload",
+            "encode",
+            "browse",
+            "reassign",
+            "ct",
+            "nomen",
+            "stats",
+            "comptes",
+            "groups",
+            "config",
+            "log",
+            "help",
+            "about",
+        }
         source = self._source()
         assert "NAVIGATION = [" in source, "navigation par blocs absente"
         # Les onglets construits et les boutons de navigation doivent coïncider.
@@ -575,7 +659,8 @@ class TestHierarchieVisuelle:
                 continue
             assert bouton.master is zone, (
                 f"« {cle} » est hors de la zone défilante : il serait inatteignable "
-                "quand la navigation déborde")
+                "quand la navigation déborde"
+            )
 
     def test_aide_et_a_propos_toujours_atteignables(self, app):
         """Épinglés en pied, ils ne doivent JAMAIS sortir de l'écran."""
@@ -584,8 +669,7 @@ class TestHierarchieVisuelle:
         for cle in ("help", "about"):
             bouton = app.nav_btns[cle]
             bas = bouton.winfo_rooty() + bouton.winfo_height()
-            assert bas <= app.winfo_height() + app.winfo_rooty(), (
-                f"« {cle} » sort de la fenêtre")
+            assert bas <= app.winfo_height() + app.winfo_rooty(), f"« {cle} » sort de la fenêtre"
             # `grid` depuis la 1.5.3 : `pack` laissait « Aide » à 140 px et
             # « À propos » à 68 — deux colonnes visiblement inégales, chaque
             # bouton gardant sa largeur naturelle.
@@ -641,9 +725,11 @@ class TestProgressionMasquee:
         import inspect
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._start_upload)
         assert "_afficher_progression" in source, (
-            "le lancement d'un lot n'affiche pas les barres de progression.")
+            "le lancement d'un lot n'affiche pas les barres de progression."
+        )
 
     def test_fin_de_lot_masque_la_progression(self):
         """Sans masquage, les barres resteraient à l'écran après l'envoi —
@@ -651,9 +737,11 @@ class TestProgressionMasquee:
         import inspect
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._on_batch_done)
         assert "_masquer_progression" in source, (
-            "la fin du lot ne masque pas les barres de progression.")
+            "la fin du lot ne masque pas les barres de progression."
+        )
 
     def test_relance_des_echecs_affiche_la_progression(self):
         """`_retry_failed` n'emprunte PAS `_start_upload` : sans appel propre,
@@ -664,9 +752,11 @@ class TestProgressionMasquee:
         import inspect
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._retry_failed)
         assert "_afficher_progression" in source, (
-            "la relance des échecs n'affiche pas les barres de progression.")
+            "la relance des échecs n'affiche pas les barres de progression."
+        )
 
 
 class TestBandeauMiseAJour:
@@ -681,15 +771,20 @@ class TestBandeauMiseAJour:
         assert app.maj_bandeau is None
 
     def test_affichage_version_ordinaire(self, app):
-        app._afficher_bandeau_maj({"version": "9.9.9",
-                                   "url": "https://exemple.invalid/releases",
-                                   "notes": "Notes de version."})
+        app._afficher_bandeau_maj(
+            {
+                "version": "9.9.9",
+                "url": "https://exemple.invalid/releases",
+                "notes": "Notes de version.",
+            }
+        )
         app.update()
         assert app.maj_bandeau is not None
         assert app.maj_bandeau.winfo_ismapped()
         assert app.maj_bandeau.winfo_height() > 1, (
             "bandeau de hauteur nulle : c'est la configuration qui produisait "
-            "un carré noir sur macOS.")
+            "un carré noir sur macOS."
+        )
 
     def test_affichage_sans_lien(self, app):
         """Branche la plus risquée : elle force `height=0` sur le cadre."""
@@ -716,9 +811,9 @@ class TestEchelleDeSurfaces:
     def _corps() -> str:
         """Source de `app.py`, hors bloc de définition de la palette."""
         import app as module_app
-        source = open(module_app.__file__.replace(".pyc", ".py"),
-                      encoding="utf-8").read()
-        return source[source.index("# Page Moodle où les enseignants"):]
+
+        source = open(module_app.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+        return source[source.index("# Page Moodle où les enseignants") :]
 
     def test_aucun_gris_hors_echelle(self):
         """Douze gris différents désignaient quatre choses.
@@ -727,10 +822,12 @@ class TestEchelleDeSurfaces:
         lequel faisait référence, et un même panneau changeait de teinte d'un
         onglet à l'autre."""
         import re
+
         fautifs = re.findall(r'fg_color=\("gray\d+", "gray\d+"\)', self._corps())
         assert not fautifs, (
             f"{len(fautifs)} surfaces hors échelle : {set(fautifs)}. "
-            "Utiliser S_CARTE, S_LIGNE, S_SELECTION, S_PUCE ou S_FILET.")
+            "Utiliser S_CARTE, S_LIGNE, S_SELECTION, S_PUCE ou S_FILET."
+        )
 
     def test_aucune_couleur_unique_pour_les_deux_modes(self):
         """Une couleur écrite seule s'applique TELLE QUELLE aux deux thèmes.
@@ -741,6 +838,7 @@ class TestEchelleDeSurfaces:
         (`"gray30"`). Le défaut est resté invisible tant que le mode sombre
         était le seul disponible."""
         import re
+
         corps = self._corps()
         # Une teinte est LÉGITIME quand elle est un membre de couple : le
         # caractère significatif qui la précède est alors « ( » ou « , ».
@@ -752,21 +850,22 @@ class TestEchelleDeSurfaces:
         #     fg_color=S_LIGNE if i % 2 else "gray14"
         # qui est précisément celle qui noircissait une ligne sur deux.
         import app as module_app
-        entier = open(module_app.__file__.replace(".pyc", ".py"),
-                      encoding="utf-8").read()
-        decalage = entier[:entier.index("# Page Moodle où les enseignants")].count("\n")
+
+        entier = open(module_app.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+        decalage = entier[: entier.index("# Page Moodle où les enseignants")].count("\n")
         fautifs = []
         for m in re.finditer(r'"gray\d+"', corps):
-            avant = corps[:m.start()].rstrip()
+            avant = corps[: m.start()].rstrip()
             if avant and avant[-1] not in "(,":
                 # Le décalage ramène au numéro de ligne du FICHIER : sans lui,
                 # le message renvoyait vers des lignes sans rapport, ce qui a
                 # coûté une recherche inutile.
-                ligne = corps[:m.start()].count("\n") + 1 + decalage
+                ligne = corps[: m.start()].count("\n") + 1 + decalage
                 fautifs.append((ligne, m.group(0)))
         assert not fautifs, (
             f"teintes appliquées aux deux modes : {fautifs}. "
-            "Un couple (clair, sombre) est nécessaire.")
+            "Un couple (clair, sombre) est nécessaire."
+        )
 
 
 class TestBarreLateraleCompacte:
@@ -786,7 +885,8 @@ class TestBarreLateraleCompacte:
         assert app.agent_visible is True
         assert app.agent_lbl.winfo_manager() == "pack"
         assert app.agent_lbl.winfo_rooty() < app.sidebar_separateur.winfo_rooty(), (
-            "le libellé s'est placé après le séparateur, donc sous la navigation")
+            "le libellé s'est placé après le séparateur, donc sous la navigation"
+        )
 
     def test_disparait_quand_il_redevient_vide(self, app):
         app._definir_agent("Dépôt au nom de :\nun.utilisateur")
@@ -812,27 +912,31 @@ class TestElevation:
 
     def test_trois_niveaux_distincts_en_mode_clair(self):
         import app as module_app
+
         fond = self._niveau(module_app.S_FOND[0])
         barre = self._niveau(module_app.S_BARRE[0])
         carte = self._niveau(module_app.S_CARTE[0])
         assert fond < barre < carte, (
             f"élévation incohérente en clair : fond={fond}, barre={barre}, "
             f"carte={carte}. Une surface posée doit être plus claire que son "
-            "support.")
+            "support."
+        )
 
     def test_trois_niveaux_distincts_en_mode_sombre(self):
         import app as module_app
+
         fond = self._niveau(module_app.S_FOND[1])
         barre = self._niveau(module_app.S_BARRE[1])
         carte = self._niveau(module_app.S_CARTE[1])
         assert fond < barre < carte, (
-            f"élévation incohérente en sombre : fond={fond}, barre={barre}, "
-            f"carte={carte}.")
+            f"élévation incohérente en sombre : fond={fond}, barre={barre}, carte={carte}."
+        )
 
     def test_le_fond_est_applique_a_la_fenetre(self, app):
         """Sans cet appel, CustomTkinter donne au fond la teinte par défaut
         d'un cadre — exactement celle de la barre latérale."""
         import app as module_app
+
         assert tuple(app.cget("fg_color")) == module_app.S_FOND
 
     def test_aucun_panneau_defilant_au_defaut(self):
@@ -859,7 +963,8 @@ class TestElevation:
             i = k
         assert not fautifs, (
             f"panneaux défilants sans fg_color, lignes {fautifs} (relatives au "
-            "corps) : ils prendraient la teinte par défaut, hors échelle.")
+            "corps) : ils prendraient la teinte par défaut, hors échelle."
+        )
 
 
 class TestSuppressionsEnListe:
@@ -877,7 +982,8 @@ class TestSuppressionsEnListe:
     def test_plus_de_libelle_rouge_repete(self):
         """Aucun bouton « 🗑 Supprimer » ne doit subsister dans une liste."""
         assert '"🗑 Supprimer"' not in self._corps(), (
-            "un bouton de suppression avec libellé subsiste dans une liste.")
+            "un bouton de suppression avec libellé subsiste dans une liste."
+        )
 
     def test_suppressions_uniques_conservent_leur_libelle(self):
         """L'argument d'origine — « une icône seule n'annonce pas la gravité »
@@ -896,14 +1002,15 @@ class TestSuppressionsEnListe:
         # c'est-à-dire celle de `CTkFont(...)`, et signalait comme fautifs des
         # boutons parfaitement conformes.
         corps = self._corps()
-        boutons = [appel for _l, appel
-                   in TestHierarchieVisuelle._appels(corps, "CTkButton")
-                   if 'text="🗑"' in appel]
+        boutons = [
+            appel
+            for _l, appel in TestHierarchieVisuelle._appels(corps, "CTkButton")
+            if 'text="🗑"' in appel
+        ]
         assert boutons, "aucun bouton poubelle trouvé"
         for b in boutons:
             assert "fg_color=C_NEUTRE" in b, f"poubelle non neutre : {b[:90]}"
-            assert "hover_color=C_DESTRUCTIF" in b, (
-                f"poubelle sans survol destructif : {b[:90]}")
+            assert "hover_color=C_DESTRUCTIF" in b, f"poubelle sans survol destructif : {b[:90]}"
 
 
 class TestInfobulle:
@@ -917,6 +1024,7 @@ class TestInfobulle:
     @staticmethod
     def _souris_disponible() -> bool:
         import shutil
+
         return shutil.which("xdotool") is not None
 
     @pytest.fixture
@@ -929,6 +1037,7 @@ class TestInfobulle:
         point survolé, et l'infobulle n'apparaissait jamais. Le test passait
         isolément et échouait en suite complète — le pire des deux mondes."""
         import app as module_app
+
         a = module_app.App()
         a.geometry("1180x760+0+0")
         a.update()
@@ -942,6 +1051,7 @@ class TestInfobulle:
     def _survoler(app, widget, duree=1.2):
         import os
         import time
+
         x = widget.winfo_rootx() + widget.winfo_width() // 2
         y = widget.winfo_rooty() + widget.winfo_height() // 2
         os.system(f"xdotool mousemove {x} {y}")
@@ -952,17 +1062,18 @@ class TestInfobulle:
 
     @staticmethod
     def _bulles(widget):
-        return [w for w in widget.winfo_children()
-                if w.winfo_class() == "Toplevel"]
+        return [w for w in widget.winfo_children() if w.winfo_class() == "Toplevel"]
 
     def test_apparait_puis_disparait(self, app):
         import os
         import time
 
         import pytest
+
         if not self._souris_disponible():
             pytest.skip("xdotool absent")
         import app as module_app
+
         bouton = module_app.ctk.CTkButton(app, text="🗑", width=34)
         bouton.pack()
         module_app.ajouter_infobulle(bouton, "Supprimer ceci")
@@ -977,8 +1088,7 @@ class TestInfobulle:
         while time.time() - debut < 0.5:
             app.update()
             time.sleep(0.05)
-        assert not self._bulles(bouton), (
-            "l'infobulle survit à la sortie du curseur")
+        assert not self._bulles(bouton), "l'infobulle survit à la sortie du curseur"
         bouton.destroy()
 
     def test_reste_dans_l_ecran(self, app):
@@ -987,9 +1097,11 @@ class TestInfobulle:
         Alignée naïvement sur le bord gauche du bouton, l'infobulle sortait de
         l'écran et se lisait « Supprimer ce… »."""
         import pytest
+
         if not self._souris_disponible():
             pytest.skip("xdotool absent")
         import app as module_app
+
         # La fenêtre doit occuper TOUTE la largeur de l'écran, sans quoi le
         # bouton n'atteint jamais le bord et le débordement ne peut pas se
         # produire : le test passait alors même en réintroduisant le défaut.
@@ -1003,7 +1115,7 @@ class TestInfobulle:
         # marge. Mesure faite, le test passait alors même en réintroduisant le
         # défaut. `place` garantit la position voulue.
         bouton = module_app.ctk.CTkButton(app, text="🗑", width=34)
-        bouton.place(relx=1.0, y=100, anchor="ne")   # collé au bord droit
+        bouton.place(relx=1.0, y=100, anchor="ne")  # collé au bord droit
         module_app.ajouter_infobulle(bouton, "Supprimer cette chaîne")
         app.update()
         app.update_idletasks()
@@ -1015,8 +1127,8 @@ class TestInfobulle:
         bulle.update_idletasks()
         droite = bulle.winfo_rootx() + bulle.winfo_reqwidth()
         assert droite <= app.winfo_screenwidth(), (
-            f"infobulle coupée : bord droit à {droite} pour un écran de "
-            f"{app.winfo_screenwidth()}")
+            f"infobulle coupée : bord droit à {droite} pour un écran de {app.winfo_screenwidth()}"
+        )
         assert bulle.winfo_rootx() >= 0
         bouton.destroy()
         app.geometry("1180x760")
@@ -1036,8 +1148,8 @@ class TestCoherenceDesIcones:
     def _navigation(source: str):
         """Renvoie [(icône, libellé, clé)] tel que déclaré dans NAVIGATION."""
         import re
-        bloc = source[source.index("NAVIGATION = ["):
-                      source.index("self.nav_btns = {}")]
+
+        bloc = source[source.index("NAVIGATION = [") : source.index("self.nav_btns = {}")]
         entrees = re.findall(r'\("([^"\s]+)",\s*"([^"]+)",\s*"(\w+)"\)', bloc)
         # GARDE-FOU. Ces tests lisent la source à l'expression régulière : si
         # le format de NAVIGATION change, la recherche ne renvoie plus rien et
@@ -1050,13 +1162,15 @@ class TestCoherenceDesIcones:
         assert len(entrees) == 14, (
             f"{len(entrees)} entrées de navigation trouvées au lieu de 14 : "
             "le format de NAVIGATION ou d'EPINGLES a changé, ces tests ne "
-            "vérifient plus rien.")
+            "vérifient plus rien."
+        )
         return entrees
 
     @staticmethod
     def _titres(source: str):
         """Renvoie {icône: titre} pour les en-têtes d'onglet."""
         import re
+
         lignes = source.split("\n")
         trouves = {}
         for i, ligne in enumerate(lignes):
@@ -1094,7 +1208,7 @@ class TestAlignementNavigation:
     système, les entrées fautives changeaient d'un poste à l'autre — un
     diagnostic fait sur une machine ne valait pas pour une autre."""
 
-    TOLERANCE = 3   # px
+    TOLERANCE = 3  # px
 
     @staticmethod
     def _positions_reelles(app):
@@ -1108,9 +1222,10 @@ class TestAlignementNavigation:
         # « premier caractère alphabétique » : « ℹ » (U+2139) est considéré
         # comme une lettre par Python, si bien que le préfixe d'« À propos »
         # était mesuré vide et faussait tout l'écart.
-        libelles = {cle: lib for _ic, lib, cle
-                    in TestCoherenceDesIcones._navigation(
-                        TestEchelleDeSurfaces._corps())}
+        libelles = {
+            cle: lib
+            for _ic, lib, cle in TestCoherenceDesIcones._navigation(TestEchelleDeSurfaces._corps())
+        }
         # « Aide » et « À propos » sont ÉPINGLÉS en pied, côte à côte sur une
         # seule ligne : ils ne sont pas dans la colonne et n'ont donc pas à s'y
         # aligner. Les inclure ferait échouer le test pour une bonne raison
@@ -1122,8 +1237,7 @@ class TestAlignementNavigation:
             texte = bouton.cget("text")
             libelle = libelles[cle]
             assert libelle in texte, f"libellé « {libelle} » absent du bouton"
-            positions.append(
-                (cle, bouton.cget("font").measure(texte[:texte.index(libelle)])))
+            positions.append((cle, bouton.cget("font").measure(texte[: texte.index(libelle)])))
         return positions
 
     def test_ecart_residuel_faible(self, app):
@@ -1132,8 +1246,7 @@ class TestAlignementNavigation:
         assert positions, "aucun bouton de navigation"
         valeurs = [p for _c, p in positions]
         ecart = max(valeurs) - min(valeurs)
-        assert ecart <= self.TOLERANCE, (
-            f"libellés décalés de {ecart} px : {positions}")
+        assert ecart <= self.TOLERANCE, f"libellés décalés de {ecart} px : {positions}"
 
     def test_le_calcul_est_meilleur_que_l_espacement_fige(self, app):
         """Vérifie que la correction apporte bien quelque chose.
@@ -1141,12 +1254,14 @@ class TestAlignementNavigation:
         Sans cette comparaison, le test précédent pourrait rester vert avec un
         alignement qui n'aurait jamais été un problème sur cette police."""
         import app as module_app
+
         police = module_app.ctk.CTkFont(size=13)
-        entrees = TestCoherenceDesIcones._navigation(
-            TestEchelleDeSurfaces._corps())
+        entrees = TestCoherenceDesIcones._navigation(TestEchelleDeSurfaces._corps())
         fige = [police.measure(icone + "   ") for icone, _l, _c in entrees]
-        calcule = [police.measure(module_app._prefixe_aligne(police, icone, 34))
-                   for icone, _l, _c in entrees]
+        calcule = [
+            police.measure(module_app._prefixe_aligne(police, icone, 34))
+            for icone, _l, _c in entrees
+        ]
         assert (max(calcule) - min(calcule)) <= (max(fige) - min(fige))
 
     def test_survit_a_une_police_sans_espace_fin(self, app):
@@ -1169,9 +1284,20 @@ class TestClassementDuLot:
     le NOMBRE de vidéos concernées écrit dans le bouton."""
 
     def _lot(self, app, n):
-        app.videos = [{"slug": f"v{i}", "title": f"V{i}", "is_draft": False,
-                       "encoded": True, "channel": [], "type": "", "owner": "u",
-                       "date_added": "2026-01-01", "url": "x"} for i in range(n)]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"V{i}",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [],
+                "type": "",
+                "owner": "u",
+                "date_added": "2026-01-01",
+                "url": "x",
+            }
+            for i in range(n)
+        ]
         app.type_map = {"Cours": "t1"}
         app.browse_chan_by_url = {}
         app._show_tab("browse")
@@ -1183,9 +1309,14 @@ class TestClassementDuLot:
 
     def test_le_bouton_de_type_porte_le_nombre(self, app):
         import customtkinter as ctk
+
         self._lot(app, 7)
-        textes = [str(w.cget("text")) for f in app.browse_detail.winfo_children()
-                  for w in [f, *f.winfo_children()] if isinstance(w, ctk.CTkButton)]
+        textes = [
+            str(w.cget("text"))
+            for f in app.browse_detail.winfo_children()
+            for w in [f, *f.winfo_children()]
+            if isinstance(w, ctk.CTkButton)
+        ]
         try:
             assert any("Appliquer le type à 7 vidéos" in x for x in textes), textes
             assert any("Disciplines" in x for x in textes)
@@ -1200,6 +1331,7 @@ class TestClassementDuLot:
         import inspect
 
         import app as module_app
+
         assert "askyesno" in inspect.getsource(module_app.App._browse_lot_type)
 
 
@@ -1213,8 +1345,9 @@ class TestSeparationBarreContenu:
 
     def test_filet_present(self):
         corps = TestEchelleDeSurfaces._corps()
-        assert 'ctk.CTkFrame(self, width=1, corner_radius=0,\n                     fg_color=S_FILET)' in corps, (
-            "filet de séparation absent entre la barre latérale et le contenu")
+        assert "ctk.CTkFrame(self, width=1, corner_radius=0, fg_color=S_FILET)" in corps, (
+            "filet de séparation absent entre la barre latérale et le contenu"
+        )
 
 
 class TestEntetesDePanneaux:
@@ -1241,11 +1374,11 @@ class TestEntetesDePanneaux:
                 k += 1
             appel = corps[j:k]
             if "label_text=" in appel and (
-                    'label_anchor="w"' not in appel or "label_font" not in appel):
+                'label_anchor="w"' not in appel or "label_font" not in appel
+            ):
                 fautifs.append(corps[:j].count("\n") + 1)
             i = k
-        assert not fautifs, (
-            f"en-têtes centrés ou non gras, lignes {fautifs} (relatives au corps)")
+        assert not fautifs, f"en-têtes centrés ou non gras, lignes {fautifs} (relatives au corps)"
 
 
 class TestEpinglesEnPied:
@@ -1262,13 +1395,13 @@ class TestEpinglesEnPied:
         app.update_idletasks()
         aide = app.nav_btns["help"].winfo_width()
         propos = app.nav_btns["about"].winfo_width()
-        assert abs(aide - propos) <= 2, (
-            f"colonnes inégales : Aide {aide} px, À propos {propos} px")
+        assert abs(aide - propos) <= 2, f"colonnes inégales : Aide {aide} px, À propos {propos} px"
 
     def test_textes_alignes_a_gauche(self, app):
         for cle in ("help", "about"):
             assert app.nav_btns[cle].cget("anchor") == "w", (
-                f"« {cle} » est centré alors que le reste est aligné à gauche")
+                f"« {cle} » est centré alors que le reste est aligné à gauche"
+            )
 
     def test_cote_a_cote_sur_une_seule_ligne(self, app):
         """Les épingler sans les compacter n'aurait rien rapporté : ils
@@ -1277,7 +1410,8 @@ class TestEpinglesEnPied:
         app.update_idletasks()
         aide, propos = app.nav_btns["help"], app.nav_btns["about"]
         assert abs(aide.winfo_rooty() - propos.winfo_rooty()) <= 2, (
-            "les deux épinglés ne sont pas sur la même ligne")
+            "les deux épinglés ne sont pas sur la même ligne"
+        )
         assert propos.winfo_rootx() > aide.winfo_rootx()
 
 
@@ -1293,9 +1427,14 @@ class TestLibellesDeFiltres:
     Le libellé est AU-DESSUS et non à gauche : mesuré, à gauche il coûterait
     139 px sur une rangée qui n'a que 3 px de marge en fenêtre minimale."""
 
-    FILTRES = {"browse_statut": "Statut", "browse_encode": "Encodage",
-               "browse_chan": "Chaîne", "browse_type": "Type",
-               "browse_discipline": "Discipline", "browse_detect": "Anomalies"}
+    FILTRES = {
+        "browse_statut": "Statut",
+        "browse_encode": "Encodage",
+        "browse_chan": "Chaîne",
+        "browse_type": "Type",
+        "browse_discipline": "Discipline",
+        "browse_detect": "Anomalies",
+    }
 
     def test_chaque_filtre_garde_son_nom_meme_actif(self, app):
         """Le principe d'origine, tenu autrement depuis les pastilles (1.13.0) :
@@ -1312,12 +1451,16 @@ class TestLibellesDeFiltres:
 
     def test_la_valeur_ne_reprend_plus_l_intitule(self, app):
         """« Tous statuts » dans la valeur, c'était l'intitulé caché dedans."""
-        interdits = ("Tous statuts", "Tout encodage", "Toutes chaînes",
-                     "Tous types", "Aucune détection")
+        interdits = (
+            "Tous statuts",
+            "Tout encodage",
+            "Toutes chaînes",
+            "Tous types",
+            "Aucune détection",
+        )
         corps = TestEchelleDeSurfaces._corps()
         presents = [m for m in interdits if f'"{m}"' in corps]
-        assert not presents, (
-            f"intitulés encore enfermés dans les valeurs : {presents}")
+        assert not presents, f"intitulés encore enfermés dans les valeurs : {presents}"
 
     def test_le_filtrage_fonctionne_toujours(self, app):
         """⚠️ Renommer les valeurs casse le filtrage si une comparaison reste
@@ -1326,10 +1469,24 @@ class TestLibellesDeFiltres:
         app._show_tab("browse")
         base = "https://exemple.invalid/rest"
         app.videos = [
-            {"slug": "a", "title": "Anatomie", "is_draft": False, "encoded": True,
-             "channel": [f"{base}/channels/1/"], "type": f"{base}/types/1/", "owner": "x"},
-            {"slug": "b", "title": "Brouillon", "is_draft": True, "encoded": False,
-             "channel": [], "type": f"{base}/types/2/", "owner": "y"},
+            {
+                "slug": "a",
+                "title": "Anatomie",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [f"{base}/channels/1/"],
+                "type": f"{base}/types/1/",
+                "owner": "x",
+            },
+            {
+                "slug": "b",
+                "title": "Brouillon",
+                "is_draft": True,
+                "encoded": False,
+                "channel": [],
+                "type": f"{base}/types/2/",
+                "owner": "y",
+            },
         ]
         # Clés NORMALISÉES (sans barre finale), comme le fait le chargement réel.
         app.browse_chan_by_url = {f"{base}/channels/1": "MFCA"}
@@ -1375,14 +1532,18 @@ class TestLibellesDeFiltres:
         app.update()
         app.update_idletasks()
         try:
-            droite = max(p.winfo_rootx() + p.winfo_width()
-                         for p in app.browse_pastilles.elements) - app.winfo_rootx()
+            droite = (
+                max(p.winfo_rootx() + p.winfo_width() for p in app.browse_pastilles.elements)
+                - app.winfo_rootx()
+            )
             assert droite <= app.winfo_width(), (
                 f"filtres tronqués : le dernier finit à {droite} px pour une "
-                f"fenêtre de {app.winfo_width()}")
+                f"fenêtre de {app.winfo_width()}"
+            )
             assert app.browse_pastilles.nombre_de_lignes() > 1, "pas de passage à la ligne"
             assert app.browse_text.winfo_width() > 300, (
-                "le champ de recherche est écrasé par les filtres")
+                "le champ de recherche est écrasé par les filtres"
+            )
         finally:
             app._browse_effacer_filtres()
             app.geometry("1180x760")
@@ -1391,6 +1552,7 @@ class TestLibellesDeFiltres:
 
 def module_ctk():
     import app as module_app
+
     return module_app.ctk
 
 
@@ -1407,8 +1569,8 @@ class TestPoidsDeLInterface:
     # sert plus à rien : il est là pour signaler une DÉRIVE, pas pour interdire
     # un onglet. Si un ajout coûtait 300 widgets, c'est la construction qu'il
     # faudrait revoir, pas ce chiffre.
-    PLAFOND_TOTAL = 900      # application neuve : 807, puis 849 (1.12.0), 859 (1.13.0 : fiche Comptes)
-    PLAFOND_AIDE = 40        # constaté à 14 ; était à 134
+    PLAFOND_TOTAL = 900  # application neuve : 807, puis 849 (1.12.0), 859 (1.13.0 : fiche Comptes)
+    PLAFOND_AIDE = 40  # constaté à 14 ; était à 134
 
     @staticmethod
     def _compter(widget):
@@ -1423,7 +1585,8 @@ class TestPoidsDeLInterface:
         poids = self._compter(app.tabs["help"])
         assert poids <= self.PLAFOND_AIDE, (
             f"l'onglet Aide pèse {poids} widgets (plafond {self.PLAFOND_AIDE}) : "
-            "il a probablement été reconstruit à coups d'étiquettes.")
+            "il a probablement été reconstruit à coups d'étiquettes."
+        )
 
     def test_poids_total_maitrise(self):
         """Garde-fou global : un onglet ajouté sans précaution se verrait ici
@@ -1436,6 +1599,7 @@ class TestPoidsDeLInterface:
         avaient remplies (733 widgets au lieu de 659). Un seuil ne veut rien
         dire s'il dépend de l'ordre d'exécution."""
         import app as module_app
+
         neuve = module_app.App()
         try:
             neuve.update()
@@ -1447,7 +1611,8 @@ class TestPoidsDeLInterface:
                 pass
         assert poids <= self.PLAFOND_TOTAL, (
             f"{poids} widgets dans les onglets (plafond {self.PLAFOND_TOTAL}) : "
-            "la bascule de thème ralentit d'autant.")
+            "la bascule de thème ralentit d'autant."
+        )
 
     def test_titres_de_l_aide_lisibles_dans_les_deux_modes(self, app):
         """Les balises d'une zone de texte n'acceptent qu'une couleur SIMPLE,
@@ -1455,6 +1620,7 @@ class TestPoidsDeLInterface:
         adaptation explicite, le bleu foncé des titres devient illisible sur
         fond sombre."""
         import app as module_app
+
         depart = module_app.ctk.get_appearance_mode()
         try:
             couleurs = {}
@@ -1464,7 +1630,8 @@ class TestPoidsDeLInterface:
                 mode = module_app.ctk.get_appearance_mode().lower()
                 couleurs[mode] = str(app.help_box.tag_cget("titre", "foreground"))
             assert len(set(couleurs.values())) == 2, (
-                f"même couleur de titre dans les deux modes : {couleurs}")
+                f"même couleur de titre dans les deux modes : {couleurs}"
+            )
         finally:
             if module_app.ctk.get_appearance_mode() != depart:
                 app._basculer_theme()
@@ -1483,27 +1650,25 @@ class TestCompilation:
     @staticmethod
     def _workflow() -> str:
         import os
+
         import app as module_app
+
         racine = os.path.dirname(os.path.abspath(module_app.__file__))
         chemin = os.path.join(racine, ".github", "workflows", "build.yml")
         return open(chemin, encoding="utf-8").read()
 
     def test_compilation_en_onedir(self):
-        import re
         texte = self._workflow()
         # On ne regarde que les LIGNES DE COMMANDE, les commentaires citant
         # « --onefile » pour l'expliquer étant légitimes.
         # `strip().startswith` et non `in` : sinon « pip install pyinstaller »
         # est pris pour une commande de compilation et fait échouer le test
         # pour une raison qui n'en est pas une.
-        commandes = [l for l in texte.split("\n")
-                     if l.strip().startswith("pyinstaller ")]
+        commandes = [l for l in texte.split("\n") if l.strip().startswith("pyinstaller ")]
         assert commandes, "aucune commande pyinstaller trouvée"
         fautives = [l for l in commandes if "--onefile" in l]
-        assert not fautives, (
-            f"compilation encore en --onefile : {fautives}")
-        assert all("--onedir" in l for l in commandes), (
-            f"commandes sans --onedir : {commandes}")
+        assert not fautives, f"compilation encore en --onefile : {fautives}"
+        assert all("--onedir" in l for l in commandes), f"commandes sans --onedir : {commandes}"
 
     def test_installeur_embarque_tout_le_dossier(self):
         """En `--onedir`, ne copier que l'exe donnerait une application qui
@@ -1511,7 +1676,8 @@ class TestCompilation:
         texte = self._workflow()
         assert "recursesubdirs" in texte, (
             "l'installeur ne copie pas les sous-dossiers : PodAdmin.exe seul "
-            "ne démarre pas en --onedir")
+            "ne démarre pas en --onedir"
+        )
         assert 'Source: "dist\\PodAdmin\\*"' in texte
 
 
@@ -1530,41 +1696,38 @@ class TestVerrouillageSuppressionType:
     def test_type_non_vide_jamais_supprime(self, app, monkeypatch):
         """Le cœur du garde-fou : l'appel de suppression ne doit pas partir."""
         appels = []
-        monkeypatch.setattr(app, "_run",
-                            lambda fn, *a: appels.append((fn.__name__, a)))
+        monkeypatch.setattr(app, "_run", lambda fn, *a: appels.append((fn.__name__, a)))
         fenetres = []
-        monkeypatch.setattr(app, "_nomen_refuser_suppression",
-                            lambda t, n: fenetres.append((t, n)))
+        monkeypatch.setattr(app, "_nomen_refuser_suppression", lambda t, n: fenetres.append((t, n)))
 
         app._nomen_supprimer({"title": "vidéo", "url": "u"}, "type", 57)
 
-        assert not appels, (
-            "une suppression a été lancée sur un type portant 57 vidéos")
+        assert not appels, "une suppression a été lancée sur un type portant 57 vidéos"
         assert fenetres == [("vidéo", 57)], "le refus n'a pas été présenté"
 
     def test_type_vide_reste_supprimable(self, app, monkeypatch):
         """Le verrou ne doit pas bloquer le cas légitime."""
         ouvertes = []
-        monkeypatch.setattr(ctk_module().CTkToplevel, "__init__",
-                            lambda self, *a, **k: ouvertes.append(1))
+        monkeypatch.setattr(
+            ctk_module().CTkToplevel, "__init__", lambda self, *a, **k: ouvertes.append(1)
+        )
         try:
             app._nomen_supprimer({"title": "Tutoriel", "url": "u"}, "type", 0)
         except Exception:
-            pass    # la fenêtre neutralisée lève, seul compte qu'on soit arrivé là
+            pass  # la fenêtre neutralisée lève, seul compte qu'on soit arrivé là
         assert ouvertes, "aucune confirmation proposée pour un type vide"
 
     def test_discipline_non_concernee(self, app, monkeypatch):
         """Les disciplines ne portent pas de vidéos par ce champ : le verrou
         des types ne doit pas déborder sur elles."""
         refus = []
-        monkeypatch.setattr(app, "_nomen_refuser_suppression",
-                            lambda t, n: refus.append(t))
+        monkeypatch.setattr(app, "_nomen_refuser_suppression", lambda t, n: refus.append(t))
         ouvertes = []
-        monkeypatch.setattr(ctk_module().CTkToplevel, "__init__",
-                            lambda self, *a, **k: ouvertes.append(1))
+        monkeypatch.setattr(
+            ctk_module().CTkToplevel, "__init__", lambda self, *a, **k: ouvertes.append(1)
+        )
         try:
-            app._nomen_supprimer({"title": "Odontologie", "url": "u"},
-                                 "discipline", None)
+            app._nomen_supprimer({"title": "Odontologie", "url": "u"}, "discipline", None)
         except Exception:
             pass
         assert not refus, "le verrou des types s'applique à tort aux disciplines"
@@ -1573,11 +1736,13 @@ class TestVerrouillageSuppressionType:
         """La cascade doit être annoncée à l'écran, pas seulement dans le code."""
         corps = TestEchelleDeSurfaces._corps()
         assert "les types non " in corps and "verrouillés" in corps, (
-            "l'onglet n'annonce pas que les types non vides sont verrouillés")
+            "l'onglet n'annonce pas que les types non vides sont verrouillés"
+        )
 
 
 def ctk_module():
     import app as module_app
+
     return module_app.ctk
 
 
@@ -1603,8 +1768,8 @@ class TestBasculeDOnglet:
             app.update()
             empilable = app._widget_empilable(app.tabs[cle])
             assert empilable.winfo_manager() == "grid", (
-                f"l'onglet « {cle} » n'est pas placé "
-                f"(manager = {empilable.winfo_manager()!r})")
+                f"l'onglet « {cle} » n'est pas placé (manager = {empilable.winfo_manager()!r})"
+            )
 
     def test_l_onglet_demande_est_au_dessus(self, app):
         """Preuve que le bon onglet est visible : il est le dernier enfant de
@@ -1615,17 +1780,18 @@ class TestBasculeDOnglet:
             app.update_idletasks()
             attendu = app._widget_empilable(app.tabs[cle])
             dessus = app.content.winfo_children()[-1]
-            assert dessus is attendu, (
-                f"« {cle} » demandé mais un autre onglet est au sommet")
+            assert dessus is attendu, f"« {cle} » demandé mais un autre onglet est au sommet"
 
     def test_composite_ramene_a_son_conteneur(self, app):
         """Cas précis du CTkScrollableFrame : `_widget_empilable` doit remonter
         au widget réellement enfant de la zone de contenu."""
         import app as module_app
+
         config = app.tabs["config"]
         assert isinstance(config, module_app.ctk.CTkScrollableFrame), (
             "l'onglet Configuration n'est plus un composite : ce test perd son "
-            "objet, mais la règle reste valable pour tout autre composite.")
+            "objet, mais la règle reste valable pour tout autre composite."
+        )
         assert config not in app.content.winfo_children()
         assert app._widget_empilable(config) in app.content.winfo_children()
 
@@ -1640,23 +1806,24 @@ class TestBasculeDOnglet:
         import inspect
 
         import app as module_app
+
         brut = inspect.getsource(module_app.App._show_tab)
         # On ne garde que le CODE : les commentaires citent volontairement
         # « pack_forget » pour expliquer pourquoi on ne l'emploie plus, et le
         # test échouait sur sa propre explication.
-        source = "\n".join(l for l in brut.split("\n")
-                           if not l.strip().startswith("#"))
-        assert "pack_forget" not in source, (
-            "la bascule dépacke à nouveau les onglets")
+        source = "\n".join(l for l in brut.split("\n") if not l.strip().startswith("#"))
+        assert "pack_forget" not in source, "la bascule dépacke à nouveau les onglets"
         assert "tkraise" in source
         # `grid_remove` et non `grid_forget` : le premier CONSERVE les options
         # de placement, le second les oublie et impose un recalcul complet —
         # c'est-à-dire le clignotement qu'on vient de supprimer.
         assert "grid_forget" not in source, (
-            "grid_forget oublie les options de placement : utiliser grid_remove")
+            "grid_forget oublie les options de placement : utiliser grid_remove"
+        )
         assert "grid_remove" in source, (
             "l'onglet précédent doit être retiré de l'affichage, sans quoi les "
-            "treize onglets restent visibles et alourdissent tout le reste")
+            "treize onglets restent visibles et alourdissent tout le reste"
+        )
 
 
 class TestCoherenceDuWorkflow:
@@ -1682,6 +1849,7 @@ class TestCoherenceDuWorkflow:
         Vérifié par mutation — le test restait vert avec le défaut."""
         import os
         import re
+
         texte = self._workflow()
 
         # Chaque `upload-artifact` déclare un `name:` puis un `path:` ;
@@ -1692,17 +1860,17 @@ class TestCoherenceDuWorkflow:
             nom = re.search(r"name:\s*([\w.-]+)", bloc)
             chemin = re.search(r"path:\s*([^\s]+)", bloc)
             if nom and chemin:
-                attendus.add(f"{nom.group(1)}/"
-                             f"{os.path.basename(chemin.group(1).rstrip('/'))}")
+                attendus.add(f"{nom.group(1)}/{os.path.basename(chemin.group(1).rstrip('/'))}")
 
-        bloc = texte[texte.index("files: |"):]
-        bloc = bloc[:bloc.index("\n\n")]
+        bloc = texte[texte.index("files: |") :]
+        bloc = bloc[: bloc.index("\n\n")]
         publies = {l.strip() for l in bloc.split("\n")[1:] if l.strip()}
 
         manquants = publies - attendus
         assert not manquants, (
             f"fichiers publiés mais jamais produits : {sorted(manquants)}. "
-            f"Disponibles : {sorted(attendus)}")
+            f"Disponibles : {sorted(attendus)}"
+        )
 
     def test_seuls_les_deux_installeurs_sont_publies(self):
         """Demande explicite, alignée sur le Pod Téléverseur : plus de version
@@ -1710,20 +1878,23 @@ class TestCoherenceDuWorkflow:
         ce nom que voit la personne qui télécharge, jamais le libellé de
         l'artefact GitHub."""
         import os
+
         texte = self._workflow()
-        bloc = texte[texte.index("files: |"):]
-        bloc = bloc[:bloc.index("\n\n")]
+        bloc = texte[texte.index("files: |") :]
+        bloc = bloc[: bloc.index("\n\n")]
         noms = [os.path.basename(l.strip()) for l in bloc.split("\n")[1:] if l.strip()]
         assert sorted(noms) == ["PodAdmin-Windows-Setup.exe", "PodAdmin-macOS.dmg"], noms
         assert "OutputBaseFilename=PodAdmin-Windows-Setup" in texte, (
-            "l'installeur n'est pas nommé avec son OS dès sa fabrication")
+            "l'installeur n'est pas nommé avec son OS dès sa fabrication"
+        )
 
     def test_controle_avant_archivage(self):
         """Sans contrôle, une compilation muette laisse l'échec surgir plus
         loin, dans une étape sans rapport apparent."""
         texte = self._workflow()
         assert 'Test-Path "dist/PodAdmin/PodAdmin.exe"' in texte, (
-            "l'existence de l'exécutable n'est pas vérifiée avant archivage")
+            "l'existence de l'exécutable n'est pas vérifiée avant archivage"
+        )
 
 
 class TestPanneauDetailSansSaccade:
@@ -1736,10 +1907,20 @@ class TestPanneauDetailSansSaccade:
 
     def _preparer(self, app):
         base = "https://exemple.invalid/rest"
-        app.videos = [{"slug": f"v{i}", "title": f"Vidéo {i}", "is_draft": False,
-                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
-                       "owner": f"u{i}", "date_added": "2026-01-01",
-                       "url": f"{base}/videos/v{i}/"} for i in range(5)]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"Vidéo {i}",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [],
+                "type": f"{base}/types/1/",
+                "owner": f"u{i}",
+                "date_added": "2026-01-01",
+                "url": f"{base}/videos/v{i}/",
+            }
+            for i in range(5)
+        ]
         app.browse_chan_by_url = {}
         app.type_map = {"Cours": f"{base}/types/1/"}
         app._show_tab("browse")
@@ -1755,12 +1936,11 @@ class TestPanneauDetailSansSaccade:
         app.update_idletasks()
         conteneur = app._widget_empilable(app.browse_detail)
         assert conteneur.winfo_manager() == "grid", (
-            "le panneau de détail est resté masqué après reconstruction")
-        assert len(app.browse_detail.winfo_children()) > 10, (
-            "le panneau est visible mais vide")
+            "le panneau de détail est resté masqué après reconstruction"
+        )
+        assert len(app.browse_detail.winfo_children()) > 10, "le panneau est visible mais vide"
 
-    def test_le_panneau_revient_meme_si_la_construction_echoue(self, app,
-                                                              monkeypatch):
+    def test_le_panneau_revient_meme_si_la_construction_echoue(self, app, monkeypatch):
         """Sans le `finally`, une exception laisserait le panneau invisible
         jusqu'au redémarrage — un défaut bien pire que les saccades."""
         self._preparer(app)
@@ -1776,12 +1956,14 @@ class TestPanneauDetailSansSaccade:
         app.update()
         conteneur = app._widget_empilable(app.browse_detail)
         assert conteneur.winfo_manager() == "grid", (
-            "le panneau reste masqué après une erreur de construction")
+            "le panneau reste masqué après une erreur de construction"
+        )
 
     def test_construction_isolee_dans_sa_methode(self):
         """`_browse_construire_detail` doit rester séparée : c'est elle qu'on
         appelle pendant que le panneau est masqué."""
         import app as module_app
+
         assert hasattr(module_app.App, "_browse_construire_detail")
 
 
@@ -1803,6 +1985,7 @@ class TestSelectionMultiple:
     @staticmethod
     def _souris() -> bool:
         import shutil
+
         return shutil.which("xdotool") is not None
 
     @pytest.fixture
@@ -1817,6 +2000,7 @@ class TestSelectionMultiple:
         avant d'en arriver là : quand l'état partagé ne peut pas être garanti,
         mieux vaut une instance dédiée qu'un test intermittent."""
         import app as module_app
+
         a = module_app.App()
         a.geometry("1180x760+0+0")
         a.update()
@@ -1855,10 +2039,20 @@ class TestSelectionMultiple:
         app.update_idletasks()
 
         base = "https://exemple.invalid/rest"
-        app.videos = [{"slug": f"v{i}", "title": f"Vidéo {i}", "is_draft": False,
-                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
-                       "owner": "u", "date_added": "2026-01-01",
-                       "url": f"{base}/videos/v{i}/"} for i in range(8)]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"Vidéo {i}",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [],
+                "type": f"{base}/types/1/",
+                "owner": "u",
+                "date_added": "2026-01-01",
+                "url": f"{base}/videos/v{i}/",
+            }
+            for i in range(8)
+        ]
         app.browse_chan_by_url = {}
         app.type_map = {}
         app.browse_multi.clear()
@@ -1879,6 +2073,7 @@ class TestSelectionMultiple:
     def _clic(app, slug, modificateur=None):
         import os
         import time
+
         # La liste peut avoir été reconstruite entre-temps par un rendez-vous
         # différé laissé par un autre test du module : on la reconstruit et on
         # relit la référence plutôt que de cliquer sur une fenêtre détruite.
@@ -1894,8 +2089,9 @@ class TestSelectionMultiple:
         x = arbre.winfo_rootx() + bx + bw // 2
         y = arbre.winfo_rooty() + by + bh // 2
         if modificateur:
-            os.system(f"xdotool keydown {modificateur} mousemove {x} {y} "
-                      f"click 1 keyup {modificateur}")
+            os.system(
+                f"xdotool keydown {modificateur} mousemove {x} {y} click 1 keyup {modificateur}"
+            )
         else:
             os.system(f"xdotool mousemove {x} {y} click 1")
         debut = time.time()
@@ -1905,39 +2101,43 @@ class TestSelectionMultiple:
 
     def test_ctrl_clic_ne_change_pas_la_selection_simple(self, app):
         import pytest
+
         if not self._souris():
             pytest.skip("xdotool absent")
         self._preparer(app)
         self._clic(app, "v1")
-        assert app.browse_selected is not None and \
-            app.browse_selected.get("slug") == "v1", (
-            f"le clic simple n'a pas atteint la ligne : "
-            f"selection = {app.browse_selected}")
+        assert app.browse_selected is not None and app.browse_selected.get("slug") == "v1", (
+            f"le clic simple n'a pas atteint la ligne : selection = {app.browse_selected}"
+        )
         self._clic(app, "v3", "ctrl")
         assert app.browse_selected.get("slug") == "v1", (
-            "le Ctrl+clic a déclenché la sélection simple (relâchement non "
-            "intercepté)")
+            "le Ctrl+clic a déclenché la sélection simple (relâchement non intercepté)"
+        )
         assert app.browse_multi == {"v3"}
 
     def test_les_lignes_du_multi_gardent_leur_teinte(self, app):
         """Le symptôme visible : une ligne sélectionnée qui perd sa marque."""
         import pytest
+
         if not self._souris():
             pytest.skip("xdotool absent")
         import app as module_app
+
         self._preparer(app)
         self._clic(app, "v1")
         self._clic(app, "v3", "ctrl")
         self._clic(app, "v5", "ctrl")
-        assert module_app.C_MULTI                # teinte définie dans la palette
+        assert module_app.C_MULTI  # teinte définie dans la palette
         for slug in app.browse_multi:
             etiquettes = app.browse_tree.item(slug, "tags")
             assert tuple(etiquettes) == ("multi",), (
                 f"« {slug} » est dans la sélection mais n'en porte pas la "
-                f"teinte (étiquettes = {etiquettes})")
+                f"teinte (étiquettes = {etiquettes})"
+            )
 
     def test_maj_clic_prend_la_plage(self, app):
         import pytest
+
         if not self._souris():
             pytest.skip("xdotool absent")
         self._preparer(app)
@@ -1945,7 +2145,8 @@ class TestSelectionMultiple:
         self._clic(app, "v2", "ctrl")
         self._clic(app, "v5", "shift")
         assert app.browse_multi == {"v2", "v3", "v4", "v5"}, (
-            f"plage incorrecte : {sorted(app.browse_multi)}")
+            f"plage incorrecte : {sorted(app.browse_multi)}"
+        )
 
     def test_relachement_intercepte_dans_la_source(self):
         """Garde-fou : sans ces deux liaisons, le défaut revient tel quel."""
@@ -1956,7 +2157,8 @@ class TestSelectionMultiple:
         assert '"<Control-Button-1>"' in corps, "le Ctrl+clic n'est pas lié"
         assert '"<Shift-Button-1>"' in corps, "le Maj+clic n'est pas lié"
         assert 'selectmode="none"' in corps, (
-            "la sélection native du tableau s'ajouterait à la nôtre")
+            "la sélection native du tableau s'ajouterait à la nôtre"
+        )
 
 
 class TestTaillesDeCibles:
@@ -1970,23 +2172,29 @@ class TestTaillesDeCibles:
 
     def test_aucun_bouton_sous_le_minimum(self):
         import re
+
         corps = TestEchelleDeSurfaces._corps()
         fautifs = []
         for ligne, appel in TestHierarchieVisuelle._appels(corps, "CTkButton"):
             m = re.search(r"height=(\d+)", appel)
             if m and int(m.group(1)) < self.MINIMUM:
                 fautifs.append((ligne, int(m.group(1))))
-        assert not fautifs, (
-            f"boutons sous {self.MINIMUM} px (ligne, hauteur) : {fautifs}")
+        assert not fautifs, f"boutons sous {self.MINIMUM} px (ligne, hauteur) : {fautifs}"
 
     def test_hauteurs_prises_dans_l_echelle(self):
         """Une hauteur écrite en clair rouvre la porte aux six valeurs
         improvisées d'origine."""
         import re
+
         import app as module_app
-        autorisees = {module_app.H_COMPACT, module_app.H_NORMAL,
-                      module_app.H_PRINCIPAL,
-                      32, 34}          # navigation et rangée épinglée, assumées
+
+        autorisees = {
+            module_app.H_COMPACT,
+            module_app.H_NORMAL,
+            module_app.H_PRINCIPAL,
+            32,
+            34,
+        }  # navigation et rangée épinglée, assumées
         corps = TestEchelleDeSurfaces._corps()
         hors = set()
         for _ligne, appel in TestHierarchieVisuelle._appels(corps, "CTkButton"):
@@ -1994,13 +2202,15 @@ class TestTaillesDeCibles:
             if m and int(m.group(1)) not in autorisees:
                 hors.add(int(m.group(1)))
         assert not hors, (
-            f"hauteurs hors échelle : {sorted(hors)}. "
-            f"Employer H_COMPACT, H_NORMAL ou H_PRINCIPAL.")
+            f"hauteurs hors échelle : {sorted(hors)}. Employer H_COMPACT, H_NORMAL ou H_PRINCIPAL."
+        )
 
     def test_echelle_ordonnee(self):
         import app as module_app
-        assert (module_app.H_COMPACT < module_app.H_NORMAL
-                < module_app.H_PRINCIPAL), "l'échelle de hauteurs est incohérente"
+
+        assert module_app.H_COMPACT < module_app.H_NORMAL < module_app.H_PRINCIPAL, (
+            "l'échelle de hauteurs est incohérente"
+        )
         assert module_app.H_COMPACT >= self.MINIMUM
 
 
@@ -2015,7 +2225,8 @@ class TestEtatsVides:
         """Sept panneaux, dont les deux de l'onglet Vidéos."""
         corps = TestEchelleDeSurfaces._corps()
         assert corps.count("etat_vide(") >= 7, (
-            f"seulement {corps.count('etat_vide(')} états vides harmonisés")
+            f"seulement {corps.count('etat_vide(')} états vides harmonisés"
+        )
 
     def test_l_etat_vide_de_videos_est_affiche(self, app):
         """Vérification par l'USAGE : on provoque un filtre sans résultat.
@@ -2023,11 +2234,21 @@ class TestEtatsVides:
         Compter les appels dans la source ne prouve rien — encore faut-il que
         le chemin qui les contient soit atteint."""
         import customtkinter as module_ctk
+
         base = "https://exemple.invalid/rest"
-        app.videos = [{"slug": "v0", "title": "Anatomie", "is_draft": False,
-                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
-                       "owner": "u", "date_added": "2026-01-01",
-                       "url": f"{base}/videos/v0/"}]
+        app.videos = [
+            {
+                "slug": "v0",
+                "title": "Anatomie",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [],
+                "type": f"{base}/types/1/",
+                "owner": "u",
+                "date_added": "2026-01-01",
+                "url": f"{base}/videos/v0/",
+            }
+        ]
         app.browse_chan_by_url = {}
         app.type_map = {}
         app._show_tab("browse")
@@ -2037,13 +2258,16 @@ class TestEtatsVides:
         app.update()
         app.update_idletasks()
         try:
-            textes = [w.cget("text") for w in app.browse_list.winfo_children()
-                      if isinstance(w, module_ctk.CTkLabel)]
+            textes = [
+                w.cget("text")
+                for w in app.browse_list.winfo_children()
+                if isinstance(w, module_ctk.CTkLabel)
+            ]
             joint = " ".join(str(t) for t in textes)
-            assert "Aucune vidéo ne correspond" in joint, (
-                "l'état vide ne s'affiche pas")
+            assert "Aucune vidéo ne correspond" in joint, "l'état vide ne s'affiche pas"
             assert "filtres" in joint or "recherche" in joint, (
-                f"l'état vide ne dit pas quoi faire : {joint}")
+                f"l'état vide ne dit pas quoi faire : {joint}"
+            )
         finally:
             app.browse_text.delete(0, "end")
             app._browse_do_filter()
@@ -2053,17 +2277,18 @@ class TestEtatsVides:
         """Quand il n'y a réellement rien à faire, inventer une action serait
         pire que rien : `etat_vide` doit accepter d'être appelée sans aide."""
         import app as module_app
+
         cadre = module_app.ctk.CTkFrame(app)
         module_app.etat_vide(cadre, "📄", "Rien ici.")
         app.update()
-        assert len(cadre.winfo_children()) == 2, (
-            "l'aide vide crée quand même une étiquette")
+        assert len(cadre.winfo_children()) == 2, "l'aide vide crée quand même une étiquette"
         cadre.destroy()
 
     def test_trois_widgets_au_maximum(self, app):
         """Un état vide ne doit pas peser : il s'affiche dans des panneaux qui
         en contiennent déjà beaucoup."""
         import app as module_app
+
         cadre = module_app.ctk.CTkFrame(app)
         module_app.etat_vide(cadre, "📄", "Titre.", "Une aide.")
         app.update()
@@ -2082,6 +2307,7 @@ class TestRaccourcisClavier:
     @staticmethod
     def _clavier() -> bool:
         import shutil
+
         return shutil.which("xdotool") is not None
 
     @pytest.fixture
@@ -2090,6 +2316,7 @@ class TestRaccourcisClavier:
         active, et ne supportent pas qu'un autre test ait laissé le focus
         ailleurs."""
         import app as module_app
+
         a = module_app.App()
         a.geometry("1180x760+0+0")
         a.update()
@@ -2103,6 +2330,7 @@ class TestRaccourcisClavier:
     def _touche(app, sequence):
         import os
         import time
+
         os.system(f"xdotool key {sequence}")
         debut = time.time()
         while time.time() - debut < 0.35:
@@ -2111,10 +2339,20 @@ class TestRaccourcisClavier:
 
     def _peupler(self, app):
         base = "https://exemple.invalid/rest"
-        app.videos = [{"slug": f"v{i}", "title": f"V{i}", "is_draft": False,
-                       "encoded": True, "channel": [], "type": f"{base}/types/1/",
-                       "owner": "u", "date_added": "2026-01-01",
-                       "url": f"{base}/videos/v{i}/"} for i in range(4)]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"V{i}",
+                "is_draft": False,
+                "encoded": True,
+                "channel": [],
+                "type": f"{base}/types/1/",
+                "owner": "u",
+                "date_added": "2026-01-01",
+                "url": f"{base}/videos/v{i}/",
+            }
+            for i in range(4)
+        ]
         app.browse_chan_by_url = {}
         app.type_map = {}
         app._show_tab("browse")
@@ -2123,6 +2361,7 @@ class TestRaccourcisClavier:
 
     def test_ctrl_chiffre_ouvre_l_onglet(self, app):
         import pytest
+
         if not self._clavier():
             pytest.skip("xdotool absent")
         cles = list(app.nav_btns)
@@ -2135,17 +2374,18 @@ class TestRaccourcisClavier:
         """Le focus va sur l'Entry INTERNE du CTkEntry, pas sur le CTkEntry :
         comparer au mauvais objet fait conclure à tort que rien ne marche."""
         import pytest
+
         if not self._clavier():
             pytest.skip("xdotool absent")
         self._peupler(app)
         self._touche(app, "ctrl+f")
         interne = getattr(app.browse_text, "_entry", None)
-        assert app.focus_get() in (app.browse_text, interne), (
-            f"focus ailleurs : {app.focus_get()}")
+        assert app.focus_get() in (app.browse_text, interne), f"focus ailleurs : {app.focus_get()}"
 
     def test_ctrl_a_respecte_le_champ_de_saisie(self, app):
         """Le point critique de tout ce lot."""
         import pytest
+
         if not self._clavier():
             pytest.skip("xdotool absent")
         self._peupler(app)
@@ -2156,13 +2396,15 @@ class TestRaccourcisClavier:
         self._touche(app, "ctrl+a")
         assert not app.browse_multi, (
             "Ctrl+A dans le champ de saisie a retenu des vidéos : le geste "
-            "habituel de sélection du texte est cassé")
+            "habituel de sélection du texte est cassé"
+        )
 
         app.browse_list.focus_set()
         app.update()
         self._touche(app, "ctrl+a")
         assert len(app.browse_multi) == 4, (
-            f"Ctrl+A hors du champ n'a rien retenu : {app.browse_multi}")
+            f"Ctrl+A hors du champ n'a rien retenu : {app.browse_multi}"
+        )
 
     def test_f5_force_la_relecture(self, app):
         """Sans retrait du cache, la touche n'aurait aucun effet visible sur un
@@ -2170,9 +2412,9 @@ class TestRaccourcisClavier:
         import inspect
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._raccourci_rafraichir)
-        assert "_auto_loaded.discard" in source, (
-            "F5 ne force pas la relecture depuis le serveur")
+        assert "_auto_loaded.discard" in source, "F5 ne force pas la relecture depuis le serveur"
 
     def test_toutes_les_modales_ferment_avec_echap(self):
         """Une modale qui ne réagit pas à Échap donne l'impression d'être
@@ -2182,7 +2424,7 @@ class TestRaccourcisClavier:
         sans = []
         for i, ligne in enumerate(lignes):
             if "CTkToplevel(" in ligne and "class " not in ligne:
-                bloc = "\n".join(lignes[i:i + 45])
+                bloc = "\n".join(lignes[i : i + 45])
                 # L'infobulle est une fenêtre SANS DÉCORATION
                 # (`overrideredirect`) : elle n'a ni titre, ni bouton de
                 # fermeture, et disparaît d'elle-même. Échap n'y a pas de sens.
@@ -2190,8 +2432,7 @@ class TestRaccourcisClavier:
                     continue
                 if "<Escape>" not in bloc and "_focus_toplevel(" not in bloc:
                     sans.append(i + 1)
-        assert not sans, (
-            f"fenêtres sans Échap, lignes {sans} (relatives au corps)")
+        assert not sans, f"fenêtres sans Échap, lignes {sans} (relatives au corps)"
 
 
 class TestContratDesOngletsApresConnexion:
@@ -2220,20 +2461,19 @@ class TestContratDesOngletsApresConnexion:
     # Établi en analysant `_load_types`, `_on_connected` et les chargeurs
     # automatiques — pas au jugé.
     CONTRAT = {
-        "upload":   ["type_combo", "visibility_combo"],
-        "browse":   ["browse_type", "browse_status",
-                     "browse_text", "browse_list", "browse_detail"],
-        "encode":   ["encode_status", "encode_list"],
-        "stats":    ["stats_status", "stats_export_btn"],
-        "ct":       ["ct_status", "ct_list"],
-        "nomen":    ["nomen_statut", "nomen_types_liste", "nomen_disc_liste"],
-        "comptes":  ["comptes_results", "comptes_filter"],
-        "groups":   ["groups_list", "groups_status"],
-        "log":      ["log_box"],
+        "upload": ["type_combo", "visibility_combo"],
+        "browse": ["browse_type", "browse_status", "browse_text", "browse_list", "browse_detail"],
+        "encode": ["encode_status", "encode_list"],
+        "stats": ["stats_status", "stats_export_btn"],
+        "ct": ["ct_status", "ct_list"],
+        "nomen": ["nomen_statut", "nomen_types_liste", "nomen_disc_liste"],
+        "comptes": ["comptes_results", "comptes_filter"],
+        "groups": ["groups_list", "groups_status"],
+        "log": ["log_box"],
         # Construit à la PREMIÈRE ouverture : la connexion ne touche à aucun
         # de ses widgets, son chargement (reprise du suivi Aristote) le
         # construit lui-même au besoin (`_enrich_reprendre`).
-        "enrich":   [],
+        "enrich": [],
     }
 
     def test_tous_les_widgets_du_contrat_existent(self, app):
@@ -2244,18 +2484,18 @@ class TestContratDesOngletsApresConnexion:
                 if not hasattr(app, nom):
                     manquants.append(f"{onglet}.{nom}")
         assert not manquants, (
-            "widgets absents alors que le code de connexion les configure : "
-            f"{manquants}")
+            f"widgets absents alors que le code de connexion les configure : {manquants}"
+        )
 
     def test_les_menus_de_type_survivent_au_chargement(self, app):
         """Rejoue `_load_types` avec une API simulée, sans réseau.
 
         Si un onglet n'est pas construit, cet appel lève — et le test le voit,
         là où l'application avalerait l'exception dans son thread."""
+
         class FausseAPI:
             def get_types(self):
-                return [{"title": "Cours", "url": "https://x/rest/types/1/",
-                         "id": 1}]
+                return [{"title": "Cours", "url": "https://x/rest/types/1/", "id": 1}]
 
             def get_sites(self):
                 return [{"url": "https://x/rest/sites/1/", "name": "videos"}]
@@ -2264,9 +2504,11 @@ class TestContratDesOngletsApresConnexion:
         app._load_types()
         app.update()
         assert "Cours" in app.type_combo.cget("values"), (
-            "le menu de type du Téléversement n'a pas été alimenté")
+            "le menu de type du Téléversement n'a pas été alimenté"
+        )
         assert "Cours" in app.browse_type.cget("values"), (
-            "le filtre de type de l'onglet Vidéos n'a pas été alimenté")
+            "le filtre de type de l'onglet Vidéos n'a pas été alimenté"
+        )
 
     def test_le_journal_accepte_une_ligne_sans_onglet_ouvert(self, app):
         """`_log` est appelé depuis partout, y compris avant toute ouverture
@@ -2278,15 +2520,13 @@ class TestContratDesOngletsApresConnexion:
     def test_chaque_chargeur_automatique_a_son_onglet(self, app):
         """Un chargeur sans onglet construit planterait dès l'ouverture."""
         for cle in app._auto_loaders():
-            assert cle in app.tabs, (
-                f"« {cle} » a un chargeur automatique mais aucun onglet")
+            assert cle in app.tabs, f"« {cle} » a un chargeur automatique mais aucun onglet"
 
     def test_le_contrat_couvre_les_onglets_a_chargement(self, app):
         """Garde-fou sur le filet lui-même : un onglet qui charge des données
         doit figurer au contrat, sans quoi le refactoring passerait au travers."""
         oublies = [c for c in app._auto_loaders() if c not in self.CONTRAT]
-        assert not oublies, (
-            f"onglets à chargement absents du contrat : {oublies}")
+        assert not oublies, f"onglets à chargement absents du contrat : {oublies}"
 
 
 class TestRetraitDesTerminees:
@@ -2324,18 +2564,17 @@ class TestRetraitDesTerminees:
         self._preparer(app, terminees=1, echecs=0, attente=1)
         texte = app.purge_btn.cget("text")
         assert "1 terminée" in texte and "terminées" not in texte, (
-            f"accord au singulier manquant : {texte}")
+            f"accord au singulier manquant : {texte}"
+        )
 
     def test_les_echecs_survivent_au_retrait(self, app):
         """Le cœur du sujet : ce sont eux qu'on voudra relancer."""
         self._preparer(app, terminees=3, echecs=2, attente=1)
         app._retirer_terminees()
         app.update()
-        assert len(app.items) == 3, (
-            f"{len(app.items)} lignes restantes au lieu de 3")
+        assert len(app.items) == 3, f"{len(app.items)} lignes restantes au lieu de 3"
         assert all(not it.done for it in app.items)
-        assert sum(1 for it in app.items
-                   if str(it.status).endswith("échec")) == 2
+        assert sum(1 for it in app.items if str(it.status).endswith("échec")) == 2
 
     def test_le_bouton_disparait_une_fois_la_liste_nettoyee(self, app):
         self._preparer(app, terminees=2, echecs=1, attente=0)
@@ -2350,13 +2589,15 @@ class TestRetraitDesTerminees:
         app._on_batch_done(4, 4)
         app.update()
         assert "retirer" in app.global_msg.cget("text").lower(), (
-            f"le bilan ne propose pas le retrait : {app.global_msg.cget('text')}")
+            f"le bilan ne propose pas le retrait : {app.global_msg.cget('text')}"
+        )
 
         self._preparer(app, terminees=3, echecs=1, attente=0)
         app._on_batch_done(3, 4)
         app.update()
         assert "retirer" not in app.global_msg.cget("text").lower(), (
-            "le retrait est proposé alors qu'il reste des échecs")
+            "le retrait est proposé alors qu'il reste des échecs"
+        )
 
 
 class TestAucuneSuperposition:
@@ -2374,9 +2615,12 @@ class TestAucuneSuperposition:
 
     @staticmethod
     def _boite(widget):
-        return (widget.winfo_rootx(), widget.winfo_rooty(),
-                widget.winfo_rootx() + widget.winfo_width(),
-                widget.winfo_rooty() + widget.winfo_height())
+        return (
+            widget.winfo_rootx(),
+            widget.winfo_rooty(),
+            widget.winfo_rootx() + widget.winfo_width(),
+            widget.winfo_rooty() + widget.winfo_height(),
+        )
 
     @classmethod
     def _se_recouvrent(cls, w1, w2) -> bool:
@@ -2409,13 +2653,18 @@ class TestAucuneSuperposition:
         # (il couvre ses enfants par construction) ; ses sous-classes sont des
         # widgets à part entière.
         import app as module_app
-        enfants = [w for w in conteneur.winfo_children()
-                   if w.winfo_ismapped() and w.winfo_manager() == "grid"
-                   and w.winfo_class() != "Canvas"
-                   and type(w) is not module_app.ctk.CTkFrame]
+
+        enfants = [
+            w
+            for w in conteneur.winfo_children()
+            if w.winfo_ismapped()
+            and w.winfo_manager() == "grid"
+            and w.winfo_class() != "Canvas"
+            and type(w) is not module_app.ctk.CTkFrame
+        ]
         fautifs = []
         for i, w1 in enumerate(enfants):
-            for w2 in enfants[i + 1:]:
+            for w2 in enfants[i + 1 :]:
                 if self._se_recouvrent(w1, w2):
                     fautifs.append(f"« {self._nom(w1)} » et « {self._nom(w2)} »")
         return fautifs
@@ -2468,15 +2717,27 @@ class TestDisciplineDUneVideo:
 
     def _preparer(self, app, disciplines_video):
         import app as module_app
+
         app.api = self._API()
-        app.discipline_map = {"Odontologie": f"{self.BASE}/discipline/1/",
-                              "Physique": f"{self.BASE}/discipline/2/"}
-        v = {"slug": "v1", "title": "Cours", "is_draft": False, "encoded": True,
-             "channel": [], "type": "", "owner": "u", "date_added": "2026-01-01",
-             "url": f"{self.BASE}/videos/v1/", "discipline": disciplines_video}
+        app.discipline_map = {
+            "Odontologie": f"{self.BASE}/discipline/1/",
+            "Physique": f"{self.BASE}/discipline/2/",
+        }
+        v = {
+            "slug": "v1",
+            "title": "Cours",
+            "is_draft": False,
+            "encoded": True,
+            "channel": [],
+            "type": "",
+            "owner": "u",
+            "date_added": "2026-01-01",
+            "url": f"{self.BASE}/videos/v1/",
+            "discipline": disciplines_video,
+        }
         app.videos = [v]
         app.browse_chan_by_url, app.type_map = {}, {}
-        app.browse_multi.clear()          # voir TestClassementTypeEtDisciplines
+        app.browse_multi.clear()  # voir TestClassementTypeEtDisciplines
         app.browse_selected = None
         app._show_tab("browse")
         app._browse_do_filter()
@@ -2485,8 +2746,7 @@ class TestDisciplineDUneVideo:
         return v, module_app
 
     def _picker(self, app, module_app):
-        return [w for w in app.winfo_children()
-                if isinstance(w, module_app.ChannelPicker)][-1]
+        return [w for w in app.winfo_children() if isinstance(w, module_app.ChannelPicker)][-1]
 
     def test_les_disciplines_actuelles_sont_precochees(self, app):
         v, m = self._preparer(app, [f"{self.BASE}/discipline/1/"])
@@ -2501,6 +2761,7 @@ class TestDisciplineDUneVideo:
     def test_le_patch_envoie_une_liste(self, app):
         """⚠️ Relation MULTIPLE : l'API refuse une URL nue (HTTP 400)."""
         import time
+
         v, m = self._preparer(app, [])
         app._browse_edit_disciplines(v)
         app.update()
@@ -2517,6 +2778,7 @@ class TestDisciplineDUneVideo:
         """La sélection REMPLACE l'ensemble : ce qui est coché est exactement
         ce qui reste. Tout décocher doit envoyer une liste vide."""
         import time
+
         v, m = self._preparer(app, [f"{self.BASE}/discipline/1/"])
         app._browse_edit_disciplines(v)
         app.update()
@@ -2532,12 +2794,10 @@ class TestDisciplineDUneVideo:
     def test_sans_nomenclature_on_explique_au_lieu_d_ouvrir_une_liste_vide(self, app):
         v, m = self._preparer(app, [])
         app.discipline_map = {}
-        avant = len([w for w in app.winfo_children()
-                     if isinstance(w, m.ChannelPicker)])
+        avant = len([w for w in app.winfo_children() if isinstance(w, m.ChannelPicker)])
         app._browse_edit_disciplines(v)
         app.update()
-        apres = len([w for w in app.winfo_children()
-                     if isinstance(w, m.ChannelPicker)])
+        apres = len([w for w in app.winfo_children() if isinstance(w, m.ChannelPicker)])
         assert apres == avant, "une fenêtre vide a été ouverte"
 
     def test_le_selecteur_generique_garde_son_texte_pour_les_chaines(self, app):
@@ -2546,6 +2806,7 @@ class TestDisciplineDUneVideo:
         import inspect
 
         import app as module_app
+
         sig = inspect.signature(module_app.ChannelPicker.__init__)
         assert "chaînes" in sig.parameters["consigne"].default
 
@@ -2561,11 +2822,21 @@ class TestClassementTypeEtDisciplines:
         class _API:
             def get_tracks(self, *a, **k):
                 return []
+
         app.api = _API()
         app.discipline_map = {"Odontologie": "u1"}
-        v = {"slug": "v1", "title": "Cours", "is_draft": False, "encoded": True,
-             "channel": [], "type": "", "owner": "u", "date_added": "2026-01-01",
-             "url": "x", "discipline": []}
+        v = {
+            "slug": "v1",
+            "title": "Cours",
+            "is_draft": False,
+            "encoded": True,
+            "channel": [],
+            "type": "",
+            "owner": "u",
+            "date_added": "2026-01-01",
+            "url": "x",
+            "discipline": [],
+        }
         app.videos = [v]
         app.browse_chan_by_url, app.type_map = {}, {"Cours": "t1"}
         # Instance partagée : une sélection multiple laissée par un test
@@ -2576,15 +2847,22 @@ class TestClassementTypeEtDisciplines:
         app._browse_do_filter()
         app._browse_select(v)
         app.update()
-        lignes = [w for w in app.browse_detail.winfo_children()
-                  if any(isinstance(k, ctk.CTkButton) and "Disciplines" in str(k.cget("text"))
-                         for k in w.winfo_children())]
+        lignes = [
+            w
+            for w in app.browse_detail.winfo_children()
+            if any(
+                isinstance(k, ctk.CTkButton) and "Disciplines" in str(k.cget("text"))
+                for k in w.winfo_children()
+            )
+        ]
         assert len(lignes) == 1, "bouton Disciplines absent ou en double"
         voisins = lignes[0].winfo_children()
         assert any(isinstance(k, ctk.CTkOptionMenu) for k in voisins), (
-            "le bouton Disciplines n'est pas sur la ligne du menu Type")
-        assert not any(isinstance(k, ctk.CTkButton) and "Chaînes" in str(k.cget("text"))
-                       for k in voisins), "Disciplines est encore rangé avec les chaînes"
+            "le bouton Disciplines n'est pas sur la ligne du menu Type"
+        )
+        assert not any(
+            isinstance(k, ctk.CTkButton) and "Chaînes" in str(k.cget("text")) for k in voisins
+        ), "Disciplines est encore rangé avec les chaînes"
 
 
 class TestChainesEtThemesDUneVideo:
@@ -2594,18 +2872,32 @@ class TestChainesEtThemesDUneVideo:
 
     def _picker(self, app, chaines_pre, themes_pre):
         import app as module_app
-        chaines = [{"url": f"{self.B}/channels/1/", "title": "PAPP"},
-                   {"url": f"{self.B}/channels/2/", "title": "Odontologie"}]
+
+        chaines = [
+            {"url": f"{self.B}/channels/1/", "title": "PAPP"},
+            {"url": f"{self.B}/channels/2/", "title": "Odontologie"},
+        ]
         themes = [
-            {"url": f"{self.B}/themes/10/", "title": "Nutrition", "channel": f"{self.B}/channels/1/"},
+            {
+                "url": f"{self.B}/themes/10/",
+                "title": "Nutrition",
+                "channel": f"{self.B}/channels/1/",
+            },
             {"url": f"{self.B}/themes/11/", "title": "Sommeil", "channel": f"{self.B}/channels/1/"},
-            {"url": f"{self.B}/themes/20/", "title": "Parodontie", "channel": f"{self.B}/channels/2/"}]
+            {
+                "url": f"{self.B}/themes/20/",
+                "title": "Parodontie",
+                "channel": f"{self.B}/channels/2/",
+            },
+        ]
         self.resultat = None
 
         def fin(c, t):
             self.resultat = (c, t)
-        pk = module_app.ChainesThemesPicker(app, chaines, themes, on_done=fin,
-                                            chaines_pre=chaines_pre, themes_pre=themes_pre)
+
+        pk = module_app.ChainesThemesPicker(
+            app, chaines, themes, on_done=fin, chaines_pre=chaines_pre, themes_pre=themes_pre
+        )
         app.update()
         return pk
 
@@ -2618,8 +2910,9 @@ class TestChainesEtThemesDUneVideo:
         assert themes == [f"{self.B}/themes/20/"]
 
     def test_decocher_une_chaine_retire_ses_themes(self, app):
-        pk = self._picker(app, [f"{self.B}/channels/1/"],
-                          [f"{self.B}/themes/10/", f"{self.B}/themes/11/"])
+        pk = self._picker(
+            app, [f"{self.B}/channels/1/"], [f"{self.B}/themes/10/", f"{self.B}/themes/11/"]
+        )
         pk._toggle_chaine(f"{self.B}/channels/1")
         # L'ÉTAT AFFICHÉ d'abord : la validation écarte de toute façon les
         # thèmes orphelins, donc vérifier seulement le résultat final laissait
@@ -2627,8 +2920,7 @@ class TestChainesEtThemesDUneVideo:
         # (vérifié par mutation).
         assert not pk.themes, "des thèmes restent cochés sous une chaîne décochée"
         pk._validate()
-        assert self.resultat == ([], []), (
-            "des thèmes restent attachés à une chaîne décochée")
+        assert self.resultat == ([], []), "des thèmes restent attachés à une chaîne décochée"
 
     def test_une_chaine_non_listee_est_conservee(self, app):
         """⚠️ La perdre en silence au premier Valider serait une destruction
@@ -2645,12 +2937,14 @@ class TestChainesEtThemesDUneVideo:
     def test_filtrer_sur_un_theme_montre_sa_chaine(self, app):
         """On doit retrouver un thème sans connaître sa chaîne."""
         import customtkinter as ctk
+
         pk = self._picker(app, [], [])
         pk.filter.insert(0, "parodon")
         pk._render()
         app.update()
-        textes = [str(w.cget("text")) for w in pk.listbox.winfo_children()
-                  if isinstance(w, ctk.CTkButton)]
+        textes = [
+            str(w.cget("text")) for w in pk.listbox.winfo_children() if isinstance(w, ctk.CTkButton)
+        ]
         try:
             assert any("Odontologie" in t for t in textes)
             assert any("Parodontie" in t for t in textes)
@@ -2664,6 +2958,7 @@ class TestChainesEtThemesDUneVideo:
         import inspect
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._browse_apply_channels)
         assert 'payload["theme"]' in source and '{"channel": list(urls)}' in source
 
@@ -2678,13 +2973,24 @@ class TestListeVideosNative:
     BASE = "https://exemple.invalid/rest"
 
     def _peupler(self, app, n=8):
-        app.videos = [{"slug": f"v{i}", "title": f"Titre {i:04d}", "is_draft": i % 3 == 0,
-                       "encoded": True, "channel": [], "type": "",
-                       "owner": f"{self.BASE}/users/{i % 2}/",
-                       "date_added": f"2026-0{1 + i % 9}-1{i % 10}T08:00:00",
-                       "url": f"{self.BASE}/videos/v{i}/"} for i in range(n)]
-        app.all_users = [{"url": f"{self.BASE}/users/0/", "username": "alice"},
-                         {"url": f"{self.BASE}/users/1/", "username": "bruno"}]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"Titre {i:04d}",
+                "is_draft": i % 3 == 0,
+                "encoded": True,
+                "channel": [],
+                "type": "",
+                "owner": f"{self.BASE}/users/{i % 2}/",
+                "date_added": f"2026-0{1 + i % 9}-1{i % 10}T08:00:00",
+                "url": f"{self.BASE}/videos/v{i}/",
+            }
+            for i in range(n)
+        ]
+        app.all_users = [
+            {"url": f"{self.BASE}/users/0/", "username": "alice"},
+            {"url": f"{self.BASE}/users/1/", "username": "bruno"},
+        ]
         app.browse_chan_by_url, app.type_map = {}, {}
         app.browse_multi.clear()
         app.browse_selected = None
@@ -2708,10 +3014,12 @@ class TestListeVideosNative:
     def test_plus_de_plafond_a_300(self, app):
         self._peupler(app, 650)
         assert len(app.browse_tree.get_children()) == 650, (
-            "le tableau doit afficher toutes les vidéos filtrées")
+            "le tableau doit afficher toutes les vidéos filtrées"
+        )
 
     def test_rendu_rapide(self, app):
         import time
+
         self._peupler(app, 1000)
         debut = time.perf_counter()
         app._browse_do_filter()
@@ -2722,8 +3030,13 @@ class TestListeVideosNative:
     def test_colonnes(self, app):
         self._peupler(app, 3)
         statut, titre, proprio, date, enc = app.browse_tree.item("v1", "values")
-        assert (statut, titre, proprio, date, enc) == ("🌐", "Titre 0001", "bruno",
-                                                       "11/02/2026", "✓")
+        assert (statut, titre, proprio, date, enc) == (
+            "🌐",
+            "Titre 0001",
+            "bruno",
+            "11/02/2026",
+            "✓",
+        )
         assert app.browse_tree.item("v0", "values")[0] == "📝"
 
     def test_clic_simple_ctrl_et_maj(self, app):
@@ -2749,7 +3062,8 @@ class TestListeVideosNative:
         assert app.browse_tree.item("v1", "tags") == ("multi",)
         app._browse_clic_ligne(self._evt(app, "v4"))
         assert app.browse_tree.item("v1", "tags") == ("multi",), (
-            "la ligne retenue a perdu sa marque quand une autre a été consultée")
+            "la ligne retenue a perdu sa marque quand une autre a été consultée"
+        )
         app._browse_vider_multi()
 
     def test_fleches(self, app):
@@ -2776,7 +3090,7 @@ class TestListeVideosNative:
         app._browse_trier_par("proprio")
         noms = [app.browse_tree.item(s, "values")[2] for s in app.browse_tree.get_children()]
         assert noms == sorted(noms)
-        app._browse_trier_par("enc")              # colonne sans tri : rien ne bouge
+        app._browse_trier_par("enc")  # colonne sans tri : rien ne bouge
         assert app.browse_tri.get() == "Propriétaire"
         app.browse_tri.set("Plus récentes")
 
@@ -2793,7 +3107,8 @@ class TestListeVideosNative:
         assert app._browse_owner_label(app.videos[0]) == "alice"
         app.all_users = [{"url": f"{self.BASE}/users/0/", "username": "carole"}]
         assert app._browse_owner_label(app.videos[0]) == "carole", (
-            "l'index n'a pas été reconstruit après le remplacement des comptes")
+            "l'index n'a pas été reconstruit après le remplacement des comptes"
+        )
         assert app._browse_owner_label({"owner": "inconnu"}) == "inconnu"
         assert app._browse_owner_label({"owner": ""}) == "—"
 
@@ -2813,6 +3128,7 @@ class TestListeVideosNative:
 
     def test_theme_change_les_couleurs(self, app):
         import app as module_app
+
         ctk = module_app.ctk
         initial = ctk.get_appearance_mode()
         try:
@@ -2841,10 +3157,11 @@ class TestListeVideosNative:
         import sys as module_sys
 
         import app as module_app
+
         source = inspect.getsource(module_app.App._build_tab_browse)
         assert '"<Command-Button-1>"' in source and 'sys.platform == "darwin"' in source
         attendu = "Cmd" if module_sys.platform == "darwin" else "Ctrl"
-        assert module_app.TOUCHE_AJOUT == attendu
+        assert attendu == module_app.TOUCHE_AJOUT
         if module_sys.platform == "darwin":
             assert app.browse_tree.bind("<Command-Button-1>")
 
@@ -2856,8 +3173,15 @@ class TestListesDeChoixNatives:
     BASE = "https://exemple.invalid/rest"
 
     def _comptes(self, n):
-        return [{"url": f"{self.BASE}/users/{i}/", "username": f"u{i:04d}",
-                 "first_name": "Prénom", "last_name": f"Nom{i}"} for i in range(n)]
+        return [
+            {
+                "url": f"{self.BASE}/users/{i}/",
+                "username": f"u{i:04d}",
+                "first_name": "Prénom",
+                "last_name": f"Nom{i}",
+            }
+            for i in range(n)
+        ]
 
     class _Evt:
         def __init__(self, x, y):
@@ -2872,6 +3196,7 @@ class TestListesDeChoixNatives:
 
     def test_agent_tous_les_comptes_et_coche(self, app, monkeypatch):
         import app as module_app
+
         monkeypatch.setattr(module_app.cfg, "save_config", lambda *_a, **_k: None)
         app.all_users = self._comptes(700)
         app.config_data["agent_username"] = "u0003"
@@ -2901,6 +3226,7 @@ class TestListesDeChoixNatives:
 
     def test_selecteur_compact(self, app):
         import app as module_app
+
         app.all_users = self._comptes(450)
         choisis = []
         # Fenêtre à part, AFFICHÉE : sous Linux (CI), une ligne d'un tableau
@@ -2919,16 +3245,21 @@ class TestListesDeChoixNatives:
             assert choisis and choisis[-1]["username"] == "u0010"
             assert liste.arbre.item("u0010", "tags") == ("courante",)
         finally:
-            app._reassign_pickers[:] = [s for s in app._reassign_pickers
-                                        if s.get("frame") is not etat.get("frame")]
+            app._reassign_pickers[:] = [
+                s for s in app._reassign_pickers if s.get("frame") is not etat.get("frame")
+            ]
             cadre.destroy()
 
     def test_choix_proprietaires_multiple(self, app):
         import app as module_app
+
         app.all_users = self._comptes(600)
         rendu = {}
-        pk = module_app.OwnerPicker(app, lambda urls, libs: rendu.update(urls=urls),
-                                    preselected={f"{self.BASE}/users/2/": "u0002"})
+        pk = module_app.OwnerPicker(
+            app,
+            lambda urls, libs: rendu.update(urls=urls),
+            preselected={f"{self.BASE}/users/2/": "u0002"},
+        )
         try:
             pk._render()
             liste = pk.listbox
@@ -2954,6 +3285,7 @@ class TestListesDeChoixNatives:
 
     def test_choix_proprietaire_unique(self, app):
         import app as module_app
+
         app.all_users = self._comptes(5)
         pris = []
         pk = module_app.OwnerPicker(app, lambda *_: None, single=True, on_single=pris.append)
@@ -2964,10 +3296,12 @@ class TestListesDeChoixNatives:
 
     def test_choix_videos(self, app):
         import app as module_app
+
         videos = [{"slug": f"s{i}", "title": f"Vidéo {i}"} for i in range(800)]
         rendu = {}
-        pk = module_app.VideoPicker(app, videos, lambda slugs: rendu.update(s=slugs),
-                                    preselected={"s1": "Vidéo 1"})
+        pk = module_app.VideoPicker(
+            app, videos, lambda slugs: rendu.update(s=slugs), preselected={"s1": "Vidéo 1"}
+        )
         try:
             liste = pk.listbox
             assert len(liste.lignes()) == 800, "plus de plafond à 500"
@@ -2991,6 +3325,7 @@ class TestListesDeChoixNatives:
 
     def test_le_theme_reteint_toutes_les_listes(self, app):
         import app as module_app
+
         ctk = module_app.ctk
         initial = ctk.get_appearance_mode()
         pk = module_app.VideoPicker(app, [{"slug": "a", "title": "A"}], lambda s: None)
@@ -2999,8 +3334,10 @@ class TestListesDeChoixNatives:
                 ctk.set_appearance_mode(mode)
                 module_app.styler_tableaux(app)
                 for arbre in (pk.listbox.arbre, app.browse_tree, app.agent_results.arbre):
-                    assert str(arbre.tag_configure("courante", "background")) == \
-                        module_app.S_SELECTION[rang]
+                    assert (
+                        str(arbre.tag_configure("courante", "background"))
+                        == module_app.S_SELECTION[rang]
+                    )
         finally:
             pk.destroy()
             ctk.set_appearance_mode(initial)
@@ -3029,9 +3366,17 @@ class TestEncodageEtComptesNatifs:
         app._show_tab("encode")
         for _ in range(3):
             app.update()
-        app.encode_videos = [{"slug": f"e{i}", "title": f"Vidéo {i}", "encoded": False,
-                              "encoding_in_progress": False, "is_draft": False,
-                              "get_encoding_step": "erreur"} for i in range(n)]
+        app.encode_videos = [
+            {
+                "slug": f"e{i}",
+                "title": f"Vidéo {i}",
+                "encoded": False,
+                "encoding_in_progress": False,
+                "is_draft": False,
+                "get_encoding_step": "erreur",
+            }
+            for i in range(n)
+        ]
         app.encode_list.choix.clear()
         app.encode_filter.set("Tous")
         app._render_encode()
@@ -3043,6 +3388,7 @@ class TestEncodageEtComptesNatifs:
 
     def test_encodage_selection_et_relance(self, app, monkeypatch):
         import app as module_app
+
         self._encodage(app)
         liste = app.encode_list
         assert str(app.encode_sel_btn.cget("state")) == "disabled"
@@ -3058,16 +3404,17 @@ class TestEncodageEtComptesNatifs:
         monkeypatch.setattr(app, "_run", lambda f, vids: lances.append([v["slug"] for v in vids]))
         app._encode_relaunch_selection()
         assert lances == [["e2", "e4", "e5", "e6"]]
-        liste._clic(self._evt(liste, "e1"))              # clic simple : cette ligne seule
+        liste._clic(self._evt(liste, "e1"))  # clic simple : cette ligne seule
         assert liste.choix == {"e1"}
         assert liste.arbre.item("e2", "tags") != ("multi",)
         liste._clic(self._evt(liste, "e3"), "ctrl")
-        liste._clic(self._evt(liste, "e1"), "ctrl")       # Ctrl+clic sur une ligne retenue : retirée
+        liste._clic(self._evt(liste, "e1"), "ctrl")  # Ctrl+clic sur une ligne retenue : retirée
         assert liste.choix == {"e3"}
         assert liste.arbre.item("e1", "tags") != ("multi",)
 
     def test_encodage_refus_de_confirmation(self, app, monkeypatch):
         import app as module_app
+
         self._encodage(app)
         app.encode_list._clic(self._evt(app.encode_list, "e3"))
         lances = []
@@ -3096,7 +3443,7 @@ class TestEncodageEtComptesNatifs:
         app._render_encode()
         assert "e2" not in liste.lignes() and not liste.choix
         assert str(app.encode_sel_btn.cget("state")) == "disabled"
-        app.encode_filter.set("Encodées")                 # plus rien d'affiché ici
+        app.encode_filter.set("Encodées")  # plus rien d'affiché ici
         app.encode_videos[2]["encoded"] = False
         app._render_encode()
         assert not liste.choix
@@ -3105,10 +3452,17 @@ class TestEncodageEtComptesNatifs:
 
     # ── Comptes ──
     def _comptes(self, app, n=10):
-        app.all_users = [{"url": f"{self.BASE}/users/{i}/", "username": f"c{i:03d}",
-                          "first_name": "Ana", "last_name": f"Nom{i}",
-                          "email": "" if i == 3 else f"c{i}@exemple.invalid",
-                          "is_staff": i % 4 == 0} for i in range(n)]
+        app.all_users = [
+            {
+                "url": f"{self.BASE}/users/{i}/",
+                "username": f"c{i:03d}",
+                "first_name": "Ana",
+                "last_name": f"Nom{i}",
+                "email": "" if i == 3 else f"c{i}@exemple.invalid",
+                "is_staff": i % 4 == 0,
+            }
+            for i in range(n)
+        ]
         app.comptes_choisi = None
         app.comptes_filter.delete(0, "end")
         app.comptes_statut.set("Tous")
@@ -3118,8 +3472,12 @@ class TestEncodageEtComptesNatifs:
 
     def _textes_fiche(self, app):
         import customtkinter as ctk
-        return [str(w.cget("text")) for w in app.comptes_fiche.winfo_children()
-                if isinstance(w, (ctk.CTkLabel, ctk.CTkButton, ctk.CTkSwitch))]
+
+        return [
+            str(w.cget("text"))
+            for w in app.comptes_fiche.winfo_children()
+            if isinstance(w, (ctk.CTkLabel, ctk.CTkButton, ctk.CTkSwitch))
+        ]
 
     def test_comptes_sans_plafond_et_colonnes(self, app):
         self._comptes(app, 700)
@@ -3144,21 +3502,32 @@ class TestEncodageEtComptesNatifs:
 
     def test_comptes_sans_courriel(self, app):
         import customtkinter as ctk
+
         self._comptes(app)
         app._comptes_choisir("c003")
-        bouton = next(w for w in app.comptes_fiche.winfo_children()
-                      if isinstance(w, ctk.CTkButton) and "courriel" in str(w.cget("text")))
+        bouton = next(
+            w
+            for w in app.comptes_fiche.winfo_children()
+            if isinstance(w, ctk.CTkButton) and "courriel" in str(w.cget("text"))
+        )
         assert str(bouton.cget("state")) == "disabled"
         assert any("pas d'adresse" in t for t in self._textes_fiche(app))
 
     def test_comptes_actions_de_la_fiche(self, app, monkeypatch):
         import customtkinter as ctk
+
         self._comptes(app)
         app._comptes_choisir("c002")
         appels = []
-        monkeypatch.setattr(app, "_compte_creer_token", lambda u: appels.append(("jeton", u["username"])))
-        monkeypatch.setattr(app, "_compte_mail_token", lambda u: appels.append(("mail", u["username"])))
-        monkeypatch.setattr(app, "_on_staff_toggle", lambda u, v: appels.append(("staff", u["username"], v.get())))
+        monkeypatch.setattr(
+            app, "_compte_creer_token", lambda u: appels.append(("jeton", u["username"]))
+        )
+        monkeypatch.setattr(
+            app, "_compte_mail_token", lambda u: appels.append(("mail", u["username"]))
+        )
+        monkeypatch.setattr(
+            app, "_on_staff_toggle", lambda u, v: appels.append(("staff", u["username"], v.get()))
+        )
         app._comptes_render_fiche()
         for w in app.comptes_fiche.winfo_children():
             if isinstance(w, ctk.CTkButton):
@@ -3185,10 +3554,20 @@ class TestPastillesDeFiltre:
     BASE = "https://exemple.invalid/rest"
 
     def _peupler(self, app):
-        app.videos = [{"slug": f"v{i}", "title": f"Cours {i}", "is_draft": i % 2 == 0,
-                       "encoded": True, "channel": [], "type": "", "owner": "",
-                       "date_added": f"2026-01-{1 + i:02d}", "url": f"{self.BASE}/videos/v{i}/"}
-                      for i in range(10)]
+        app.videos = [
+            {
+                "slug": f"v{i}",
+                "title": f"Cours {i}",
+                "is_draft": i % 2 == 0,
+                "encoded": True,
+                "channel": [],
+                "type": "",
+                "owner": "",
+                "date_added": f"2026-01-{1 + i:02d}",
+                "url": f"{self.BASE}/videos/v{i}/",
+            }
+            for i in range(10)
+        ]
         app.browse_chan_by_url, app.type_map = {}, {}
         app._show_tab("browse")
         app._browse_effacer_filtres()
@@ -3227,13 +3606,13 @@ class TestPastillesDeFiltre:
         p._rappel = lambda v: app._browse_apply_filter()
         p.set("Brouillon")
         app.update()
-        p._x_clic = 5                                  # clic à gauche : ouvre les choix
+        p._x_clic = 5  # clic à gauche : ouvre les choix
         p._clic()
         assert ouvertures == [1] and p.get() == "Brouillon"
-        p._x_clic = p.winfo_width() - 8                # clic sur ✕ : retire le filtre
+        p._x_clic = p.winfo_width() - 8  # clic sur ✕ : retire le filtre
         p._clic()
         assert p.get() == "Tous" and filtrages, "le ✕ n'a pas retiré le filtre"
-        p._x_clic = p.winfo_width() - 8                # au repos, la même zone ouvre
+        p._x_clic = p.winfo_width() - 8  # au repos, la même zone ouvre
         p._clic()
         assert ouvertures == [1, 1]
 
@@ -3257,14 +3636,18 @@ class TestPastillesDeFiltre:
 
     def test_abreviation(self):
         import app as module_app
+
         assert module_app.abreger("court") == "court"
         long = module_app.abreger("x" * 40)
         assert len(long) == 22 and long.endswith("…")
 
     def test_anomalies_et_mois(self, app):
         self._peupler(app)
-        for valeur, mois in (("Brouillons de plus de 3 mois", 3),
-                             ("Brouillons de plus de 12 mois", 12), ("Aucune", 6)):
+        for valeur, mois in (
+            ("Brouillons de plus de 3 mois", 3),
+            ("Brouillons de plus de 12 mois", 12),
+            ("Aucune", 6),
+        ):
             app.browse_detect.set(valeur)
             assert app._browse_months_value() == mois
         app.browse_detect.set("Brouillons de plus de 6 mois")
@@ -3294,13 +3677,15 @@ class TestPastillesDeFiltre:
         long = "Faculté de santé, département d'odontologie (cours magistraux)"
         for p in app.browse_pastilles.elements:
             p.configure(values=list(p.cget("values")[:1]) + [long])
-            p.set(long)                        # aucun update() entre le choix et la mesure
+            p.set(long)  # aucun update() entre le choix et la mesure
         app.browse_pastilles.reorganiser()
         try:
             assert app.browse_pastilles.nombre_de_lignes() > 1
             app.update()
-            droite = max(p.winfo_rootx() + p.winfo_width()
-                         for p in app.browse_pastilles.elements) - app.winfo_rootx()
+            droite = (
+                max(p.winfo_rootx() + p.winfo_width() for p in app.browse_pastilles.elements)
+                - app.winfo_rootx()
+            )
             assert droite <= app.winfo_width(), f"débordement à {droite} px"
         finally:
             app._browse_effacer_filtres()
@@ -3316,20 +3701,31 @@ class TestPanneauDeDetailReutilise:
     BASE = "https://exemple.invalid/rest"
 
     def _peupler(self, app, monkeypatch):
-        app.videos = [{"slug": f"d{i}", "title": f"Vidéo {i}", "is_draft": False,
-                       "is_restricted": False, "encoded": True, "channel": [],
-                       "type": f"{self.BASE}/types/{1 + i % 2}/", "owner": "",
-                       "discipline": [], "restrict_access_to_groups":
-                           [f"{self.BASE}/groups/1/"] if i == 1 else [],
-                       "date_added": "2026-01-01", "url": f"{self.BASE}/videos/d{i}/"}
-                      for i in range(4)]
+        app.videos = [
+            {
+                "slug": f"d{i}",
+                "title": f"Vidéo {i}",
+                "is_draft": False,
+                "is_restricted": False,
+                "encoded": True,
+                "channel": [],
+                "type": f"{self.BASE}/types/{1 + i % 2}/",
+                "owner": "",
+                "discipline": [],
+                "restrict_access_to_groups": [f"{self.BASE}/groups/1/"] if i == 1 else [],
+                "date_added": "2026-01-01",
+                "url": f"{self.BASE}/videos/d{i}/",
+            }
+            for i in range(4)
+        ]
         app.browse_chan_by_url = {}
         app.type_map = {"Cours": f"{self.BASE}/types/1/", "Conférence": f"{self.BASE}/types/2/"}
-        app.access_groups = [{"url": f"{self.BASE}/groups/{k}/", "code_name": f"g{k}"}
-                             for k in range(3)]
+        app.access_groups = [
+            {"url": f"{self.BASE}/groups/{k}/", "code_name": f"g{k}"} for k in range(3)
+        ]
         app.browse_multi.clear()
         app.browse_selected = None
-        monkeypatch.setattr(app, "_run", lambda *a, **k: None)   # pas de réseau
+        monkeypatch.setattr(app, "_run", lambda *a, **k: None)  # pas de réseau
         app._show_tab("browse")
         app._browse_do_filter()
         app.update()
@@ -3362,31 +3758,38 @@ class TestPanneauDeDetailReutilise:
         monkeypatch.setattr(app, "_browse_delete", lambda v: vus.append(v["slug"]))
         monkeypatch.setattr(app, "_browse_edit_disciplines", lambda v: vus.append(v["slug"]))
         import customtkinter as ctk
+
         for w in app.browse_detail.winfo_children():
             for b in [w, *w.winfo_children()]:
                 if isinstance(b, ctk.CTkButton) and any(
-                        t in str(b.cget("text")) for t in ("Supprimer cette", "Disciplines")):
+                    t in str(b.cget("text")) for t in ("Supprimer cette", "Disciplines")
+                ):
                     b.invoke()
         assert vus == ["d2", "d2"], vus
 
     def test_sous_titres_d_une_video_quittee_ignores(self, app, monkeypatch):
         import customtkinter as ctk
+
         self._peupler(app, monkeypatch)
         app._browse_select(app.videos[0])
         app._browse_select(app.videos[1])
         app._sub_render(app.videos[0], [{"lang": "fr", "kind": "subtitles"}])
-        textes = [str(w.cget("text")) for w in app.browse_subs.winfo_children()
-                  if isinstance(w, ctk.CTkLabel)]
+        textes = [
+            str(w.cget("text"))
+            for w in app.browse_subs.winfo_children()
+            if isinstance(w, ctk.CTkLabel)
+        ]
         assert textes == ["Chargement…"], f"pistes de la vidéo précédente affichées : {textes}"
         app._sub_render(app.videos[1], [])
-        assert any("Aucun sous-titre" in str(w.cget("text"))
-                   for w in app.browse_subs.winfo_children())
+        assert any(
+            "Aucun sous-titre" in str(w.cget("text")) for w in app.browse_subs.winfo_children()
+        )
 
     def test_message_garde_pour_la_meme_video(self, app, monkeypatch):
         self._peupler(app, monkeypatch)
         app._browse_select(app.videos[0])
         app._browse_set_msg("✅  enregistré", "green")
-        app._browse_render_detail()                  # rafraîchissement après un envoi
+        app._browse_render_detail()  # rafraîchissement après un envoi
         assert "enregistré" in app.browse_msg.cget("text")
         app._browse_select(app.videos[1])
         assert app.browse_msg.cget("text") == ""
@@ -3394,7 +3797,7 @@ class TestPanneauDeDetailReutilise:
     def test_reconstruit_apres_le_panneau_de_lot(self, app, monkeypatch):
         self._peupler(app, monkeypatch)
         app._browse_select(app.videos[0])
-        app._browse_toggle_multi(app.videos[1])      # panneau de lot : le cadre est vidé
+        app._browse_toggle_multi(app.videos[1])  # panneau de lot : le cadre est vidé
         assert not app._browse_detail_pret()
         app._browse_vider_multi()
         assert app._browse_detail_pret()
@@ -3403,8 +3806,9 @@ class TestPanneauDeDetailReutilise:
     def test_reconstruit_si_les_groupes_changent(self, app, monkeypatch):
         self._peupler(app, monkeypatch)
         app._browse_select(app.videos[0])
-        app.access_groups = app.access_groups + [{"url": f"{self.BASE}/groups/9/",
-                                                  "code_name": "g9"}]
+        app.access_groups = app.access_groups + [
+            {"url": f"{self.BASE}/groups/9/", "code_name": "g9"}
+        ]
         app._browse_select(app.videos[1])
         assert f"{self.BASE}/groups/9/" in app._detail_w["groupes"]
 

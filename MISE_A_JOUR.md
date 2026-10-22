@@ -52,8 +52,7 @@ Ce jeton autorisera la compilation à écrire dans le dépôt public.
 L'adresse est **déjà renseignée** dans `config.py` :
 
 ```python
-UPDATE_URL = ("https://raw.githubusercontent.com/"
-              "caine777-data/podadmin-releases/main/version.json")
+UPDATE_URL = "https://raw.githubusercontent.com/caine777-data/podadmin-releases/main/version.json"
 ```
 
 Elle correspond au dépôt créé à l'étape 1. Si vous le nommez autrement que

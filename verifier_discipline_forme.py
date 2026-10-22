@@ -42,6 +42,7 @@ def charger_requests():
     """Importe « requests », en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -51,9 +52,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -123,7 +126,7 @@ def forme_du_champ(sess, rest):
     print("\n   CONCLUSION :")
     if verdict == "multiple":
         print("   ✅ Relation MULTIPLE — envoyer une LISTE d'URLs, même pour une")
-        print("      seule discipline :  {\"discipline\": [\"https://…/discipline/3/\"]}")
+        print('      seule discipline :  {"discipline": ["https://…/discipline/3/"]}')
         print("      Dans l'interface : cases à cocher, pas une liste déroulante.")
     elif verdict:
         print(f"   🟠 {verdict}.")
@@ -179,8 +182,10 @@ def question_du_site(sess, rest):
                 if isinstance(it, dict):
                     val = it.get("site", it.get("sites", "(champ absent)"))
                     titre = it.get("title") or it.get("name") or "?"
-                    print(f"      • {res:9} {str(titre)[:26]:28} "
-                          f"site = {json.dumps(val, ensure_ascii=False)[:38]}")
+                    print(
+                        f"      • {res:9} {str(titre)[:26]:28} "
+                        f"site = {json.dumps(val, ensure_ascii=False)[:38]}"
+                    )
         except Exception as e:
             print(f"      ❌ {res} : {e}")
 
@@ -200,8 +205,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Jeton : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -209,8 +216,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  DISCIPLINE — forme exacte des données à envoyer")
@@ -221,8 +227,7 @@ def run():
     forme_du_champ(sess, rest)
     question_du_site(sess, rest)
 
-    print("\n   Transmettez cette sortie complète "
-          "(le jeton n'y figure pas).\n")
+    print("\n   Transmettez cette sortie complète (le jeton n'y figure pas).\n")
 
 
 if __name__ == "__main__":
@@ -232,6 +237,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

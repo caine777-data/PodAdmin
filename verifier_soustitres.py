@@ -20,13 +20,12 @@ NE MODIFIE RIEN. Sans danger pour la production.
 Lancer avec un token SUPERUTILISATEUR :  python verifier_soustitres.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
-import json
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -48,7 +47,7 @@ CANDIDATES = [
     "/enrichments/",
     "/transcripts/",
     "/transcript/",
-    "/files/",            # Pod stocke parfois les .vtt comme CustomFileModel
+    "/files/",  # Pod stocke parfois les .vtt comme CustomFileModel
     "/customfile/",
 ]
 
@@ -110,7 +109,7 @@ def main():
     if status != 200:
         print(f"   [X] HTTP {status}. Verifiez URL et token.")
         return
-    print(f"   [OK] Connecte.")
+    print("   [OK] Connecte.")
 
     # 1) Index racine : reperer les endpoints evoquant les sous-titres
     print("\n> 1. Endpoints de l'index /rest/ evoquant des sous-titres ...")
@@ -129,8 +128,13 @@ def main():
     found = []
     for ep in CANDIDATES:
         status, data = get(f"{rest}{ep}", headers, {"limit": 1})
-        tag = {200: "[OK] existe", 401: "[401] auth", 403: "[403] interdit",
-               404: "[--] absent", None: "[err]"}.get(status, f"[{status}]")
+        tag = {
+            200: "[OK] existe",
+            401: "[401] auth",
+            403: "[403] interdit",
+            404: "[--] absent",
+            None: "[err]",
+        }.get(status, f"[{status}]")
         print(f"   {ep:20} -> {tag}")
         if status == 200:
             found.append(ep)

@@ -20,13 +20,14 @@ Puis, en OPTIN (on tape OUI), un TEST REEL reversible :
 Lancer avec un token SUPERUTILISATEUR :  python verifier_chaine_video.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -90,9 +91,11 @@ def main():
         if "channel" in put:
             meta = put["channel"]
             writable = not meta.get("read_only", False)
-            print(f"   'channel' present dans actions.PUT : OUI")
-            print(f"   read_only : {meta.get('read_only')}  | type : {meta.get('type')}  "
-                  f"| required : {meta.get('required')}")
+            print("   'channel' present dans actions.PUT : OUI")
+            print(
+                f"   read_only : {meta.get('read_only')}  | type : {meta.get('type')}  "
+                f"| required : {meta.get('required')}"
+            )
             print(f"   => MODIFIABLE : {writable}")
         else:
             print("   'channel' ABSENT de actions.PUT")

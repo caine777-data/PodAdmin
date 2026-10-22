@@ -39,6 +39,7 @@ def charger_requests():
     """Importe `requests`, en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -48,9 +49,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -96,8 +99,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -105,8 +110,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 68}\n  COLLECTE DES DONNÉES\n{'=' * 68}")
     videos = tout_lire(sess, f"{rest}/videos/", "vidéos")
@@ -120,8 +124,10 @@ def run():
 
     # Qualités attendues, d'après la configuration de l'instance.
     resolutions = sorted({str(r.get("resolution", "")) for r in renditions if r.get("resolution")})
-    print(f"\n   Qualités configurées sur l'instance : "
-          f"{', '.join(resolutions) if resolutions else '(inconnues)'}")
+    print(
+        f"\n   Qualités configurées sur l'instance : "
+        f"{', '.join(resolutions) if resolutions else '(inconnues)'}"
+    )
 
     # Regroupement des fichiers produits, par vidéo.
     par_video_v = defaultdict(set)
@@ -171,18 +177,29 @@ def run():
     print(f"\n   {len(videos)} vidéo(s) au total, dont {encodees} marquée(s) « encodée ».")
     print(f"   {len(enc_video)} fichier(s) vidéo et {len(enc_audio)} fichier(s) audio produits.")
 
-    bloc("FAUX SUCCÈS", faux_succes,
-         "Marquées « encodées » mais AUCUN fichier produit : elles ne sont pas "
-         "lisibles, et rien ne le signale aujourd'hui.")
-    bloc("QUALITÉ UNIQUE", qualite_unique,
-         "Une seule résolution disponible : lecture dégradée sur mauvaise "
-         "connexion, ou encodage interrompu en cours de route.")
-    bloc("SANS PISTE AUDIO", sans_audio,
-         "Aucun fichier audio produit. Normal pour une vidéo muette, "
-         "anormal sinon.")
-    bloc("ÉCHEC SILENCIEUX", echec_silencieux,
-         "Des fichiers existent alors que la vidéo est dite NON encodée : "
-         "le drapeau est faux, la vidéo est peut-être utilisable.")
+    bloc(
+        "FAUX SUCCÈS",
+        faux_succes,
+        "Marquées « encodées » mais AUCUN fichier produit : elles ne sont pas "
+        "lisibles, et rien ne le signale aujourd'hui.",
+    )
+    bloc(
+        "QUALITÉ UNIQUE",
+        qualite_unique,
+        "Une seule résolution disponible : lecture dégradée sur mauvaise "
+        "connexion, ou encodage interrompu en cours de route.",
+    )
+    bloc(
+        "SANS PISTE AUDIO",
+        sans_audio,
+        "Aucun fichier audio produit. Normal pour une vidéo muette, anormal sinon.",
+    )
+    bloc(
+        "ÉCHEC SILENCIEUX",
+        echec_silencieux,
+        "Des fichiers existent alors que la vidéo est dite NON encodée : "
+        "le drapeau est faux, la vidéo est peut-être utilisable.",
+    )
 
     total = len(faux_succes) + len(qualite_unique) + len(echec_silencieux)
     print(f"\n{'=' * 68}\n  FAUT-IL DÉVELOPPER CE DIAGNOSTIC ?\n{'=' * 68}\n")
@@ -210,6 +227,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

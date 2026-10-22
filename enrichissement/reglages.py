@@ -18,7 +18,7 @@ import os
 
 DOSSIER = os.path.join(os.path.expanduser("~"), ".soustitreur")
 CONFIG_PATH = os.path.join(DOSSIER, "config.json")
-URL_ARISTOTE_DEFAUT = "https://stt.ilaas.fr/api"     # instance ILaaS
+URL_ARISTOTE_DEFAUT = "https://stt.ilaas.fr/api"  # instance ILaaS
 
 # Taille maximale d'un fichier du POSTE envoyé à Aristote. ffmpeg n'étant pas
 # embarqué, une vidéo part ENTIÈRE (et non son seul son). Mesuré par la sonde
@@ -33,15 +33,35 @@ LIMITE_ENVOI_OCTETS = 780 * 1024 * 1024
 DEFAUTS = {
     "url_aristote": URL_ARISTOTE_DEFAUT,
     "formats": ["vtt"],
-    "decoupage": {},            # surcharges de sous_titres.Parametres
+    "decoupage": {},  # surcharges de sous_titres.Parametres
     # Listes dans lesquelles Aristote choisit la discipline et le type d'une
     # vidéo du POSTE (pour une vidéo Pod, ce sont les listes réelles de Pod).
-    "disciplines": ["Arts", "Droit", "Économie et gestion", "Éducation", "Informatique",
-                    "Langues", "Lettres", "Mathématiques", "Santé", "Sciences de l'ingénieur",
-                    "Sciences de la vie", "Sciences humaines et sociales", "Sciences physiques",
-                    "Sport", "Autres"],
-    "types_media": ["Cours", "Conférence", "Tutoriel", "Témoignage", "Présentation",
-                    "Webinaire", "Autre"],
+    "disciplines": [
+        "Arts",
+        "Droit",
+        "Économie et gestion",
+        "Éducation",
+        "Informatique",
+        "Langues",
+        "Lettres",
+        "Mathématiques",
+        "Santé",
+        "Sciences de l'ingénieur",
+        "Sciences de la vie",
+        "Sciences humaines et sociales",
+        "Sciences physiques",
+        "Sport",
+        "Autres",
+    ],
+    "types_media": [
+        "Cours",
+        "Conférence",
+        "Tutoriel",
+        "Témoignage",
+        "Présentation",
+        "Webinaire",
+        "Autre",
+    ],
 }
 
 

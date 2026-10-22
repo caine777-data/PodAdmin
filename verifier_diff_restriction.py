@@ -17,13 +17,14 @@ pour reperer un eventuel champ obligatoire qu'on n'envoie pas.
 Lancer avec un token SUPERUTILISATEUR.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -46,8 +47,7 @@ def resolve_video(rest, headers, ref):
     status, v = req("GET", vurl, headers)
     if status == 200 and isinstance(v, dict):
         return vurl, v
-    status, data = req("GET", f"{rest}/videos/", headers,
-                       params={"search": ref, "limit": 50})
+    status, data = req("GET", f"{rest}/videos/", headers, params={"search": ref, "limit": 50})
     res = data.get("results", []) if isinstance(data, dict) else []
     v = next((x for x in res if x.get("slug") == ref), None)
     return (v.get("url") if v else None), v
@@ -95,8 +95,9 @@ def main():
     for k in keys:
         a_val = va.get(k)
         b_val = vb.get(k)
-        if json.dumps(a_val, ensure_ascii=False, sort_keys=True) != \
-           json.dumps(b_val, ensure_ascii=False, sort_keys=True):
+        if json.dumps(a_val, ensure_ascii=False, sort_keys=True) != json.dumps(
+            b_val, ensure_ascii=False, sort_keys=True
+        ):
             diffs.append(k)
             print(f"   ≠ {k}")
             print(f"       A = {short(a_val)}")
@@ -108,8 +109,14 @@ def main():
     # 2) Focus sur les champs « visibilité / accès » connus ou suspects
     # ------------------------------------------------------------------ #
     print("\n> 2. Champs d'accès/visibilité (valeurs sur A puis B) :")
-    suspects = [k for k in keys if any(w in k.lower() for w in
-                ("restrict", "visib", "access", "draft", "password", "group", "public"))]
+    suspects = [
+        k
+        for k in keys
+        if any(
+            w in k.lower()
+            for w in ("restrict", "visib", "access", "draft", "password", "group", "public")
+        )
+    ]
     for k in suspects:
         print(f"   {k}")
         print(f"       A = {short(va.get(k))}")
@@ -131,8 +138,10 @@ def main():
         # Lister aussi les champs ressemblant a 'visibilite' meme non requis
         for name, meta in put.items():
             if any(w in name.lower() for w in ("visib", "restrict", "access")):
-                print(f"   - champ d'accès : {name}  required={meta.get('required')}  "
-                      f"type={meta.get('type')}")
+                print(
+                    f"   - champ d'accès : {name}  required={meta.get('required')}  "
+                    f"type={meta.get('type')}"
+                )
                 if meta.get("choices"):
                     vals = [c.get("value") for c in meta["choices"][:8]]
                     print(f"       valeurs possibles : {vals}")

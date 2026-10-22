@@ -20,13 +20,13 @@ Contenu d'un projet :
 from __future__ import annotations
 
 __author__ = "Cédric MONNA"
-from __version__ import __version__   # noqa: E402
-
 import hashlib
 import json
 import os
 import re
 from datetime import datetime
+
+from __version__ import __version__  # noqa: E402, F401
 
 from . import reglages as cfg
 from . import sous_titres as st
@@ -72,8 +72,15 @@ def id_pod(video_id: int) -> str:
     return f"pod{int(video_id)}"
 
 
-def nouveau_pod(video: dict, lien: str, mp4: str | None, proprietaire: str,
-                disciplines: list[str], types: list[str], langue: str) -> dict:
+def nouveau_pod(
+    video: dict,
+    lien: str,
+    mp4: str | None,
+    proprietaire: str,
+    disciplines: list[str],
+    types: list[str],
+    langue: str,
+) -> dict:
     """Projet rattaché à une vidéo Pod : rien n'est stocké sur le poste.
 
     La vidéo est lue en ligne (`video_distante`) ; les fichiers exportés vont
@@ -81,21 +88,32 @@ def nouveau_pod(video: dict, lien: str, mp4: str | None, proprietaire: str,
     """
     titre = video.get("title") or f"Vidéo {video['id']}"
     p = nouveau(titre, langue or video.get("main_lang") or "fr")
-    p.update({
-        "id": id_pod(video["id"]),
-        "media": "",
-        "nom": titre,
-        "video_distante": mp4 or "",
-        "dossier": os.path.join(os.path.expanduser("~"), "Documents", "SousTitreur",
-                                re.sub(r'[\\/:*?"<>|]+', "-", f"{video['id']:04d}-{titre}")[:80]),
-        "pod": {
-            "id": video["id"], "url_api": video["url"], "lien": lien,
-            "slug": video.get("slug", ""), "titre": titre, "proprietaire": proprietaire,
-            "duree": video.get("duration"),
-            # Listes réelles de Pod : Aristote choisira la discipline et le type dedans.
-            "disciplines": disciplines, "types": types,
-        },
-    })
+    p.update(
+        {
+            "id": id_pod(video["id"]),
+            "media": "",
+            "nom": titre,
+            "video_distante": mp4 or "",
+            "dossier": os.path.join(
+                os.path.expanduser("~"),
+                "Documents",
+                "SousTitreur",
+                re.sub(r'[\\/:*?"<>|]+', "-", f"{video['id']:04d}-{titre}")[:80],
+            ),
+            "pod": {
+                "id": video["id"],
+                "url_api": video["url"],
+                "lien": lien,
+                "slug": video.get("slug", ""),
+                "titre": titre,
+                "proprietaire": proprietaire,
+                "duree": video.get("duration"),
+                # Listes réelles de Pod : Aristote choisira la discipline et le type dedans.
+                "disciplines": disciplines,
+                "types": types,
+            },
+        }
+    )
     os.makedirs(p["dossier"], exist_ok=True)
     return p
 
@@ -115,11 +133,13 @@ DELAI_ACCES_REFUSE = 5.0
 # PodAdmin, qu'une lecture chevauche un remplacement ; les tentatives
 # ci-dessus ne servent plus que pour un programme extérieur (antivirus).
 import threading as _threading
+
 _VERROU_FICHIERS = _threading.Lock()
 
 
 def _insister(operation):
     import time
+
     limite = time.monotonic() + DELAI_ACCES_REFUSE
     pause = 0.02
     while True:
@@ -136,7 +156,8 @@ def charger(pid: str) -> dict:
     def lire():
         with _VERROU_FICHIERS, open(chemin_projet(pid), encoding="utf-8") as f:
             texte = f.read()
-        return json.loads(texte)                # analyse hors du verrou
+        return json.loads(texte)  # analyse hors du verrou
+
     return _insister(lire)
 
 
@@ -147,13 +168,16 @@ def enregistrer(p: dict) -> None:
     # fils qui enregistraient le même projet (suivi Aristote, éditeur,
     # onglet) écrasaient ou déplaçaient le fichier l'un de l'autre.
     import threading
+
     tmp = f"{chemin_projet(p['id'])}.{os.getpid()}-{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(p, f, ensure_ascii=False)
     try:
+
         def remplacer():
             with _VERROU_FICHIERS:
                 os.replace(tmp, chemin_projet(p["id"]))
+
         _insister(remplacer)
     except PermissionError:
         # Abandon : ne pas laisser le fichier temporaire derrière soi.
@@ -180,11 +204,9 @@ def lister() -> list[dict]:
     return sorted(sortie, key=lambda p: p.get("modifie", ""), reverse=True)
 
 
-def appliquer_transcription(p: dict, transcript: dict,
-                            params: st.Parametres) -> None:
+def appliquer_transcription(p: dict, transcript: dict, params: st.Parametres) -> None:
     """Remplit le projet à partir de la transcription d'Aristote."""
-    mots = st.mots_depuis_aristote(transcript.get("sentences") or [],
-                                   params.filtrer_hallucinations)
+    mots = st.mots_depuis_aristote(transcript.get("sentences") or [], params.filtrer_hallucinations)
     p["mots"] = [[m.texte, round(m.debut, 3), round(m.fin, 3)] for m in mots]
     p["langue"] = transcript.get("language") or p.get("langue")
     redecouper(p, params)
@@ -210,6 +232,7 @@ def redecouper(p: dict, params: st.Parametres) -> None:
 # Aristote n'accepte qu'un translateTo à la fois). La partie « sous_titres »
 # n'a pas de demande : elle vient de la transcription (p["etat"]).
 
+
 def _maintenant() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -217,18 +240,28 @@ def _maintenant() -> str:
 def enrichissement(p: dict) -> dict:
     """Bloc « enrichissement » du projet, créé vide au besoin, et converti
     s'il date d'avant la 1.11.0 (une seule demande groupée)."""
-    e = p.setdefault("enrichissement", {
-        "metadonnees": {},
-        "quiz": [],
-        "traductions": {},     # {"en": [{start, end, text}]}
-    })
-    for cle, defaut in (("metadonnees", {}), ("quiz", []), ("traductions", {}),
-                        ("demandes", None), ("sources", {}), ("faits", {}), ("versions", {})):
+    e = p.setdefault(
+        "enrichissement",
+        {
+            "metadonnees": {},
+            "quiz": [],
+            "traductions": {},  # {"en": [{start, end, text}]}
+        },
+    )
+    for cle, defaut in (
+        ("metadonnees", {}),
+        ("quiz", []),
+        ("traductions", {}),
+        ("demandes", None),
+        ("sources", {}),
+        ("faits", {}),
+        ("versions", {}),
+    ):
         if cle not in e:
             e[cle] = _migrer_demandes(e) if cle == "demandes" else defaut
     for q in e["quiz"]:
         _completer_question(q)
-    for d in e["demandes"].values():          # projets d'avant l'audit O5
+    for d in e["demandes"].values():  # projets d'avant l'audit O5
         if d.get("etat") == "termine" and d.get("groupes"):
             d["groupes"] = []
     return e
@@ -242,17 +275,29 @@ def _migrer_demandes(e: dict) -> dict:
         return {}
     parties = ["meta", "quiz"] + ([f"trad:{e['traduire_vers']}"] if e.get("traduire_vers") else [])
     etat = {"en_cours": "en_cours", "erreur": "erreur"}.get(e.get("etat"), "termine")
-    return {"groupe": {"cle": "groupe", "eid": e["eid"], "parties": parties, "etat": etat,
-                       "detail": e.get("detail", ""), "erreur": e.get("erreur", ""),
-                       "demande_le": "", "empreinte": "", "groupes": e.get("groupes") or []}}
+    return {
+        "groupe": {
+            "cle": "groupe",
+            "eid": e["eid"],
+            "parties": parties,
+            "etat": etat,
+            "detail": e.get("detail", ""),
+            "erreur": e.get("erreur", ""),
+            "demande_le": "",
+            "empreinte": "",
+            "groupes": e.get("groupes") or [],
+        }
+    }
 
 
 def empreinte(p: dict) -> str:
     """Empreinte des sous-titres (texte ET minutage) : sert à savoir si une
     traduction, des métadonnées ou un quiz ont été faits sur un texte qui a
     changé depuis."""
-    donnees = [(round(float(s["start"]), 2), round(float(s["end"]), 2), s["text"])
-               for s in p.get("sous_titres") or []]
+    donnees = [
+        (round(float(s["start"]), 2), round(float(s["end"]), 2), s["text"])
+        for s in p.get("sous_titres") or []
+    ]
     return hashlib.sha1(json.dumps(donnees, ensure_ascii=False).encode()).hexdigest()[:12]
 
 
@@ -271,21 +316,33 @@ def marquer_fait(p: dict, partie: str) -> None:
         enrichissement(p)["faits"][partie] = _maintenant()
 
 
-def nouvelle_demande(p: dict, cle: str, eid: str, parties: list[str],
-                     groupes: list[dict] | None = None) -> dict:
+def nouvelle_demande(
+    p: dict, cle: str, eid: str, parties: list[str], groupes: list[dict] | None = None
+) -> dict:
     """Enregistre une demande partie à Aristote. `groupes` : les phrases
     envoyées, nécessaires pour caler la traduction sur leur minutage."""
-    d = {"cle": cle, "eid": eid, "parties": list(parties), "etat": "en_cours",
-         "detail": "Envoyé à Aristote", "erreur": "", "demande_le": _maintenant(),
-         "empreinte": empreinte(p), "groupes": groupes or []}
+    d = {
+        "cle": cle,
+        "eid": eid,
+        "parties": list(parties),
+        "etat": "en_cours",
+        "detail": "Envoyé à Aristote",
+        "erreur": "",
+        "demande_le": _maintenant(),
+        "empreinte": empreinte(p),
+        "groupes": groupes or [],
+    }
     enrichissement(p)["demandes"][cle] = d
     return d
 
 
 def demandes_en_cours(p: dict) -> list[dict]:
     """Demandes encore chez Aristote : à reprendre au redémarrage."""
-    return [d for d in enrichissement(p)["demandes"].values()
-            if d.get("etat") == "en_cours" and d.get("eid")]
+    return [
+        d
+        for d in enrichissement(p)["demandes"].values()
+        if d.get("etat") == "en_cours" and d.get("eid")
+    ]
 
 
 def echec_demande(p: dict, cle: str, message: str) -> None:
@@ -308,12 +365,17 @@ def _metadonnees(version: dict) -> dict:
 
 
 def _questions(version: dict) -> list[dict]:
-    return [{
-        "question": q.get("question") or "",
-        "explication": q.get("explanation") or "",
-        "choix": [{"texte": c.get("optionText") or "", "correct": bool(c.get("correctAnswer"))}
-                  for c in q.get("choices") or []],
-    } for q in version.get("multipleChoiceQuestions") or []]
+    return [
+        {
+            "question": q.get("question") or "",
+            "explication": q.get("explanation") or "",
+            "choix": [
+                {"texte": c.get("optionText") or "", "correct": bool(c.get("correctAnswer"))}
+                for c in q.get("choices") or []
+            ],
+        }
+        for q in version.get("multipleChoiceQuestions") or []
+    ]
 
 
 def _traduction(version: dict, groupes: list[dict], params: st.Parametres) -> list[dict]:
@@ -326,7 +388,9 @@ def _traduction(version: dict, groupes: list[dict], params: st.Parametres) -> li
     g = [st.SousTitre.depuis_dict(x) for x in groupes or []]
     if len(g) != len(traduites):
         g = [st.SousTitre(float(t.get("start", 0)), float(t.get("end", 0)), "") for t in traduites]
-    return [s.en_dict() for s in st.decouper_traduction(g, [t.get("text") for t in traduites], params)]
+    return [
+        s.en_dict() for s in st.decouper_traduction(g, [t.get("text") for t in traduites], params)
+    ]
 
 
 def appliquer_demande(p: dict, cle: str, version: dict, params: st.Parametres) -> None:
@@ -352,13 +416,14 @@ def appliquer_demande(p: dict, cle: str, version: dict, params: st.Parametres) -
                 recu.append(partie)
     for partie in recu:
         e["sources"][partie] = d.get("empreinte", "")
-        e["faits"].pop(partie, None)      # nouveau contenu : pas encore publié
+        e["faits"].pop(partie, None)  # nouveau contenu : pas encore publié
         e["versions"][partie] = e["versions"].get(partie, 0) + 1
     # Les phrases envoyées ne servaient qu'à caler la traduction : une fois le
     # résultat rangé, on les oublie (23 % du fichier pour une heure de vidéo,
     # recopiées dans chaque demande ; audit O5).
-    d.update(etat="termine", detail="", erreur="", termine_le=_maintenant(),
-             vide=not recu, groupes=[])
+    d.update(
+        etat="termine", detail="", erreur="", termine_le=_maintenant(), vide=not recu, groupes=[]
+    )
 
 
 # ── Quiz : origine, questions retenues, doublons ───────────────────────────
@@ -371,13 +436,14 @@ SEUIL_RESSEMBLANCE = 0.75
 
 def _completer_question(q: dict) -> dict:
     """Champs apparus en 1.11.0 ; une question plus ancienne vient d'Aristote."""
-    if not q.get("id"):                   # repère stable, pour fusionner avec la page
+    if not q.get("id"):  # repère stable, pour fusionner avec la page
         import secrets
+
         q["id"] = secrets.token_hex(4)
-    q.setdefault("origine", "ia")         # ia | redigee
-    q.setdefault("retenue", True)         # exportée vers Moodle
-    q.setdefault("nouvelle", False)       # arrivée par « Demander d'autres questions »
-    q.setdefault("ressemble_a", 0)        # numéro de la question ressemblante, 0 sinon
+    q.setdefault("origine", "ia")  # ia | redigee
+    q.setdefault("retenue", True)  # exportée vers Moodle
+    q.setdefault("nouvelle", False)  # arrivée par « Demander d'autres questions »
+    q.setdefault("ressemble_a", 0)  # numéro de la question ressemblante, 0 sinon
     return q
 
 
@@ -415,13 +481,19 @@ def fusionner_page(e: dict, d: dict) -> list[str]:
 
 def question_redigee() -> dict:
     """Question écrite par l'enseignant : une bonne réponse, une mauvaise."""
-    return _completer_question({"question": "", "explication": "", "origine": "redigee",
-                                "choix": [{"texte": "", "correct": True},
-                                          {"texte": "", "correct": False}]})
+    return _completer_question(
+        {
+            "question": "",
+            "explication": "",
+            "origine": "redigee",
+            "choix": [{"texte": "", "correct": True}, {"texte": "", "correct": False}],
+        }
+    )
 
 
 def _normaliser(texte: str) -> str:
     import unicodedata
+
     t = unicodedata.normalize("NFKD", texte.lower())
     t = "".join(c for c in t if not unicodedata.combining(c))
     return " ".join(re.findall(r"\w+", t))
@@ -433,6 +505,7 @@ def ajouter_questions(e: dict, nouvelles: list[dict]) -> int:
     question existante arrivent décochées, avec le numéro de celle-ci.
     Renvoie le nombre de questions ajoutées."""
     import difflib
+
     quiz = e["quiz"]
     deja = bool(quiz)
     n = 0
@@ -442,8 +515,10 @@ def ajouter_questions(e: dict, nouvelles: list[dict]) -> int:
         q = _completer_question({**q, "origine": "ia", "nouvelle": deja})
         cible = _normaliser(q["question"])
         for i, autre in enumerate(quiz, 1):
-            if difflib.SequenceMatcher(None, cible, _normaliser(autre.get("question", ""))
-                                       ).ratio() >= SEUIL_RESSEMBLANCE:
+            if (
+                difflib.SequenceMatcher(None, cible, _normaliser(autre.get("question", ""))).ratio()
+                >= SEUIL_RESSEMBLANCE
+            ):
                 q["ressemble_a"], q["retenue"] = i, False
                 break
         quiz.append(q)
@@ -452,6 +527,7 @@ def ajouter_questions(e: dict, nouvelles: list[dict]) -> int:
 
 
 # ── État de chaque partie, pour les cartes de l'onglet et la page ─────────
+
 
 def _derniere_demande(e: dict, partie: str) -> dict | None:
     ds = [d for d in e["demandes"].values() if partie in d.get("parties", [])]
@@ -481,17 +557,23 @@ def etat_partie(p: dict, partie: str) -> dict:
         if not p.get("sous_titres"):
             return {"etat": "vide", "detail": "", "perime": False}
         relu = p.get("relu") or {}
-        detail = ("modifiés depuis la relecture"
-                  if relu and relu.get("empreinte") != empreinte(p) else "")
-        etat = ("fait" if (p.get("faits") or {}).get("sous_titres")
-                else "relu" if relu else "a_relire")
+        detail = (
+            "modifiés depuis la relecture" if relu and relu.get("empreinte") != empreinte(p) else ""
+        )
+        etat = (
+            "fait" if (p.get("faits") or {}).get("sous_titres") else "relu" if relu else "a_relire"
+        )
         return {"etat": etat, "detail": detail, "perime": False}
 
     e = enrichissement(p)
     d = _derniere_demande(e, partie)
     if d and d.get("etat") == "en_cours":
-        return {"etat": "en_cours", "detail": d.get("detail", ""), "perime": False,
-                "demande_le": d.get("demande_le", "")}
+        return {
+            "etat": "en_cours",
+            "detail": d.get("detail", ""),
+            "perime": False,
+            "demande_le": d.get("demande_le", ""),
+        }
     source = e["sources"].get(partie)
     perime = bool(source) and source != empreinte(p)
     if not _contenu(e, partie):
@@ -510,6 +592,7 @@ def etat_partie(p: dict, partie: str) -> dict:
 
 
 # ── Export GIFT ────────────────────────────────────────────────────────────
+
 
 def _gift(texte: str) -> str:
     """Échappe les caractères spéciaux du format GIFT de Moodle."""
@@ -544,7 +627,7 @@ def quiz_vers_gift(quiz: list[dict], titre: str = "") -> str:
         lignes = [f"::{_gift(nom)}:: {_gift(q['question'])} {{"]
         for c in q["choix"]:
             if not (c.get("texte") or "").strip():
-                continue            # réponse laissée vide : Moodle refuserait l'import
+                continue  # réponse laissée vide : Moodle refuserait l'import
             lignes.append(f"\t{'=' if c.get('correct') else '~'}{_gift(c.get('texte', ''))}")
         if q.get("explication"):
             lignes.append(f"\t####{_gift(q['explication'])}")
@@ -554,18 +637,26 @@ def quiz_vers_gift(quiz: list[dict], titre: str = "") -> str:
 
 
 def metadonnees_vers_texte(m: dict) -> str:
-    return (f"Titre :\n{m.get('titre', '')}\n\n"
-            f"Description :\n{m.get('description', '')}\n\n"
-            f"Mots-clés :\n{', '.join(m.get('mots_cles') or [])}\n\n"
-            f"Discipline : {m.get('discipline', '')}\n"
-            f"Type : {m.get('type', '')}\n")
+    return (
+        f"Titre :\n{m.get('titre', '')}\n\n"
+        f"Description :\n{m.get('description', '')}\n\n"
+        f"Mots-clés :\n{', '.join(m.get('mots_cles') or [])}\n\n"
+        f"Discipline : {m.get('discipline', '')}\n"
+        f"Type : {m.get('type', '')}\n"
+    )
 
 
 # ─────────────────────────────── Export ──────────────────────────────────
 
-def exporter(p: dict, formats: list[str], dossier: str | None = None,
-             langues: list[str] | None = None, metadonnees: bool = False,
-             quiz: bool = False) -> list[str]:
+
+def exporter(
+    p: dict,
+    formats: list[str],
+    dossier: str | None = None,
+    langues: list[str] | None = None,
+    metadonnees: bool = False,
+    quiz: bool = False,
+) -> list[str]:
     """Écrit les fichiers à côté de la vidéo (ou dans `dossier`).
 
     `langues` : traductions à exporter en plus des sous-titres d'origine.
@@ -589,7 +680,7 @@ def exporter(p: dict, formats: list[str], dossier: str | None = None,
         # Ne jamais écraser un fichier que SousTitreur n'a pas écrit lui-même
         # (le VTT d'origine importé depuis Pod, par exemple).
         if os.path.exists(chemin) and chemin not in deja:
-            chemin =os.path.join(dossier, f"{base} (corrigé){nom_fichier[len(base):]}")
+            chemin = os.path.join(dossier, f"{base} (corrigé){nom_fichier[len(base) :]}")
         with open(chemin, "w", encoding="utf-8", newline="\n") as f:
             f.write(contenu)
         ecrits.append(chemin)

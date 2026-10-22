@@ -4,6 +4,7 @@ Une demande Aristote par partie (traduction par langue, métadonnées, quiz),
 détection des contenus périmés, quiz avec origine / questions retenues /
 doublons, export GIFT lisible dans la banque Moodle. Sans réseau ni disque.
 """
+
 import os
 import re
 import sys
@@ -11,33 +12,52 @@ import sys
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
-from enrichissement import projet as pj          # noqa: E402
-from enrichissement import sous_titres as st     # noqa: E402
+from enrichissement import projet as pj  # noqa: E402
+from enrichissement import sous_titres as st  # noqa: E402
 
 PARAMS = st.Parametres()
 
 
 def projet():
     p = pj.nouveau("cours.mp4", "fr")
-    p["sous_titres"] = [{"start": 0, "end": 3, "text": "Bonjour à tous."},
-                        {"start": 3, "end": 6, "text": "On circule par les toits."}]
+    p["sous_titres"] = [
+        {"start": 0, "end": 3, "text": "Bonjour à tous."},
+        {"start": 3, "end": 6, "text": "On circule par les toits."},
+    ]
     p["etat"] = "a_corriger"
     return p
 
 
 def version_quiz(*questions):
-    return {"multipleChoiceQuestions": [
-        {"question": q, "explanation": "E",
-         "choices": [{"optionText": "oui", "correctAnswer": True}, {"optionText": "non"}]}
-        for q in questions]}
+    return {
+        "multipleChoiceQuestions": [
+            {
+                "question": q,
+                "explanation": "E",
+                "choices": [{"optionText": "oui", "correctAnswer": True}, {"optionText": "non"}],
+            }
+            for q in questions
+        ]
+    }
 
 
-VERSION_META = {"enrichmentVersionMetadata": {"title": "T", "description": "D",
-                                              "topics": ["a"], "discipline": "Archéologie",
-                                              "mediaType": "Cours"}}
-VERSION_TRAD = {"transcript": {"translatedSentences": [
-    {"start": 0, "end": 3, "text": "Hello everyone."},
-    {"start": 3, "end": 6, "text": "We walk on the roofs."}]}}
+VERSION_META = {
+    "enrichmentVersionMetadata": {
+        "title": "T",
+        "description": "D",
+        "topics": ["a"],
+        "discipline": "Archéologie",
+        "mediaType": "Cours",
+    }
+}
+VERSION_TRAD = {
+    "transcript": {
+        "translatedSentences": [
+            {"start": 0, "end": 3, "text": "Hello everyone."},
+            {"start": 3, "end": 6, "text": "We walk on the roofs."},
+        ]
+    }
+}
 
 
 class TestDemandesSeparees:
@@ -130,9 +150,15 @@ class TestSousTitres:
 class TestMigration:
     def test_ancienne_demande_groupee_en_cours(self):
         p = projet()
-        p["enrichissement"] = {"etat": "en_cours", "eid": "vieux", "traduire_vers": "en",
-                               "groupes": p["sous_titres"], "metadonnees": {}, "quiz": [],
-                               "traductions": {}}
+        p["enrichissement"] = {
+            "etat": "en_cours",
+            "eid": "vieux",
+            "traduire_vers": "en",
+            "groupes": p["sous_titres"],
+            "metadonnees": {},
+            "quiz": [],
+            "traductions": {},
+        }
         e = pj.enrichissement(p)
         d = e["demandes"]["groupe"]
         assert d["eid"] == "vieux" and d["etat"] == "en_cours"
@@ -140,16 +166,22 @@ class TestMigration:
         assert [x["eid"] for x in pj.demandes_en_cours(p)] == ["vieux"]
         for partie in ("meta", "quiz", "trad:en"):
             assert pj.etat_partie(p, partie)["etat"] == "en_cours"
-        pj.appliquer_demande(p, "groupe", {**VERSION_META, **version_quiz("Q ?"), **VERSION_TRAD},
-                             PARAMS)
+        pj.appliquer_demande(
+            p, "groupe", {**VERSION_META, **version_quiz("Q ?"), **VERSION_TRAD}, PARAMS
+        )
         assert pj.etat_partie(p, "trad:en")["etat"] == "pret"
         assert pj.etat_partie(p, "quiz")["detail"] == "1 question, 1 retenue"
 
     def test_contenu_ancien_conserve_et_jamais_perime(self):
         p = projet()
-        p["enrichissement"] = {"etat": "termine", "eid": "vieux", "traduire_vers": "",
-                               "metadonnees": {"titre": "Ancien"}, "traductions": {},
-                               "quiz": [{"question": "Q ?", "choix": [{"texte": "a", "correct": True}]}]}
+        p["enrichissement"] = {
+            "etat": "termine",
+            "eid": "vieux",
+            "traduire_vers": "",
+            "metadonnees": {"titre": "Ancien"},
+            "traductions": {},
+            "quiz": [{"question": "Q ?", "choix": [{"texte": "a", "correct": True}]}],
+        }
         e = pj.enrichissement(p)
         assert e["quiz"][0]["origine"] == "ia" and e["quiz"][0]["retenue"] is True
         assert pj.etat_partie(p, "meta") == {"etat": "pret", "detail": "", "perime": False}
@@ -161,8 +193,9 @@ class TestQuiz:
         e = pj.enrichissement(p)
         e["quiz"].append({**pj.question_redigee(), "question": "Ma question ?"})
         pj.nouvelle_demande(p, "quiz", "e1", ["quiz"])
-        pj.appliquer_demande(p, "quiz", version_quiz("Vers quelle date apparaissent les villes ?"),
-                             PARAMS)
+        pj.appliquer_demande(
+            p, "quiz", version_quiz("Vers quelle date apparaissent les villes ?"), PARAMS
+        )
         assert [q["origine"] for q in e["quiz"]] == ["redigee", "ia"]
         assert e["quiz"][1]["nouvelle"] is True
 
@@ -175,13 +208,21 @@ class TestQuiz:
     def test_doublon_reformule_arrive_decoche(self):
         """Cas réel de la sonde : même question, un verbe changé."""
         e = pj.enrichissement(projet())
-        pj.ajouter_questions(e, _questions(
-            "Quelle était la principale façon de se déplacer dans l’agglomération "
-            "néolithique de Çatal Höyük ?"))
-        pj.ajouter_questions(e, _questions(
-            "Quelle était la principale façon de circuler dans l'agglomération de "
-            "Çatal Höyük au Néolithique ?",
-            "En quelle année la première ville apparaît-elle en Mésopotamie ?"))
+        pj.ajouter_questions(
+            e,
+            _questions(
+                "Quelle était la principale façon de se déplacer dans l’agglomération "
+                "néolithique de Çatal Höyük ?"
+            ),
+        )
+        pj.ajouter_questions(
+            e,
+            _questions(
+                "Quelle était la principale façon de circuler dans l'agglomération de "
+                "Çatal Höyük au Néolithique ?",
+                "En quelle année la première ville apparaît-elle en Mésopotamie ?",
+            ),
+        )
         assert (e["quiz"][1]["retenue"], e["quiz"][1]["ressemble_a"]) == (False, 1)
         assert (e["quiz"][2]["retenue"], e["quiz"][2]["ressemble_a"]) == (True, 0)
 
@@ -197,18 +238,22 @@ def _questions(*textes):
 
 class TestGift:
     def test_seules_les_retenues_partent_numerotees_sans_trou(self):
-        quiz = [{"question": "Première ?", "choix": [{"texte": "a", "correct": True}]},
-                {"question": "Écartée ?", "retenue": False, "choix": [{"texte": "b", "correct": True}]},
-                {"question": "Troisième ?", "choix": [{"texte": "c", "correct": True}]}]
+        quiz = [
+            {"question": "Première ?", "choix": [{"texte": "a", "correct": True}]},
+            {"question": "Écartée ?", "retenue": False, "choix": [{"texte": "b", "correct": True}]},
+            {"question": "Troisième ?", "choix": [{"texte": "c", "correct": True}]},
+        ]
         g = pj.quiz_vers_gift(quiz, "Les métropoles du Néolithique")
         assert "Écartée" not in g
         assert "::Les métropoles du Néolithique 01, Première ?::" in g
         assert "::Les métropoles du Néolithique 02, Troisième ?::" in g
 
     def test_nom_coupe_sur_un_mot_et_echappe(self):
-        q = {"question": "Vrai ou faux : à Çatal Höyük, on circulait principalement "
-                         "par les toits plutôt que par les rues ?",
-             "choix": [{"texte": "a", "correct": True}]}
+        q = {
+            "question": "Vrai ou faux : à Çatal Höyük, on circulait principalement "
+            "par les toits plutôt que par les rues ?",
+            "choix": [{"texte": "a", "correct": True}],
+        }
         g = pj.quiz_vers_gift([q], "Cours")
         nom = re.search(r"^::(.*?[^\\])::", g, re.M).group(1)
         assert nom.endswith("…") and r"Vrai ou faux \: à" in nom
@@ -219,7 +264,9 @@ class TestGift:
         p["pod"] = {"titre": "Les métropoles du Néolithique"}
         e = pj.enrichissement(p)
         e["metadonnees"] = {"titre": "Titre proposé par Aristote"}
-        e["quiz"] = [pj._completer_question({"question": "Q ?", "choix": [{"texte": "a", "correct": True}]})]
+        e["quiz"] = [
+            pj._completer_question({"question": "Q ?", "choix": [{"texte": "a", "correct": True}]})
+        ]
         (chemin,) = pj.exporter(p, [], dossier=str(tmp_path), quiz=True)[-1:]
         texte = open(chemin, encoding="utf-8").read()
         assert "$CATEGORY: $course$/Les métropoles du Néolithique" in texte
@@ -234,6 +281,7 @@ class TestVerrouFichiers:
 
     def test_lecture_et_remplacement_sous_verrou(self, tmp_path, monkeypatch):
         import builtins
+
         monkeypatch.setattr(pj, "DOSSIER_PROJETS", str(tmp_path))
         constats = []
         vrai_open, vrai_replace = builtins.open, pj.os.replace
@@ -246,6 +294,7 @@ class TestVerrouFichiers:
         def remplacer(src, dst):
             constats.append(("remplacement", pj._VERROU_FICHIERS.locked()))
             return vrai_replace(src, dst)
+
         monkeypatch.setattr(pj, "open", ouvrir, raising=False)
         monkeypatch.setattr(pj.os, "replace", remplacer)
         p = projet()
@@ -276,8 +325,20 @@ class TestPhrasesOubliees:
 
     def test_anciens_projets_nettoyes_a_la_lecture(self):
         p = projet()
-        p["enrichissement"] = {"metadonnees": {}, "quiz": [], "traductions": {}, "sources": {},
-                               "faits": {}, "versions": {}, "demandes": {
-                                   "trad:en": {"cle": "trad:en", "etat": "termine", "parties": ["trad:en"],
-                                               "groupes": [{"start": 0, "end": 1, "text": "x"}]}}}
+        p["enrichissement"] = {
+            "metadonnees": {},
+            "quiz": [],
+            "traductions": {},
+            "sources": {},
+            "faits": {},
+            "versions": {},
+            "demandes": {
+                "trad:en": {
+                    "cle": "trad:en",
+                    "etat": "termine",
+                    "parties": ["trad:en"],
+                    "groupes": [{"start": 0, "end": 1, "text": "x"}],
+                }
+            },
+        }
         assert pj.enrichissement(p)["demandes"]["trad:en"]["groupes"] == []

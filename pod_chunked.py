@@ -49,12 +49,13 @@ ROBUSTESSE :
 
 from __future__ import annotations
 
-__author__      = "Cédric MONNA"
-__contact__     = "support-pod@utoulouse.fr"
+__author__ = "Cédric MONNA"
+__contact__ = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
-from __version__ import __version__   # source unique (voir __version__.py)
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+from __version__ import __version__  # noqa: F401  (source unique, voir __version__.py)
+
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
 
 import hashlib
@@ -62,19 +63,18 @@ import os
 import re
 import time
 import unicodedata
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import requests
 
-
 # ── Constantes de protocole ───────────────────────────────────────────────
-DEFAULT_CHUNK_SIZE = 2 * 1024 * 1024      # 2 Mo par morceau (valeur validée)
+DEFAULT_CHUNK_SIZE = 2 * 1024 * 1024  # 2 Mo par morceau (valeur validée)
 
 # Chemins (relatifs à la base de l'instance) du protocole web de Pod.
-PATH_LOGIN            = "/accounts/login/"
-PATH_VIDEO_ADD        = "/video/add/"                       # page « Ajouter une vidéo »
-PATH_CHUNK_UPLOAD     = "/video/api/chunked_upload/"        # envoi des morceaux
-PATH_CHUNK_COMPLETE   = "/video/api/chunked_upload_complete/"  # finalisation
+PATH_LOGIN = "/accounts/login/"
+PATH_VIDEO_ADD = "/video/add/"  # page « Ajouter une vidéo »
+PATH_CHUNK_UPLOAD = "/video/api/chunked_upload/"  # envoi des morceaux
+PATH_CHUNK_COMPLETE = "/video/api/chunked_upload_complete/"  # finalisation
 
 # Erreurs réseau « transitoires » qui justifient de RE-ENVOYER un morceau.
 TRANSIENT_ERRORS = (
@@ -92,6 +92,7 @@ GATEWAY_ERRORS = (502, 503, 504)
 
 class PodChunkedError(Exception):
     """Erreur du client chunké (login, envoi d'un morceau, finalisation…)."""
+
     def __init__(self, message: str, status: int = 0, body: str = ""):
         """Erreur d\'envoi par morceaux : message, code HTTP, corps de réponse."""
         super().__init__(message)
@@ -104,9 +105,10 @@ class EnvoiAnnule(Exception):
 
     Classe propre à ce module, qui reste indépendant de pod_api.py : l'appelant
     attrape les deux (voir `ANNULATIONS` dans app.py)."""
+
     def __init__(self, message: str = "Envoi interrompu à votre demande."):
         super().__init__(message)
-        self.a_verifier = False     # arrêt avant finalisation : aucune vidéo créée
+        self.a_verifier = False  # arrêt avant finalisation : aucune vidéo créée
 
 
 class PodChunkedSession:
@@ -119,8 +121,7 @@ class PodChunkedSession:
         # -> ensuite, avec le token API : PATCH métadonnées + launch_encoding(slug)
     """
 
-    def __init__(self, base_url: str, username: str, password: str,
-                 verify_ssl: bool = True):
+    def __init__(self, base_url: str, username: str, password: str, verify_ssl: bool = True):
         """Prépare la session web du compte véhicule.
 
         Aucune connexion n'est ouverte ici : `login()` s'en charge, au moment
@@ -131,17 +132,22 @@ class PodChunkedSession:
         if not self.base_url.lower().startswith("https://"):
             raise PodChunkedError(
                 "Adresse de l'instance refusée : elle doit commencer par "
-                "https:// (le mot de passe ne doit jamais circuler en clair).")
+                "https:// (le mot de passe ne doit jamais circuler en clair)."
+            )
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
         self.session = requests.Session()
         # En-tête User-Agent « navigateur » : certaines configs Pod/nginx sont
         # tatillonnes sur les requêtes sans UA. On imite un navigateur standard.
-        self.session.headers.update({
-            "User-Agent": ("Mozilla/5.0 (PodAdmin-eformation) "
-                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"),
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (PodAdmin-eformation) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+                ),
+            }
+        )
         self._logged_in = False
 
     # ── Helpers internes ──────────────────────────────────────────────────
@@ -158,12 +164,10 @@ class PodChunkedSession:
     def _extract_csrf_input(html: str) -> str:
         """Extrait la valeur du champ caché <input name='csrfmiddlewaretoken' …>
         d'une page HTML. Renvoie '' si introuvable."""
-        m = re.search(
-            r'name=["\']csrfmiddlewaretoken["\']\s+value=["\']([^"\']+)["\']', html)
+        m = re.search(r'name=["\']csrfmiddlewaretoken["\']\s+value=["\']([^"\']+)["\']', html)
         if not m:
             # Ordre des attributs parfois inversé (value avant name)
-            m = re.search(
-                r'value=["\']([^"\']+)["\']\s+name=["\']csrfmiddlewaretoken["\']', html)
+            m = re.search(r'value=["\']([^"\']+)["\']\s+name=["\']csrfmiddlewaretoken["\']', html)
         return m.group(1) if m else ""
 
     def _get_csrf_from_page(self, path: str) -> str:
@@ -188,7 +192,8 @@ class PodChunkedSession:
         if not (form_token or cookie_token):
             raise PodChunkedError(
                 "Impossible d'obtenir un jeton CSRF sur la page de login "
-                "(la page /accounts/login/ est-elle bien accessible ?).")
+                "(la page /accounts/login/ est-elle bien accessible ?)."
+            )
 
         # (b) POST des identifiants. Django, en HTTPS, VÉRIFIE l'en-tête Referer :
         #     il doit correspondre à l'origine → on le fournit explicitement.
@@ -202,9 +207,13 @@ class PodChunkedSession:
             "Origin": self.base_url,
         }
         try:
-            r = self.session.post(self._url(PATH_LOGIN), data=data,
-                                  headers=headers, timeout=30,
-                                  verify=self.verify_ssl)
+            r = self.session.post(
+                self._url(PATH_LOGIN),
+                data=data,
+                headers=headers,
+                timeout=30,
+                verify=self.verify_ssl,
+            )
         except TRANSIENT_ERRORS as e:
             raise PodChunkedError(f"Connexion réseau impossible au login : {e}")
 
@@ -213,17 +222,25 @@ class PodChunkedSession:
         if not self.session.cookies.get("sessionid"):
             # Message d'aide : distinguer identifiants faux vs compte SSO.
             hint = ""
-            body = (r.text or "")
+            body = r.text or ""
             low = body.lower()
             if "sso" in low or "cas" in low or "shibboleth" in low:
-                hint = (" — ce compte semble passer par le SSO ; or le login "
-                        "local n'accepte QUE les comptes locaux (comme eformation).")
-            elif ("mot de passe" in low or "password" in low
-                  or "incorrect" in low or "invalide" in low):
+                hint = (
+                    " — ce compte semble passer par le SSO ; or le login "
+                    "local n'accepte QUE les comptes locaux (comme eformation)."
+                )
+            elif (
+                "mot de passe" in low
+                or "password" in low
+                or "incorrect" in low
+                or "invalide" in low
+            ):
                 hint = " — identifiant ou mot de passe probablement incorrect."
             raise PodChunkedError(
                 f"Échec du login local (aucune session ouverte){hint}",
-                status=r.status_code, body=body[:500])
+                status=r.status_code,
+                body=body[:500],
+            )
 
         self._logged_in = True
 
@@ -234,12 +251,12 @@ class PodChunkedSession:
         file_path: str,
         *,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
-        progress_cb: Optional[Callable[[int, int], None]] = None,
-        retry_cb: Optional[Callable[[int, int, str], None]] = None,
+        progress_cb: Callable[[int, int], None] | None = None,
+        retry_cb: Callable[[int, int, str], None] | None = None,
         max_retries: int = 4,
         target_slug: str = "",
         marqueur: str = "",
-        annuler: Optional[Callable[[], bool]] = None,
+        annuler: Callable[[], bool] | None = None,
     ) -> str:
         """Téléverse `file_path` en morceaux via la session web, puis finalise.
         Renvoie le SLUG de la vidéo.
@@ -283,10 +300,10 @@ class PodChunkedSession:
         if marqueur:
             base, ext = os.path.splitext(filename)
             filename = f"{base} {self._ascii_filename(marqueur)}{ext}"
-        md5 = hashlib.md5()          # calculé en un seul passage, pendant l'envoi
+        md5 = hashlib.md5()  # calculé en un seul passage, pendant l'envoi
 
-        upload_id: Optional[str] = None
-        offset = 0                   # nombre d'octets déjà confirmés par le serveur
+        upload_id: str | None = None
+        offset = 0  # nombre d'octets déjà confirmés par le serveur
 
         with open(file_path, "rb") as fh:
             while True:
@@ -297,12 +314,20 @@ class PodChunkedSession:
                     break
                 md5.update(chunk)
                 start = offset
-                end = offset + len(chunk) - 1     # borne INCLUSIVE (norme HTTP)
+                end = offset + len(chunk) - 1  # borne INCLUSIVE (norme HTTP)
 
                 # Envoi du morceau, avec ré-essais isolés sur ce seul morceau.
                 resp = self._send_one_chunk(
-                    chunk, start, end, total, filename, upload_id,
-                    retry_cb=retry_cb, max_retries=max_retries, annuler=annuler)
+                    chunk,
+                    start,
+                    end,
+                    total,
+                    filename,
+                    upload_id,
+                    retry_cb=retry_cb,
+                    max_retries=max_retries,
+                    annuler=annuler,
+                )
 
                 # La réponse fournit l'upload_id (au 1er morceau) et l'offset.
                 if isinstance(resp, dict) and resp.get("upload_id"):
@@ -320,7 +345,8 @@ class PodChunkedSession:
                         f"Position d'envoi incohérente : le serveur annonce "
                         f"{annonce} octet(s) reçus, {offset} attendus. Envoi "
                         "interrompu pour ne pas créer une vidéo corrompue ; "
-                        "relancez-le.")
+                        "relancez-le."
+                    )
 
                 if progress_cb:
                     progress_cb(min(offset, total), total)
@@ -328,7 +354,8 @@ class PodChunkedSession:
         if not upload_id:
             raise PodChunkedError(
                 "Aucun upload_id renvoyé par le serveur : le protocole chunké "
-                "n'a pas démarré comme attendu (à re-valider avec la sonde).")
+                "n'a pas démarré comme attendu (à re-valider avec la sonde)."
+            )
 
         # Dernière occasion d'arrêter : au-delà, la vidéo est créée.
         if annuler and annuler():
@@ -336,11 +363,19 @@ class PodChunkedSession:
         # Finalisation → création (slug vide) OU remplacement (slug cible fourni).
         return self._complete(upload_id, md5.hexdigest(), target_slug=target_slug)
 
-    def _send_one_chunk(self, chunk: bytes, start: int, end: int, total: int,
-                        filename: str, upload_id: Optional[str], *,
-                        retry_cb: Optional[Callable[[int, int, str], None]],
-                        max_retries: int,
-                        annuler: Optional[Callable[[], bool]] = None) -> dict:
+    def _send_one_chunk(
+        self,
+        chunk: bytes,
+        start: int,
+        end: int,
+        total: int,
+        filename: str,
+        upload_id: str | None,
+        *,
+        retry_cb: Callable[[int, int, str], None] | None,
+        max_retries: int,
+        annuler: Callable[[], bool] | None = None,
+    ) -> dict:
         """Envoie UN morceau (POST multipart). Ré-essaie ce seul morceau en cas
         de coupure réseau/SSL. Renvoie le corps JSON de la réponse (dict)."""
         crange = f"bytes {start}-{end}/{total}"
@@ -364,11 +399,16 @@ class PodChunkedSession:
                 # multipart : le binaire dans `files`, les champs texte dans `data`.
                 data = {"csrfmiddlewaretoken": csrf}
                 if upload_id:
-                    data["upload_id"] = upload_id     # obligatoire dès le 2e morceau
+                    data["upload_id"] = upload_id  # obligatoire dès le 2e morceau
                 files = {"the_file": (filename, chunk, "application/octet-stream")}
                 r = self.session.post(
-                    self._url(PATH_CHUNK_UPLOAD), data=data, files=files,
-                    headers=headers, timeout=120, verify=self.verify_ssl)
+                    self._url(PATH_CHUNK_UPLOAD),
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    timeout=120,
+                    verify=self.verify_ssl,
+                )
                 # Passerelle en difficulté (502/503/504) → on ré-essaie ce morceau.
                 if r.status_code in GATEWAY_ERRORS:
                     if attempt < max_retries:
@@ -379,11 +419,15 @@ class PodChunkedSession:
                     raise PodChunkedError(
                         f"Morceau {crange} : passerelle en échec (HTTP {r.status_code}) "
                         f"après {max_retries} tentatives — surcharge/serveur momentané.",
-                        status=r.status_code, body=(r.text or "")[:400])
+                        status=r.status_code,
+                        body=(r.text or "")[:400],
+                    )
                 if r.status_code >= 400:
                     raise PodChunkedError(
                         f"Morceau refusé ({crange}) : HTTP {r.status_code}",
-                        status=r.status_code, body=(r.text or "")[:400])
+                        status=r.status_code,
+                        body=(r.text or "")[:400],
+                    )
                 try:
                     return r.json() if r.text else {}
                 except ValueError:
@@ -393,11 +437,12 @@ class PodChunkedSession:
                 if attempt < max_retries:
                     if retry_cb:
                         retry_cb(attempt, max_retries, str(e)[:120])
-                    time.sleep(2 * attempt)      # pause croissante : 2s, 4s, 6s…
+                    time.sleep(2 * attempt)  # pause croissante : 2s, 4s, 6s…
                     continue
                 raise PodChunkedError(
                     f"Échec d'envoi du morceau {crange} après {max_retries} "
-                    f"tentatives (coupure réseau/SSL). Dernière erreur : {e}")
+                    f"tentatives (coupure réseau/SSL). Dernière erreur : {e}"
+                )
         # Ne devrait jamais être atteint (la boucle sort par return ou raise).
         raise PodChunkedError(f"Échec inattendu sur le morceau {crange}.")
 
@@ -427,16 +472,21 @@ class PodChunkedSession:
             # morceaux et vérifie le md5 sur TOUT le fichier — long sur un gros
             # fichier. On laisse à Pod le temps de répondre plutôt que d'abandonner
             # avant nginx.
-            r = self.session.post(self._url(PATH_CHUNK_COMPLETE), data=data,
-                                  headers=headers, timeout=600,
-                                  verify=self.verify_ssl)
+            r = self.session.post(
+                self._url(PATH_CHUNK_COMPLETE),
+                data=data,
+                headers=headers,
+                timeout=600,
+                verify=self.verify_ssl,
+            )
         except TRANSIENT_ERRORS as e:
             # Timeout côté client : la finalisation a peut-être RÉUSSI côté serveur.
             raise PodChunkedError(
                 "Délai dépassé pendant la finalisation. Le serveur a peut-être "
                 "quand même terminé : vérifiez si la vidéo apparaît côté web avant "
                 f"de recommencer. (détail : {e})",
-                status=504)
+                status=504,
+            )
 
         # 502/503/504 : passerelle en timeout. Sur la FINALISATION, on ne ré-essaie
         # PAS automatiquement (risque de doublon) : le traitement a pu aboutir côté
@@ -447,11 +497,15 @@ class PodChunkedSession:
                 "C'est une limite côté SERVEUR (nginx attend la fin de l'assemblage "
                 "du gros fichier par Pod). La vidéo a peut-être QUAND MÊME été créée : "
                 "vérifiez côté web avant de recommencer.",
-                status=r.status_code, body=(r.text or "")[:400])
+                status=r.status_code,
+                body=(r.text or "")[:400],
+            )
         if r.status_code >= 400:
             raise PodChunkedError(
                 f"Finalisation refusée : HTTP {r.status_code}",
-                status=r.status_code, body=(r.text or "")[:400])
+                status=r.status_code,
+                body=(r.text or "")[:400],
+            )
         try:
             body = r.json() if r.text else {}
         except ValueError:
@@ -461,9 +515,10 @@ class PodChunkedSession:
         slug = self._slug_from_redirlink(redir)
         if not slug:
             raise PodChunkedError(
-                "Finalisation OK mais slug introuvable dans la réponse "
-                f"(redirlink={redir!r}).",
-                status=r.status_code, body=(r.text or "")[:400])
+                f"Finalisation OK mais slug introuvable dans la réponse (redirlink={redir!r}).",
+                status=r.status_code,
+                body=(r.text or "")[:400],
+            )
         return slug
 
     @staticmethod

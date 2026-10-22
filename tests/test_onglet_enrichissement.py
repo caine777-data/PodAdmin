@@ -5,6 +5,7 @@ personnel temporaire (USERPROFILE / HOME), et des faux pour Aristote, le
 serveur de l'éditeur et le client Pod. Ni réseau, ni coffre-fort, ni données
 réelles de l'utilisateur.
 """
+
 import ast
 import os
 import subprocess
@@ -26,8 +27,11 @@ def _methode(nom: str) -> ast.FunctionDef:
 def test_rien_n_est_construit_au_demarrage():
     """L'onglet doit rester vide au démarrage : ni widgets, ni lecture des
     projets, ni serveur, pour chaque lancement et chaque administrateur."""
-    appels = {n.func.id for n in ast.walk(_methode("_build_tab_enrich"))
-              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    appels = {
+        n.func.id
+        for n in ast.walk(_methode("_build_tab_enrich"))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
     assert "PanneauEnrichissement" not in appels
 
 
@@ -50,7 +54,7 @@ def test_le_panneau_n_a_plus_de_journal_propre_ni_d_identifiants_a_saisir():
     assert "bell()" not in panneau
 
 
-SCENARIO = r'''
+SCENARIO = r"""
 import os, sys, time, json, threading
 sys.path.insert(0, RACINE)
 import customtkinter as ctk
@@ -283,13 +287,19 @@ journal = a.log_box.get("1.0", "end")
 assert "Reprise du suivi" in journal and "reçus d'Aristote" in journal
 print("SCENARIO OK")
 a.destroy()
-'''
+"""
 
 
 def test_onglet_de_bout_en_bout(tmp_path):
     script = tmp_path / "scenario.py"
     script.write_text(f"RACINE = {RACINE!r}\n" + SCENARIO, encoding="utf-8")
     env = {**os.environ, "USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1"}
-    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                       timeout=120, env=env, cwd=RACINE)
+    r = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=RACINE,
+    )
     assert r.returncode == 0 and "SCENARIO OK" in r.stdout, r.stdout[-3000:] + r.stderr[-3000:]

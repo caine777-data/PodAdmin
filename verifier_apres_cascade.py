@@ -39,6 +39,7 @@ SLUG_PERDU = "0138-ues7-la-certification-pix"
 def charger_requests():
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -48,9 +49,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -139,14 +142,12 @@ def confirmer_la_perte(sess, rest, videos, lecture_complete):
         print(f"      URL directe          → erreur : {e}")
 
     # Voie 2 : parmi TOUTES les vidéos lues (le listing peut différer).
-    trouvee = [v for v in videos
-               if isinstance(v, dict) and v.get("slug") == SLUG_PERDU]
+    trouvee = [v for v in videos if isinstance(v, dict) and v.get("slug") == SLUG_PERDU]
     print(f"      Dans le listing complet → {'PRÉSENTE' if trouvee else 'absente'}")
 
     # Voie 3 : recherche plein texte, le slug ayant pu changer.
     try:
-        r = sess.get(f"{rest}/videos/", params={"search": "certification-pix"},
-                     timeout=30)
+        r = sess.get(f"{rest}/videos/", params={"search": "certification-pix"}, timeout=30)
         if r.status_code == 200:
             data = r.json()
             proches = data.get("results", []) if isinstance(data, dict) else (data or [])
@@ -186,14 +187,13 @@ def chercher_reliquats(sess, rest):
     print("=" * 70)
     total, tout_lu = 0, True
     for ressource, libelle in (("types", "type"), ("discipline", "discipline")):
-        objets, complete = paginer(sess, f"{rest}/{ressource}/",
-                                   {"limit": 200}, max_pages=10)
+        objets, complete = paginer(sess, f"{rest}/{ressource}/", {"limit": 200}, max_pages=10)
         tout_lu = tout_lu and complete
-        restes = [o for o in objets
-                  if isinstance(o, dict) and str(o.get("title", "")).startswith(PREFIXE)]
+        restes = [
+            o for o in objets if isinstance(o, dict) and str(o.get("title", "")).startswith(PREFIXE)
+        ]
         total += len(restes)
-        print(f"\n   {libelle} : {len(objets)} au total, "
-              f"{len(restes)} jetable(s) oublié(s)")
+        print(f"\n   {libelle} : {len(objets)} au total, {len(restes)} jetable(s) oublié(s)")
         for o in restes:
             print(f"      ⚠  {o.get('title')}  →  {o.get('url')}")
     if not tout_lu:
@@ -251,8 +251,9 @@ def run():
     if requests is None:
         return
 
-    base = nettoyer_url(input("URL de l'instance [https://videos.utoulouse.fr] : "),
-                        "https://videos.utoulouse.fr")
+    base = nettoyer_url(
+        input("URL de l'instance [https://videos.utoulouse.fr] : "), "https://videos.utoulouse.fr"
+    )
     token = input("Jeton : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -260,8 +261,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  ÉTAT DES LIEUX APRÈS LA SUPPRESSION EN CASCADE")
@@ -299,6 +299,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

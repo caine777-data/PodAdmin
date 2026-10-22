@@ -18,20 +18,22 @@ Particularités Esup-Pod gérées ici :
 
 from __future__ import annotations
 
-__author__      = "Cédric MONNA"
-__contact__     = "support-pod@utoulouse.fr"
+__author__ = "Cédric MONNA"
+__contact__ = "support-pod@utoulouse.fr"
 __institution__ = "Université de Toulouse — MFCA"
-from __version__ import __version__   # source unique (voir __version__.py)
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+from __version__ import __version__  # noqa: F401  (source unique, voir __version__.py)
+
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
 
 import os
-import time
 import re
-import requests
-from typing import Callable, Optional
+import time
+from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
+
+import requests
 
 # Délai des ENVOIS DE FICHIER : (connexion, lecture).
 #
@@ -45,9 +47,8 @@ UPLOAD_TIMEOUT = (30, 600)
 
 try:
     # Permet un upload streamé avec callback de progression
-    from requests_toolbelt.multipart.encoder import (
-        MultipartEncoder, MultipartEncoderMonitor
-    )
+    from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
+
     HAS_TOOLBELT = True
 except ImportError:
     HAS_TOOLBELT = False
@@ -55,6 +56,7 @@ except ImportError:
 
 class PodAPIError(Exception):
     """Erreur renvoyée par l'API Pod (avec code HTTP et corps de réponse)."""
+
     def __init__(self, message: str, status: int = 0, body: str = ""):
         """Construit l'erreur (status = code HTTP, body = corps de réponse)."""
         super().__init__(message)
@@ -71,14 +73,17 @@ class EnvoiAnnule(Exception):
 
     `a_verifier` : vrai si la vidéo a PEUT-ÊTRE été créée malgré l'arrêt
     (attente interrompue après un 504) — la relancer créerait un doublon."""
-    def __init__(self, message: str = "Envoi interrompu à votre demande.",
-                 a_verifier: bool = False):
+
+    def __init__(
+        self, message: str = "Envoi interrompu à votre demande.", a_verifier: bool = False
+    ):
         super().__init__(message)
         self.a_verifier = a_verifier
 
 
 class PodAPI:
     """Client de l'API REST Esup-Pod, authentifié par token."""
+
     def __init__(self, base_url: str, token: str, verify_ssl: bool = True):
         """Initialise le client API : URL de base, token, session HTTP."""
         self.base_url = base_url.rstrip("/")
@@ -87,11 +92,14 @@ class PodAPI:
         if urlsplit(self.base_url).scheme != "https":
             raise PodAPIError(
                 "Adresse de l'instance refusée : elle doit commencer par "
-                "https:// (le jeton ne doit jamais circuler en clair).")
+                "https:// (le jeton ne doit jamais circuler en clair)."
+            )
         self.rest = f"{self.base_url}/rest"
         self.token = token
         self.verify_ssl = verify_ssl
-        self.last_scan_skipped = 0     # nb d'éléments ignorés au dernier scan (illisibles côté serveur)
+        self.last_scan_skipped = (
+            0  # nb d'éléments ignorés au dernier scan (illisibles côté serveur)
+        )
         # Vrai si le DERNIER scan paginé s'est arrêté sur la limite de sécurité
         # `max_pages` alors qu'il restait des pages à lire. Dans ce cas la liste
         # obtenue est INCOMPLÈTE : totaux faux, éléments manquants. À signaler à
@@ -147,12 +155,12 @@ class PodAPI:
         partir le jeton en clair. Un autre hôte, lui, est toujours refusé."""
         cible = urlsplit(url)
         instance = urlsplit(self.rest)
-        if (cible.scheme not in ("http", "https")
-                or cible.netloc.lower() != instance.netloc.lower()):
+        if cible.scheme not in ("http", "https") or cible.netloc.lower() != instance.netloc.lower():
             raise PodAPIError(
                 f"Adresse refusée ({cible.scheme}://{cible.netloc}) : elle ne "
                 f"désigne pas l'instance {instance.netloc}. Le jeton n'a pas "
-                "été envoyé.")
+                "été envoyé."
+            )
         return urlunsplit(("https",) + tuple(cible)[1:])
 
     def _json(self, resp: requests.Response):
@@ -172,46 +180,71 @@ class PodAPI:
 
     def _get(self, endpoint: str, params: dict | None = None):
         """Requête GET (lecture) sur l'API."""
-        r = self.session.get(self._abs(endpoint), params=params,
-                             headers={"Accept": "application/json"},
-                             timeout=30, verify=self.verify_ssl)
+        r = self.session.get(
+            self._abs(endpoint),
+            params=params,
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         return self._json(r)
 
     def _post(self, endpoint: str, json=None, data=None):
         """Requête POST (création) sur l'API."""
-        r = self.session.post(self._abs(endpoint), json=json, data=data,
-                             headers={"Accept": "application/json"},
-                             timeout=30, verify=self.verify_ssl)
+        r = self.session.post(
+            self._abs(endpoint),
+            json=json,
+            data=data,
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         return self._json(r)
 
     def _patch(self, endpoint: str, json=None, data=None):
         """Requête PATCH (mise à jour partielle) sur l'API."""
-        r = self.session.patch(self._abs(endpoint), json=json, data=data,
-                             headers={"Accept": "application/json"},
-                             timeout=30, verify=self.verify_ssl)
+        r = self.session.patch(
+            self._abs(endpoint),
+            json=json,
+            data=data,
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         return self._json(r)
 
     def _delete(self, endpoint: str):
         """Requête DELETE (suppression) sur l'API ; True si 204."""
-        r = self.session.delete(self._abs(endpoint),
-                             headers={"Accept": "application/json"},
-                             timeout=30, verify=self.verify_ssl)
+        r = self.session.delete(
+            self._abs(endpoint),
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         if r.status_code >= 400:
-            raise PodAPIError(f"HTTP {r.status_code} sur {r.url}",
-                              status=r.status_code, body=r.text[:1000])
+            raise PodAPIError(
+                f"HTTP {r.status_code} sur {r.url}", status=r.status_code, body=r.text[:1000]
+            )
         return True  # 204 No Content attendu en cas de succès
 
     def _options(self, endpoint: str) -> dict:
         """Requête OPTIONS : renvoie le schéma d'une ressource (champs requis)."""
-        r = self.session.options(self._abs(endpoint),
-                             headers={"Accept": "application/json"},
-                             timeout=20, verify=self.verify_ssl)
+        r = self.session.options(
+            self._abs(endpoint),
+            headers={"Accept": "application/json"},
+            timeout=20,
+            verify=self.verify_ssl,
+        )
         return self._json(r) or {}
 
-    def _paginate(self, endpoint: str, params: dict | None = None,
-                  max_pages: int = 300,
-                  progress_cb: Optional[Callable[[int], None]] = None,
-                  skip_cb: Optional[Callable[[int, int], None]] = None) -> list[dict]:
+    def _paginate(
+        self,
+        endpoint: str,
+        params: dict | None = None,
+        max_pages: int = 300,
+        progress_cb: Callable[[int], None] | None = None,
+        skip_cb: Callable[[int, int], None] | None = None,
+    ) -> list[dict]:
         """Récupère tous les éléments d'un endpoint paginé en suivant le champ
         'next' jusqu'au bout. progress_cb(nb_cumulé) optionnel.
 
@@ -225,9 +258,13 @@ class PodAPI:
         p.setdefault("limit", 100)
         pages = 0
         while url and pages < max_pages:
-            r = self.session.get(url, params=(p if pages == 0 else None),
-                                 headers={"Accept": "application/json"},
-                                 timeout=30, verify=self.verify_ssl)
+            r = self.session.get(
+                url,
+                params=(p if pages == 0 else None),
+                headers={"Accept": "application/json"},
+                timeout=30,
+                verify=self.verify_ssl,
+            )
             data = self._json(r)
             if isinstance(data, dict):
                 items.extend(data.get("results", []))
@@ -304,8 +341,7 @@ class PodAPI:
     # C'est le refus qu'a essuyé la sonde d'écriture avant de trouver la bonne
     # forme. Ne pas « harmoniser » ces deux méthodes.
 
-    def create_type(self, title: str, site_urls: list[str], *,
-                    description: str = "") -> dict:
+    def create_type(self, title: str, site_urls: list[str], *, description: str = "") -> dict:
         """Crée un type de vidéo.
 
         `sites` est au PLURIEL, sous forme de LISTE, et il est OBLIGATOIRE sur
@@ -331,8 +367,7 @@ class PodAPI:
         data = self._get("/discipline/", {"limit": 200})
         return data.get("results", []) if isinstance(data, dict) else (data or [])
 
-    def create_discipline(self, title: str, site_url: str = "", *,
-                          description: str = "") -> dict:
+    def create_discipline(self, title: str, site_url: str = "", *, description: str = "") -> dict:
         """Crée une discipline.
 
         `site` est au SINGULIER et attend une CHAÎNE, pas une liste — contrairement
@@ -370,12 +405,12 @@ class PodAPI:
         cursus: str = "0",
         is_draft: bool = True,
         description: str = "",
-        additional_owner_urls: Optional[list[str]] = None,
-        site_urls: Optional[list[str]] = None,
-        progress_cb: Optional[Callable[[int, int], None]] = None,
+        additional_owner_urls: list[str] | None = None,
+        site_urls: list[str] | None = None,
+        progress_cb: Callable[[int, int], None] | None = None,
         max_retries: int = 3,
-        retry_cb: Optional[Callable[[int, int, str], None]] = None,
-        annuler: Optional[Callable[[], bool]] = None,
+        retry_cb: Callable[[int, int, str], None] | None = None,
+        annuler: Callable[[], bool] | None = None,
     ) -> dict:
         """
         Téléverse une vidéo. Renvoie le dict de la vidéo créée (avec 'slug', 'url').
@@ -408,9 +443,9 @@ class PodAPI:
         ]
         if description:
             base_fields.append(("description", description))
-        for url in (additional_owner_urls or []):
+        for url in additional_owner_urls or []:
             base_fields.append(("additional_owners", url))
-        for url in (site_urls or []):
+        for url in site_urls or []:
             base_fields.append(("sites", url))
         filename = os.path.basename(file_path)
 
@@ -436,15 +471,23 @@ class PodAPI:
 
                     monitor = MultipartEncoderMonitor(encoder, _cb)
                     headers = {"Content-Type": monitor.content_type}
-                    r = self.session.post(f"{self.rest}/videos/", data=monitor,
-                                         headers=headers, timeout=UPLOAD_TIMEOUT,
-                                         verify=self.verify_ssl)
+                    r = self.session.post(
+                        f"{self.rest}/videos/",
+                        data=monitor,
+                        headers=headers,
+                        timeout=UPLOAD_TIMEOUT,
+                        verify=self.verify_ssl,
+                    )
                 else:
                     files = {"video": (filename, f, "application/octet-stream")}
                     data = {k: v for k, v in fields if k != "video"}
-                    r = self.session.post(f"{self.rest}/videos/", data=data,
-                                         files=files, timeout=UPLOAD_TIMEOUT,
-                                         verify=self.verify_ssl)
+                    r = self.session.post(
+                        f"{self.rest}/videos/",
+                        data=data,
+                        files=files,
+                        timeout=UPLOAD_TIMEOUT,
+                        verify=self.verify_ssl,
+                    )
                 return self._json(r)
             finally:
                 f.close()
@@ -467,12 +510,15 @@ class PodAPI:
                 if attempt < max_retries:
                     if retry_cb:
                         retry_cb(attempt, max_retries, str(e)[:120])
-                    time.sleep(2 * attempt)     # petite pause croissante avant de réessayer
+                    time.sleep(2 * attempt)  # petite pause croissante avant de réessayer
                     continue
                 # Plus de tentatives : on remonte une erreur explicite
                 raise PodAPIError(
                     f"Échec après {max_retries} tentatives (coupure réseau/SSL). "
-                    f"Dernière erreur : {e}", 0, str(e))
+                    f"Dernière erreur : {e}",
+                    0,
+                    str(e),
+                )
         # Ne devrait pas être atteint
         raise PodAPIError(f"Échec de l'envoi : {last_err}", 0, str(last_err))
 
@@ -486,8 +532,9 @@ class PodAPI:
     def set_additional_owners(self, video, owner_urls: list[str]) -> dict:
         """Remplace la liste des propriétaires additionnels d'une vidéo
         (réf = dict vidéo, URL, id ou slug)."""
-        return self._patch(self._video_endpoint(video),
-                           json={"additional_owners": list(owner_urls)})
+        return self._patch(
+            self._video_endpoint(video), json={"additional_owners": list(owner_urls)}
+        )
 
     def set_disciplines(self, video, discipline_urls: list[str]) -> dict:
         """Remplace les disciplines d'une vidéo (réf = dict, URL, id ou slug).
@@ -496,13 +543,13 @@ class PodAPI:
         discipline. Établi par sonde — les vidéos renvoient `discipline: []`,
         une liste vide, qui ne se confond pas avec une absence de valeur.
         """
-        return self._patch(self._video_endpoint(video),
-                           json={"discipline": list(discipline_urls)})
+        return self._patch(self._video_endpoint(video), json={"discipline": list(discipline_urls)})
 
     # ── 6. Contributeurs (crédits) ────────────────────────────────────────
 
-    def add_contributor(self, video_url: str, name: str, email: str = "",
-                       role: str = "author", weblink: str = "") -> dict:
+    def add_contributor(
+        self, video_url: str, name: str, email: str = "", role: str = "author", weblink: str = ""
+    ) -> dict:
         """Ajoute un contributeur (crédit libre) à une vidéo."""
         data = {
             "video": video_url,
@@ -511,8 +558,9 @@ class PodAPI:
             "role": role,
             "weblink": weblink,
         }
-        r = self.session.post(f"{self.rest}/contributors/", data=data,
-                            timeout=30, verify=self.verify_ssl)
+        r = self.session.post(
+            f"{self.rest}/contributors/", data=data, timeout=30, verify=self.verify_ssl
+        )
         return self._json(r)
 
     def get_contributors(self, video_id: int) -> list[dict]:
@@ -539,9 +587,12 @@ class PodAPI:
     # Champs de statut utiles : encoded, encoding_in_progress,
     #                           get_encoding_step, is_draft, duration.
 
-    def get_all_videos(self, max_pages: int = 300,
-                       progress_cb: Optional[Callable[[int], None]] = None,
-                       extra_params: dict | None = None) -> list[dict]:
+    def get_all_videos(
+        self,
+        max_pages: int = 300,
+        progress_cb: Callable[[int], None] | None = None,
+        extra_params: dict | None = None,
+    ) -> list[dict]:
         """Scan complet de l'instance (paginé). progress_cb(nb_cumulé) optionnel."""
         return self._paginate("/videos/", extra_params, max_pages, progress_cb)
 
@@ -580,12 +631,12 @@ class PodAPI:
         """Construit l'URL de détail d'une vidéo à partir d'une référence souple."""
         if isinstance(ref, dict):
             if ref.get("url"):
-                return ref["url"]                 # URL absolue donnée par l'API
-            ref = ref.get("id")                   # repli sur l'id numérique
+                return ref["url"]  # URL absolue donnée par l'API
+            ref = ref.get("id")  # repli sur l'id numérique
         s = str(ref)
         if s.startswith("http"):
-            return s                              # déjà une URL absolue
-        return f"/videos/{s}/"                     # id numérique (ou slug en dernier recours)
+            return s  # déjà une URL absolue
+        return f"/videos/{s}/"  # id numérique (ou slug en dernier recours)
 
     def get_video(self, video) -> dict:
         """Détail d'une vidéo (réf = dict vidéo, URL, id ou slug)."""
@@ -596,10 +647,15 @@ class PodAPI:
         Les relations (owner, channel…) sont des URLs ou des listes d'URLs."""
         return self._patch(self._video_endpoint(video), json=payload)
 
-    def replace_video_file(self, video, file_path: str, *,
-                           progress_cb: Optional[Callable[[int, int], None]] = None,
-                           retry_cb: Optional[Callable[[int, int, str], None]] = None,
-                           max_retries: int = 3) -> dict:
+    def replace_video_file(
+        self,
+        video,
+        file_path: str,
+        *,
+        progress_cb: Callable[[int, int], None] | None = None,
+        retry_cb: Callable[[int, int, str], None] | None = None,
+        max_retries: int = 3,
+    ) -> dict:
         """Remplace le fichier source d'une vidéo EXISTANTE (champ `video`,
         modifiable d'après l'OPTIONS) par PATCH multipart streamé. Garde le
         slug, le titre, les chaînes, les droits… seul le média change.
@@ -627,12 +683,18 @@ class PodAPI:
 
                     monitor = MultipartEncoderMonitor(encoder, _cb)
                     headers = {"Content-Type": monitor.content_type}
-                    r = self.session.patch(target, data=monitor, headers=headers,
-                                           timeout=UPLOAD_TIMEOUT, verify=self.verify_ssl)
+                    r = self.session.patch(
+                        target,
+                        data=monitor,
+                        headers=headers,
+                        timeout=UPLOAD_TIMEOUT,
+                        verify=self.verify_ssl,
+                    )
                 else:
                     files = {"video": (filename, f, "application/octet-stream")}
-                    r = self.session.patch(target, files=files,
-                                           timeout=UPLOAD_TIMEOUT, verify=self.verify_ssl)
+                    r = self.session.patch(
+                        target, files=files, timeout=UPLOAD_TIMEOUT, verify=self.verify_ssl
+                    )
                 return self._json(r)
             finally:
                 f.close()
@@ -654,15 +716,19 @@ class PodAPI:
                     continue
                 raise PodAPIError(
                     f"Échec après {max_retries} tentatives (coupure réseau/SSL). "
-                    f"Dernière erreur : {e}", 0, str(e))
+                    f"Dernière erreur : {e}",
+                    0,
+                    str(e),
+                )
         # Garde-fou : inatteignable tant que max_retries >= 1, mais sans lui la
         # fonction renverrait None en silence si la boucle ne s'exécutait pas —
         # l'appelant croirait le remplacement réussi. (Même garde-fou que
         # `upload_video`, dont cette fonction est la jumelle.)
         raise PodAPIError("Remplacement impossible : aucune tentative effectuée.", 0, "")
 
-    def set_video_owner(self, video, owner_url: str,
-                        additional_owner_urls: Optional[list[str]] = None) -> dict:
+    def set_video_owner(
+        self, video, owner_url: str, additional_owner_urls: list[str] | None = None
+    ) -> dict:
         """Réaffecte le propriétaire (et, en option, les co-propriétaires)."""
         payload: dict = {"owner": owner_url}
         if additional_owner_urls is not None:
@@ -677,8 +743,9 @@ class PodAPI:
         """Bascule l'accès restreint (connexion requise) d'une vidéo."""
         return self.patch_video(video, {"is_restricted": bool(value)})
 
-    def get_access_groups(self, arret_apres: int = 20, use_cache: bool = True,
-                          max_id_absolu: int = 500) -> list[dict]:
+    def get_access_groups(
+        self, arret_apres: int = 20, use_cache: bool = True, max_id_absolu: int = 500
+    ) -> list[dict]:
         """Récupère les groupes d'accès AVEC leur URL adressable.
 
         Particularité de l'API Pod : la liste /accessgroups/ n'expose ni `id`
@@ -711,8 +778,9 @@ class PodAPI:
             """Interroge /accessgroups/<n>/ ; renvoie le groupe ou None."""
             url = f"{self.rest}/accessgroups/{n}/"
             try:
-                r = self.session.get(url, headers={"Accept": "application/json"},
-                                     timeout=15, verify=self.verify_ssl)
+                r = self.session.get(
+                    url, headers={"Accept": "application/json"}, timeout=15, verify=self.verify_ssl
+                )
             except Exception:
                 return None
             if r.status_code != 200:
@@ -726,7 +794,7 @@ class PodAPI:
                     "code_name": g.get("code_name"),
                     "display_name": g.get("display_name") or g.get("code_name"),
                     "url": url,
-                    "users": g.get("users") or [],     # membres (URLs /owners/)
+                    "users": g.get("users") or [],  # membres (URLs /owners/)
                     "sites": g.get("sites") or [],
                 }
             return None
@@ -737,10 +805,13 @@ class PodAPI:
         # numérotation s'arrête — c'est exact, et bien plus économe.
         attendus = None
         try:
-            r = self.session.get(f"{self.rest}/accessgroups/",
-                                 params={"limit": 1000},
-                                 headers={"Accept": "application/json"},
-                                 timeout=20, verify=self.verify_ssl)
+            r = self.session.get(
+                f"{self.rest}/accessgroups/",
+                params={"limit": 1000},
+                headers={"Accept": "application/json"},
+                timeout=20,
+                verify=self.verify_ssl,
+            )
             if r.status_code == 200:
                 d = r.json()
                 if isinstance(d, dict):
@@ -750,12 +821,12 @@ class PodAPI:
                 elif isinstance(d, list):
                     attendus = len(d)
         except Exception:
-            attendus = None      # endpoint indisponible → on retombe sur l'heuristique
+            attendus = None  # endpoint indisponible → on retombe sur l'heuristique
 
         groups = []
         echecs_consecutifs = 0
         n = 1
-        PAQUET = 20          # sondes menées de front
+        PAQUET = 20  # sondes menées de front
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             while n <= max_id_absolu:
@@ -800,7 +871,7 @@ class PodAPI:
             "is_restricted": bool(urls),
         }
         if urls:
-            payload["is_draft"] = False     # publier : un brouillon resterait invisible
+            payload["is_draft"] = False  # publier : un brouillon resterait invisible
         return self.patch_video(video, payload)
 
     # — Gestion complète des groupes d'accès (création / membres / suppression) —
@@ -813,9 +884,13 @@ class PodAPI:
         l'URL /owners/ attendue par le champ `users` d'un groupe."""
         mapping, url, params, pages = {}, f"{self.rest}/owners/", {"limit": 100}, 0
         while url and pages < max_pages:
-            r = self.session.get(url, params=(params if pages == 0 else None),
-                                 headers={"Accept": "application/json"},
-                                 timeout=30, verify=self.verify_ssl)
+            r = self.session.get(
+                url,
+                params=(params if pages == 0 else None),
+                headers={"Accept": "application/json"},
+                timeout=30,
+                verify=self.verify_ssl,
+            )
             d = self._json(r)
             items = d.get("results", []) if isinstance(d, dict) else (d or [])
             for o in items:
@@ -830,14 +905,15 @@ class PodAPI:
         self.last_scan_truncated = bool(url)
         return mapping
 
-    def get_access_group(self, code_name: str, max_id: int = 80) -> Optional[dict]:
+    def get_access_group(self, code_name: str, max_id: int = 80) -> dict | None:
         """Récupère un groupe d'accès complet (avec son URL adressable) par son
         code_name, en sondant les routes de détail /accessgroups/<id>/."""
         for n in range(1, max_id + 1):
             url = f"{self.rest}/accessgroups/{n}/"
             try:
-                r = self.session.get(url, headers={"Accept": "application/json"},
-                                     timeout=15, verify=self.verify_ssl)
+                r = self.session.get(
+                    url, headers={"Accept": "application/json"}, timeout=15, verify=self.verify_ssl
+                )
             except Exception:
                 continue
             if r.status_code != 200:
@@ -851,9 +927,13 @@ class PodAPI:
                 return g
         return None
 
-    def create_access_group(self, code_name: str, site_urls: list[str],
-                            display_name: str = "",
-                            owner_urls: Optional[list[str]] = None) -> dict:
+    def create_access_group(
+        self,
+        code_name: str,
+        site_urls: list[str],
+        display_name: str = "",
+        owner_urls: list[str] | None = None,
+    ) -> dict:
         """Crée un groupe d'accès (POST). `code_name` et `sites` sont requis ;
         `users` (au format /owners/) peuvent être fournis dès la création."""
         body = {
@@ -863,9 +943,13 @@ class PodAPI:
         }
         if owner_urls:
             body["users"] = list(owner_urls)
-        r = self.session.post(f"{self.rest}/accessgroups/", json=body,
-                              headers={"Accept": "application/json"},
-                              timeout=30, verify=self.verify_ssl)
+        r = self.session.post(
+            f"{self.rest}/accessgroups/",
+            json=body,
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         # Un groupe de plus : le cache reconstruit par sondage est périmé.
         self.invalidate_access_groups_cache()
         return self._json(r)
@@ -873,9 +957,13 @@ class PodAPI:
     def set_access_group_members(self, group_url: str, owner_urls: list[str]) -> dict:
         """Remplace la liste des membres d'un groupe (PATCH du champ `users`,
         au format /owners/<id>/)."""
-        r = self.session.patch(self._abs(group_url), json={"users": list(owner_urls)},
-                               headers={"Accept": "application/json"},
-                               timeout=30, verify=self.verify_ssl)
+        r = self.session.patch(
+            self._abs(group_url),
+            json={"users": list(owner_urls)},
+            headers={"Accept": "application/json"},
+            timeout=30,
+            verify=self.verify_ssl,
+        )
         # Les membres font partie des données mises en cache : à rafraîchir.
         self.invalidate_access_groups_cache()
         return self._json(r)
@@ -885,8 +973,9 @@ class PodAPI:
         self.invalidate_access_groups_cache()  # un groupe de moins : cache périmé
         return self._delete(group_url)
 
-    def assign_video_to_channels(self, video, channel_urls: list[str],
-                                 theme_urls: Optional[list[str]] = None) -> dict:
+    def assign_video_to_channels(
+        self, video, channel_urls: list[str], theme_urls: list[str] | None = None
+    ) -> dict:
         """Place une vidéo dans une/des chaîne(s) (et thème(s)) — champs M2M."""
         payload: dict = {"channel": list(channel_urls)}
         if theme_urls is not None:
@@ -902,14 +991,12 @@ class PodAPI:
     @staticmethod
     def is_unencoded(video: dict) -> bool:
         """Vidéo jamais encodée et pas en cours d'encodage."""
-        return (not video.get("encoded", False)
-                and not video.get("encoding_in_progress", False))
+        return not video.get("encoded", False) and not video.get("encoding_in_progress", False)
 
     @staticmethod
     def is_stale_draft(video: dict, before_iso: str) -> bool:
         """Brouillon dont la date d'ajout est antérieure à before_iso (AAAA-MM-JJ)."""
-        return bool(video.get("is_draft")) and \
-            str(video.get("date_added", ""))[:10] < before_iso
+        return bool(video.get("is_draft")) and str(video.get("date_added", ""))[:10] < before_iso
 
     # ── C. Chaînes & thèmes ───────────────────────────────────────────────
     # Diagnostic : POST autorisé. Chaîne requiert title + themes ;
@@ -920,10 +1007,17 @@ class PodAPI:
         """Liste tous les thèmes (paginé)."""
         return self._paginate("/themes/", {"limit": 300})
 
-    def create_channel(self, title: str, theme_urls: Optional[list[str]] = None, *,
-                       description: str = "", visible: bool = True,
-                       site_url: Optional[str] = None,
-                       owner_urls: Optional[list[str]] = None, **extra) -> dict:
+    def create_channel(
+        self,
+        title: str,
+        theme_urls: list[str] | None = None,
+        *,
+        description: str = "",
+        visible: bool = True,
+        site_url: str | None = None,
+        owner_urls: list[str] | None = None,
+        **extra,
+    ) -> dict:
         """Crée une chaîne. 'themes' est requis par l'API (liste, vide si aucune)."""
         payload: dict = {"title": title, "themes": list(theme_urls or [])}
         if description:
@@ -990,8 +1084,7 @@ class PodAPI:
         """Liste les dossiers de rangement des images (champ obligatoire au dépôt)."""
         return self._paginate("/folders/", {"limit": 100}, max_pages=max_pages)
 
-    def upload_image(self, file_path: str, name: str, folder_url: str,
-                     created_by_url: str) -> dict:
+    def upload_image(self, file_path: str, name: str, folder_url: str, created_by_url: str) -> dict:
         """Dépose une image sur l'instance et renvoie sa description.
 
         L'API exige QUATRE champs (vérifié par sonde sur l'instance) :
@@ -1017,9 +1110,13 @@ class PodAPI:
                 "folder": folder_url,
                 "created_by": created_by_url,
             }
-            r = self.session.post(f"{self.rest}/images/", files=fichiers,
-                                  data=donnees, timeout=120,
-                                  verify=self.verify_ssl)
+            r = self.session.post(
+                f"{self.rest}/images/",
+                files=fichiers,
+                data=donnees,
+                timeout=120,
+                verify=self.verify_ssl,
+            )
         return self._json(r)
 
     def set_channel_headband(self, channel, image_url: str) -> dict:
@@ -1035,9 +1132,15 @@ class PodAPI:
         ep = channel if str(channel).startswith("http") else f"/channels/{channel}/"
         return self._patch(ep, json=payload)
 
-    def create_theme(self, title: str, channel_url: str, *,
-                     parent_url: Optional[str] = None,
-                     description: str = "", **extra) -> dict:
+    def create_theme(
+        self,
+        title: str,
+        channel_url: str,
+        *,
+        parent_url: str | None = None,
+        description: str = "",
+        **extra,
+    ) -> dict:
         """Crée un thème rattaché à une chaîne (channel_url). parent_url = sous-thème."""
         payload: dict = {"title": title, "channel": channel_url}
         if parent_url:
@@ -1096,29 +1199,36 @@ class PodAPI:
         created = self._post("/folders/", json={"name": name, "owner": owner_url})
         return created.get("url")
 
-    def upload_subtitle_file(self, folder_url: str, name: str, vtt_bytes: bytes,
-                             filename: str, created_by_url: str) -> dict:
+    def upload_subtitle_file(
+        self, folder_url: str, name: str, vtt_bytes: bytes, filename: str, created_by_url: str
+    ) -> dict:
         """Téléverse un fichier .vtt (en mémoire) dans un dossier, via POST
         multipart sur /rest/files/. Renvoie le fichier créé (avec son `url`)."""
         # multipart : le binaire dans `files`, les champs relationnels dans `data`
         files = {"file": (filename, vtt_bytes, "text/vtt")}
         data = {"folder": folder_url, "name": name, "created_by": created_by_url}
-        r = self.session.post(self._abs("/files/"), data=data, files=files,
-                              headers={"Accept": "application/json"},
-                              timeout=120, verify=self.verify_ssl)
+        r = self.session.post(
+            self._abs("/files/"),
+            data=data,
+            files=files,
+            headers={"Accept": "application/json"},
+            timeout=120,
+            verify=self.verify_ssl,
+        )
         return self._json(r)
 
-    def add_track(self, video, lang: str, kind: str = "subtitles",
-                  file_url: Optional[str] = None) -> dict:
+    def add_track(
+        self, video, lang: str, kind: str = "subtitles", file_url: str | None = None
+    ) -> dict:
         """Crée une piste sur /rest/tracks/ liant une vidéo à un fichier de
         sous-titres. kind ∈ {subtitles, captions} ; lang = code ISO (fr, en…)."""
         payload: dict = {
-            "video": self._video_endpoint(video),   # URL absolue de la vidéo
+            "video": self._video_endpoint(video),  # URL absolue de la vidéo
             "lang": lang,
             "kind": kind,
         }
         if file_url:
-            payload["src"] = file_url                # URL du fichier /files/<id>/
+            payload["src"] = file_url  # URL du fichier /files/<id>/
         return self._post("/tracks/", json=payload)
 
     def delete_track(self, track) -> bool:
@@ -1141,11 +1251,10 @@ class PodAPI:
 
         # Conversion / validation selon l'extension
         if file_path.lower().endswith(".srt"):
-            text = srt_to_vtt(text)                       # SRT -> WebVTT
+            text = srt_to_vtt(text)  # SRT -> WebVTT
         elif not text.lstrip().startswith("WEBVTT"):
             # Garde-fou : un .vtt valide commence par l'en-tête WEBVTT
-            raise PodAPIError("Fichier .vtt invalide : il doit commencer par "
-                              "l'en-tête « WEBVTT ».")
+            raise PodAPIError("Fichier .vtt invalide : il doit commencer par l'en-tête « WEBVTT ».")
         vtt_bytes = text.encode("utf-8")
 
         # 2) Dossier de la vidéo (= son slug), appartenant à SON propriétaire
@@ -1157,9 +1266,9 @@ class PodAPI:
 
         # 3) Téléversement du .vtt (nom à la convention Pod : subtitle_<lang>_<horodatage>)
         from datetime import datetime
+
         name = f"subtitle_{lang}_{datetime.now():%Y%m%d-%H%M%S}"
-        f = self.upload_subtitle_file(folder_url, name, vtt_bytes,
-                                      name + ".vtt", owner_url)
+        f = self.upload_subtitle_file(folder_url, name, vtt_bytes, name + ".vtt", owner_url)
 
         # 4) Création de la piste qui référence le fichier téléversé
         return self.add_track(video, lang, kind, f.get("url"))
@@ -1194,20 +1303,24 @@ class PodAPI:
         """Pistes de sous-titres de la vidéo : [{url, lang, kind, src}…]."""
         return self._de_la_video(self._paginate("/tracks/", {"video": video["id"]}), video)
 
-    def mp3(self, video: dict) -> Optional[str]:
+    def mp3(self, video: dict) -> str | None:
         """Adresse du MP3 encodé par Pod : celle qu'on donne à Aristote."""
-        for e in self._de_la_video(self._paginate("/encodings_audio/",
-                                                  {"video": video["id"]}), video):
+        for e in self._de_la_video(
+            self._paginate("/encodings_audio/", {"video": video["id"]}), video
+        ):
             if e.get("encoding_format") == "audio/mp3" and e.get("source_file"):
                 return e["source_file"]
         return None
 
-    def mp4(self, video: dict) -> Optional[str]:
+    def mp4(self, video: dict) -> str | None:
         """Adresse d'un MP4 lisible par le navigateur, 720p de préférence."""
-        mp4 = {e.get("name"): e.get("source_file")
-               for e in self._de_la_video(self._paginate("/encodings_video/",
-                                                         {"video": video["id"]}), video)
-               if e.get("encoding_format") == "video/mp4" and e.get("source_file")}
+        mp4 = {
+            e.get("name"): e.get("source_file")
+            for e in self._de_la_video(
+                self._paginate("/encodings_video/", {"video": video["id"]}), video
+            )
+            if e.get("encoding_format") == "video/mp4" and e.get("source_file")
+        }
         for nom in ("720p", "360p", "1080p"):
             if mp4.get(nom):
                 return mp4[nom]
@@ -1233,21 +1346,34 @@ class PodAPI:
         fichier = self._get(piste["src"])
         r = self._lire_fichier(fichier.get("file", ""))
         if r.status_code != 200:
-            raise PodAPIError(f"Fichier de sous-titres illisible (HTTP {r.status_code}).",
-                              status=r.status_code)
+            raise PodAPIError(
+                f"Fichier de sous-titres illisible (HTTP {r.status_code}).", status=r.status_code
+            )
         r.encoding = "utf-8"
         return r.text
 
     def references(self) -> dict:
         """Correspondance titre -> URL des disciplines et des types."""
-        return {"disciplines": {d["title"]: d["url"] for d in self.get_disciplines()
-                                if d.get("title") and d.get("url")},
-                "types": {t["title"]: t["url"] for t in self.get_types()
-                          if t.get("title") and t.get("url")}}
+        return {
+            "disciplines": {
+                d["title"]: d["url"]
+                for d in self.get_disciplines()
+                if d.get("title") and d.get("url")
+            },
+            "types": {
+                t["title"]: t["url"] for t in self.get_types() if t.get("title") and t.get("url")
+            },
+        }
 
-    def publier_piste(self, video: dict, lang: str, kind: str, vtt: str,
-                      remplacer: Optional[dict] = None,
-                      dossier_sauvegarde: Optional[str] = None) -> dict:
+    def publier_piste(
+        self,
+        video: dict,
+        lang: str,
+        kind: str,
+        vtt: str,
+        remplacer: dict | None = None,
+        dossier_sauvegarde: str | None = None,
+    ) -> dict:
         """Dépose une piste. Renvoie {piste, fichier, sauvegarde, remplacee,
         fichier_supprime, avertissement}.
 
@@ -1266,18 +1392,22 @@ class PodAPI:
         langue + type (le formulaire de Pod, si) : c'est à nous de l'assurer.
         """
         from datetime import datetime
+
         if kind not in ("subtitles", "captions"):
             raise PodAPIError(f"Type de piste inconnu : {kind}")
         if not vtt.lstrip().startswith("WEBVTT"):
             raise PodAPIError("Le contenu n'est pas un fichier WebVTT.")
 
-        actuelles = [t for t in self.pistes(video)
-                     if t.get("lang") == lang and t.get("kind") == kind]
+        actuelles = [
+            t for t in self.pistes(video) if t.get("lang") == lang and t.get("kind") == kind
+        ]
         attendu = {remplacer["url"]} if remplacer else set()
         if {t.get("url") for t in actuelles} != attendu:
-            raise PodAPIError(f"Les pistes « {lang} / {kind} » ont changé sur Pod depuis "
-                              "l'ouverture. Rouvrez la fenêtre de publication pour voir "
-                              "leur état actuel.")
+            raise PodAPIError(
+                f"Les pistes « {lang} / {kind} » ont changé sur Pod depuis "
+                "l'ouverture. Rouvrez la fenêtre de publication pour voir "
+                "leur état actuel."
+            )
 
         # 1. Sauvegarde de l'ancienne piste, sur le poste, AVANT toute modification.
         sauvegarde = ""
@@ -1286,15 +1416,17 @@ class PodAPI:
             dossier = dossier_sauvegarde or "."
             os.makedirs(dossier, exist_ok=True)
             sauvegarde = os.path.join(
-                dossier, f"ancienne_piste_{lang}_{kind}_{datetime.now():%Y%m%d-%H%M%S}.vtt")
+                dossier, f"ancienne_piste_{lang}_{kind}_{datetime.now():%Y%m%d-%H%M%S}.vtt"
+            )
             with open(sauvegarde, "w", encoding="utf-8", newline="\n") as f:
                 f.write(ancien)
 
         # 2. Nouveau fichier, à la convention de Pod : subtitle_<lang>_<horodatage>.
         nom = f"subtitle_{lang}_{datetime.now():%Y%m%d-%H%M%S}"
         dossier_pod = self.find_or_create_folder(video["slug"], video["owner"])
-        fichier = self.upload_subtitle_file(dossier_pod, nom, vtt.encode("utf-8"),
-                                            nom + ".vtt", video["owner"])
+        fichier = self.upload_subtitle_file(
+            dossier_pod, nom, vtt.encode("utf-8"), nom + ".vtt", video["owner"]
+        )
 
         # 3. Remplacement : l'ancienne piste disparaît juste avant la création
         #    de la nouvelle (une seule piste par langue et par type).
@@ -1319,9 +1451,14 @@ class PodAPI:
                 fichier_supprime = remplacer["src"]
             except Exception as e:
                 avertissement = f"ancien fichier non supprimé de Pod : {e}"
-        return {"piste": piste, "fichier": fichier, "sauvegarde": sauvegarde,
-                "remplacee": remplacer["url"] if remplacer else "",
-                "fichier_supprime": fichier_supprime, "avertissement": avertissement}
+        return {
+            "piste": piste,
+            "fichier": fichier,
+            "sauvegarde": sauvegarde,
+            "remplacee": remplacer["url"] if remplacer else "",
+            "fichier_supprime": fichier_supprime,
+            "avertissement": avertissement,
+        }
 
     # Formats constatés sur la production :
     #   • title : texte, 250 caractères au plus, obligatoire ;
@@ -1330,7 +1467,7 @@ class PodAPI:
     #     espaces, expressions entre guillemets : ohris "planning ohris" ;
     #   • discipline : liste d'URL ; type : URL d'un type, obligatoire.
 
-    def metadonnees(self, video: dict, refs: Optional[dict] = None) -> dict:
+    def metadonnees(self, video: dict, refs: dict | None = None) -> dict:
         """Métadonnées actuelles, sous forme lisible (texte, listes, titres)."""
         refs = refs or self.references()
         par_url_d = {u: t for t, u in refs["disciplines"].items()}
@@ -1354,8 +1491,10 @@ class PodAPI:
         for champ in nouveau:
             cle = "disciplines" if champ == "ajout_discipline" else champ
             if actuel.get(cle) != avant.get(cle):
-                raise PodAPIError(f"« {cle} » a changé sur Pod depuis l'ouverture de la "
-                                  "fenêtre. Rouvrez-la pour voir l'état actuel.")
+                raise PodAPIError(
+                    f"« {cle} » a changé sur Pod depuis l'ouverture de la "
+                    "fenêtre. Rouvrez-la pour voir l'état actuel."
+                )
         corps: dict = {}
         if "titre" in nouveau:
             t = str(nouveau["titre"]).strip()
@@ -1395,25 +1534,29 @@ class PodAPI:
 
     def allowed_methods(self, endpoint: str) -> str:
         """En-tête Allow (méthodes HTTP autorisées) d'un endpoint."""
-        r = self.session.options(self._abs(endpoint),
-                             headers={"Accept": "application/json"},
-                             timeout=20, verify=self.verify_ssl)
+        r = self.session.options(
+            self._abs(endpoint),
+            headers={"Accept": "application/json"},
+            timeout=20,
+            verify=self.verify_ssl,
+        )
         return r.headers.get("Allow", "")
 
 
 # ── Enrichissement IA : conversions et lien (repris de SousTitreur) ───────
 
-def identifiant_depuis_lien(texte: str) -> Optional[int]:
+
+def identifiant_depuis_lien(texte: str) -> int | None:
     """« https://…/video/0019-mon-titre/ », « 0019-mon-titre » ou « 19 » -> 19."""
     t = str(texte or "").strip()
-    m = (re.search(r"/video(?:_[a-z]+)?/0*(\d+)-", t)
-         or re.fullmatch(r"0*(\d+)(?:-[\w-]*)?/?", t))
+    m = re.search(r"/video(?:_[a-z]+)?/0*(\d+)-", t) or re.fullmatch(r"0*(\d+)(?:-[\w-]*)?/?", t)
     return int(m[1]) if m else None
 
 
 def html_vers_texte(html: str) -> str:
     """Description HTML de Pod -> texte lisible (un paragraphe par ligne)."""
     import html as h
+
     t = re.sub(r"(?i)<br\s*/?>", "\n", html)
     t = re.sub(r"(?i)</p\s*>", "\n\n", t)
     t = h.unescape(re.sub(r"<[^>]+>", "", t))
@@ -1423,9 +1566,11 @@ def html_vers_texte(html: str) -> str:
 def texte_vers_html(texte: str) -> str:
     """Texte -> paragraphes HTML, comme l'éditeur de description de Pod."""
     import html as h
+
     paragraphes = [p.strip() for p in re.split(r"\n\s*\n", texte.replace("\r", "")) if p.strip()]
-    return "\n\n".join("<p>" + h.escape(p, quote=False).replace("\n", "<br>") + "</p>"
-                       for p in paragraphes)
+    return "\n\n".join(
+        "<p>" + h.escape(p, quote=False).replace("\n", "<br>") + "</p>" for p in paragraphes
+    )
 
 
 def tags_depuis_pod(tags: str) -> list[str]:
@@ -1451,8 +1596,15 @@ def tags_vers_pod(mots: list[str], limite: int = 255) -> tuple[str, list[str]]:
 
 # Rôles de contributeur usuels dans Esup-Pod
 CONTRIBUTOR_ROLES = [
-    "author", "actor", "designer", "consultant",
-    "editor", "speaker", "soundman", "writer", "publisher",
+    "author",
+    "actor",
+    "designer",
+    "consultant",
+    "editor",
+    "speaker",
+    "soundman",
+    "writer",
+    "publisher",
 ]
 
 
@@ -1476,10 +1628,18 @@ def srt_to_vtt(text: str) -> str:
 # ── Sous-titres : langues acceptées par l'API (code ISO -> libellé) ───────
 # Sous-ensemble usuel (l'API en accepte beaucoup plus ; voir verifier_tracks.py).
 SUBTITLE_LANGS = [
-    ("fr", "Français"), ("en", "Anglais"), ("es", "Espagnol"),
-    ("de", "Allemand"), ("it", "Italien"), ("pt", "Portugais"),
-    ("ar", "Arabe"), ("zh", "Chinois"), ("ru", "Russe"),
-    ("ja", "Japonais"), ("nl", "Hollandais"), ("ca", "Catalan"),
+    ("fr", "Français"),
+    ("en", "Anglais"),
+    ("es", "Espagnol"),
+    ("de", "Allemand"),
+    ("it", "Italien"),
+    ("pt", "Portugais"),
+    ("ar", "Arabe"),
+    ("zh", "Chinois"),
+    ("ru", "Russe"),
+    ("ja", "Japonais"),
+    ("nl", "Hollandais"),
+    ("ca", "Catalan"),
     ("oc", "Occitan"),
 ]
 

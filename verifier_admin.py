@@ -23,22 +23,29 @@ endpoints d'admin renverront 403).
 Lancement :  python verifier_admin.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+__version__ = "0.1.0"
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
 
-import sys
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
 
 # Mots-clés repérant un champ lié au statut d'encodage (pour le module Nettoyage)
-ENCODING_HINTS = ("encod", "encoded", "is_video", "is_audio", "process",
-                  "draft", "duration", "transcript")
+ENCODING_HINTS = (
+    "encod",
+    "encoded",
+    "is_video",
+    "is_audio",
+    "process",
+    "draft",
+    "duration",
+    "transcript",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -117,16 +124,20 @@ def _all_true(results, *keys):
 # --------------------------------------------------------------------------- #
 def post_json(rest, ep, headers, payload):
     """POST JSON, renvoie (status, data|None)."""
-    r = requests.post(f"{rest}{ep}",
-                      headers={**headers, "Content-Type": "application/json"},
-                      json=payload, timeout=20)
+    r = requests.post(
+        f"{rest}{ep}",
+        headers={**headers, "Content-Type": "application/json"},
+        json=payload,
+        timeout=20,
+    )
     return r.status_code, (r.json() if r.text else None)
 
 
 def patch_json(url, headers, payload):
     """PATCH JSON sur une URL absolue, renvoie (status, data|None)."""
-    r = requests.patch(url, headers={**headers, "Content-Type": "application/json"},
-                       json=payload, timeout=20)
+    r = requests.patch(
+        url, headers={**headers, "Content-Type": "application/json"}, json=payload, timeout=20
+    )
     return r.status_code, (r.json() if r.text else None)
 
 
@@ -155,6 +166,7 @@ def live_write_test(rest, headers, results):
         return
 
     import time
+
     tag = f"ZZZ_TEST_PODADMIN_{int(time.time())}"  # nom unique et reconnaissable
     chan_url = None
     theme_url = None
@@ -176,7 +188,7 @@ def live_write_test(rest, headers, results):
         else:
             results["live_channel_create"] = False
             print(f"  ⛔ Création chaîne refusée (HTTP {st}) : {str(body)[:200]}")
-            return   # inutile de continuer sans chaîne
+            return  # inutile de continuer sans chaîne
 
         # 2) PATCH la chaîne (renommage)
         st, _ = patch_json(chan_url, headers, {"title": tag + "_MOD"})
@@ -184,8 +196,7 @@ def live_write_test(rest, headers, results):
         print(f"  {'✅' if results['live_channel_patch'] else '⛔'} PATCH chaîne → HTTP {st}")
 
         # 3) Créer un thème dans cette chaîne (champs requis : title + channel)
-        st, body = post_json(rest, "/themes/", headers,
-                             {"title": tag, "channel": chan_url})
+        st, body = post_json(rest, "/themes/", headers, {"title": tag, "channel": chan_url})
         if st in (200, 201) and isinstance(body, dict):
             theme_url = body.get("url")
             results["live_theme_create"] = True
@@ -206,7 +217,7 @@ def live_write_test(rest, headers, results):
             results["live_theme_delete"] = st in (200, 204)
             print(f"  {'✅' if results['live_theme_delete'] else '⛔'} DELETE thème → HTTP {st}")
             if results["live_theme_delete"]:
-                theme_url = None   # supprimé → plus rien à nettoyer
+                theme_url = None  # supprimé → plus rien à nettoyer
 
         # 6) DELETE la chaîne
         st = delete_req(chan_url, headers)
@@ -225,8 +236,7 @@ def live_write_test(rest, headers, results):
                     st = delete_req(u, headers)
                     print(f"  🧹 Nettoyage {kind} → HTTP {st}")
                 except Exception as e:
-                    print(f"  ⚠️  Nettoyage {kind} échoué ({e}). "
-                          f"À supprimer manuellement : {u}")
+                    print(f"  ⚠️  Nettoyage {kind} échoué ({e}). À supprimer manuellement : {u}")
 
 
 # --------------------------------------------------------------------------- #
@@ -296,22 +306,26 @@ def main():
         if rep:
             can_write = ("PATCH" in rep["allow"]) or ("PUT" in rep["allow"])
             staff_writable = field_is_writable(rep["actions"], "PUT", "is_staff")
-            print(f"     'is_staff' présent dans les champs ? "
-                  f"{'is_staff' in sample_user}")
+            print(f"     'is_staff' présent dans les champs ? {'is_staff' in sample_user}")
             print(f"     'is_staff' modifiable (non read_only) ? {staff_writable}")
             if can_write and staff_writable:
                 results["module_comptes"] = True
-                print("     → 🎯 Modifiable directement : "
-                      "PATCH /rest/users/<id>/ {\"is_staff\": true}")
+                print(
+                    '     → 🎯 Modifiable directement : PATCH /rest/users/<id>/ {"is_staff": true}'
+                )
             elif not can_write:
                 results["module_comptes"] = False
                 print("     → Endpoint utilisateurs en LECTURE SEULE.")
-                print("       Plan B : petite extension côté serveur Pod "
-                      "(sérialiseur + permission admin).")
+                print(
+                    "       Plan B : petite extension côté serveur Pod "
+                    "(sérialiseur + permission admin)."
+                )
             else:
                 results["module_comptes"] = None
-                print("     → PATCH permis mais 'is_staff' non modifiable. "
-                      "À confirmer dans l'interface /rest/.")
+                print(
+                    "     → PATCH permis mais 'is_staff' non modifiable. "
+                    "À confirmer dans l'interface /rest/."
+                )
     else:
         results["module_comptes"] = None
         print("   ⚠️  Pas d'utilisateur exploitable (token non superadmin ?).")
@@ -329,8 +343,7 @@ def main():
         print(f"   Champs exposés : {list(sample_video.keys())}")
 
         # Champs liés au statut d'encodage (pour le module Nettoyage)
-        enc_fields = [k for k in sample_video
-                      if any(h in k.lower() for h in ENCODING_HINTS)]
+        enc_fields = [k for k in sample_video if any(h in k.lower() for h in ENCODING_HINTS)]
         print(f"   Champs utiles au nettoyage : {enc_fields or '(aucun repéré)'}")
         for k in enc_fields:
             print(f"     • {k} = {sample_video.get(k)!r}")
@@ -369,8 +382,7 @@ def main():
             can_create = "POST" in rep["allow"] or bool(rep["actions"].get("POST"))
             print(f"     Création (POST) autorisée ? {can_create}")
             if rep["actions"].get("POST"):
-                req = [n for n, m in rep["actions"]["POST"].items()
-                       if m.get("required")]
+                req = [n for n, m in rep["actions"]["POST"].items() if m.get("required")]
                 print(f"     Champs requis à la création : {req}")
             results[f"module_{ep}"] = bool(can_create)
 
@@ -414,12 +426,14 @@ def main():
     # Résultats du test aller-retour réel, si l'utilisateur l'a lancé
     if any(k.startswith("live_") for k in results):
         print("\n  — Confirmation par test aller-retour réel —")
-        verdict("Chaîne : créer + modifier + supprimer",
-                _all_true(results, "live_channel_create",
-                          "live_channel_patch", "live_channel_delete"))
-        verdict("Thème : créer + modifier + supprimer",
-                _all_true(results, "live_theme_create",
-                          "live_theme_patch", "live_theme_delete"))
+        verdict(
+            "Chaîne : créer + modifier + supprimer",
+            _all_true(results, "live_channel_create", "live_channel_patch", "live_channel_delete"),
+        )
+        verdict(
+            "Thème : créer + modifier + supprimer",
+            _all_true(results, "live_theme_create", "live_theme_patch", "live_theme_delete"),
+        )
 
     print("\n  Inventaire / stats : toujours faisable (lecture seule), non testé ici.")
     print("=" * 70)

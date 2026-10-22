@@ -19,11 +19,11 @@ Ce script :
 100 % LECTURE SEULE (aucune modification). Token superutilisateur recommande.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import requests
 
@@ -96,8 +96,10 @@ def main():
 
     # 3) Isolation dans la page fautive
     if bad_offset is not None:
-        print(f"\n> 3. Isolation de la video fautive (entre offset {bad_offset} "
-              f"et {bad_offset + PAGE}) :")
+        print(
+            f"\n> 3. Isolation de la video fautive (entre offset {bad_offset} "
+            f"et {bad_offset + PAGE}) :"
+        )
         faulty = []
         probe_offset = bad_offset
         checked = 0

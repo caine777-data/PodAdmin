@@ -55,6 +55,7 @@ def charger_requests():
     """Importe « requests », en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -64,9 +65,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -104,15 +107,21 @@ def lister_types(sess, rest):
     for t in types:
         if isinstance(t, dict):
             site = t.get("site")
-            forme = ("liste" if isinstance(site, list)
-                     else "chaîne" if isinstance(site, str) else "absent")
-            print(f"      • {str(t.get('title', '?'))[:38]:40} "
-                  f"slug={str(t.get('slug', '?'))[:18]:20} site: {forme}")
+            forme = (
+                "liste"
+                if isinstance(site, list)
+                else "chaîne"
+                if isinstance(site, str)
+                else "absent"
+            )
+            print(
+                f"      • {str(t.get('title', '?'))[:38]:40} "
+                f"slug={str(t.get('slug', '?'))[:18]:20} site: {forme}"
+            )
 
     if types and isinstance(types[0], dict):
         print(f"\n   Champs lus : {', '.join(sorted(types[0].keys()))}")
-    return [(t.get("title", "?"), t.get("url", ""), t) for t in types
-            if isinstance(t, dict)]
+    return [(t.get("title", "?"), t.get("url", ""), t) for t in types if isinstance(t, dict)]
 
 
 def compter_videos(sess, rest, liste_types):
@@ -132,8 +141,10 @@ def compter_videos(sess, rest, liste_types):
         try:
             r = sess.get(url, params={"limit": 100} if pages == 0 else None, timeout=45)
             if r.status_code != 200:
-                print(f"   ⚠  Lecture interrompue (HTTP {r.status_code}) après "
-                      f"{len(videos)} vidéos : les comptes ci-dessous sont partiels.")
+                print(
+                    f"   ⚠  Lecture interrompue (HTTP {r.status_code}) après "
+                    f"{len(videos)} vidéos : les comptes ci-dessous sont partiels."
+                )
                 break
             data = r.json()
             if isinstance(data, dict):
@@ -175,29 +186,26 @@ def droits_ecriture(sess, rest, liste_types):
     print("  QUESTIONS 2 et 3 — création, renommage, suppression")
     print("=" * 70)
 
-    resultat = {"creer": False, "modifier": False, "supprimer": False,
-                "requis": [], "champs": []}
+    resultat = {"creer": False, "modifier": False, "supprimer": False, "requis": [], "champs": []}
 
     # — Création : OPTIONS sur la COLLECTION —
     try:
         r = sess.options(f"{rest}/types/", timeout=25)
         if r.status_code == 200:
-            actions = (r.json().get("actions") or {})
+            actions = r.json().get("actions") or {}
             post = actions.get("POST")
             if post:
                 resultat["creer"] = True
                 resultat["champs"] = sorted(post.keys())
                 resultat["requis"] = sorted(
-                    k for k, v in post.items()
-                    if v.get("required") and not v.get("read_only"))
+                    k for k, v in post.items() if v.get("required") and not v.get("read_only")
+                )
                 print(f"\n   ✏  CRÉATION POSSIBLE — {len(post)} champ(s) en écriture.")
                 print(f"      Champs modifiables  : {', '.join(resultat['champs'])}")
-                print(f"      Champs OBLIGATOIRES : "
-                      f"{', '.join(resultat['requis']) or '(aucun)'}")
+                print(f"      Champs OBLIGATOIRES : {', '.join(resultat['requis']) or '(aucun)'}")
                 if "site" in post:
                     print("\n      Champ « site » :")
-                    print("      " + json.dumps(post["site"], ensure_ascii=False,
-                                                indent=3)[:300])
+                    print("      " + json.dumps(post["site"], ensure_ascii=False, indent=3)[:300])
             else:
                 print("\n   👁  Création IMPOSSIBLE par l'API (pas d'action POST).")
         else:
@@ -217,7 +225,7 @@ def droits_ecriture(sess, rest, liste_types):
     try:
         r = sess.options(url_test, timeout=25)
         if r.status_code == 200:
-            actions = (r.json().get("actions") or {})
+            actions = r.json().get("actions") or {}
             if actions.get("PUT") or actions.get("PATCH"):
                 resultat["modifier"] = True
                 print("   ✏  RENOMMAGE POSSIBLE (PATCH ou PUT accepté).")
@@ -244,16 +252,19 @@ def synthese(droits, liste_types, comptes):
     print("  SYNTHÈSE — quel module peut-on construire ?")
     print("=" * 70 + "\n")
 
-    lignes = [("Créer un type", droits["creer"]),
-              ("Renommer un type", droits["modifier"]),
-              ("Supprimer un type", droits["supprimer"])]
+    lignes = [
+        ("Créer un type", droits["creer"]),
+        ("Renommer un type", droits["modifier"]),
+        ("Supprimer un type", droits["supprimer"]),
+    ]
     for libelle, ok in lignes:
         print(f"   {'✅' if ok else '⛔'}  {libelle}")
 
-    peuples = sum(1 for t in liste_types
-                  if comptes.get(str(t[1]).rstrip("/"), 0) > 0)
-    print(f"\n   {len(liste_types)} type(s) existant(s), dont {peuples} "
-          f"déjà utilisé(s) par des vidéos.")
+    peuples = sum(1 for t in liste_types if comptes.get(str(t[1]).rstrip("/"), 0) > 0)
+    print(
+        f"\n   {len(liste_types)} type(s) existant(s), dont {peuples} "
+        f"déjà utilisé(s) par des vidéos."
+    )
 
     print("\n   DÉCISION :\n")
     if droits["creer"] and droits["modifier"] and droits["supprimer"]:
@@ -285,8 +296,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Jeton : ").strip()
     if not token:
         print("[X] Jeton vide.")
@@ -294,8 +307,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 70}")
     print("  TYPES DE VIDÉO — gérables depuis PodAdmin ?")
@@ -316,6 +328,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

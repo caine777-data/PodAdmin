@@ -21,14 +21,13 @@ ne relance aucun encodage. Sans danger pour la production.
 Lancer avec un token SUPERUTILISATEUR :  python verifier_encodage.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+__version__ = "0.1.0"
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
-import json
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -45,12 +44,21 @@ CANDIDATE_ENCODE_ENDPOINTS = [
     "/encoding_jobs/",
     "/jobs/",
     "/encoding_video/",
-    "/launch_encode_view/",   # connu (lance un encodage) - on regarde juste son OPTIONS
+    "/launch_encode_view/",  # connu (lance un encodage) - on regarde juste son OPTIONS
 ]
 
 # Mots-cles reperant un champ lie a l'encodage dans une video
-ENCODE_HINTS = ("encod", "transcod", "step", "process", "job", "progress",
-                "is_video", "is_audio", "duration")
+ENCODE_HINTS = (
+    "encod",
+    "transcod",
+    "step",
+    "process",
+    "job",
+    "progress",
+    "is_video",
+    "is_audio",
+    "duration",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -123,8 +131,7 @@ def main():
     print("\n> 1. Champs d'encodage exposes par une video ...")
     sample = first_result(data)
     if sample:
-        enc_fields = [k for k in sample
-                      if any(h in k.lower() for h in ENCODE_HINTS)]
+        enc_fields = [k for k in sample if any(h in k.lower() for h in ENCODE_HINTS)]
         print(f"   Champs reperes : {enc_fields or '(aucun)'}")
         for k in enc_fields:
             print(f"     - {k} = {sample.get(k)!r}")
@@ -138,8 +145,13 @@ def main():
     found = []
     for ep in CANDIDATE_ENCODE_ENDPOINTS:
         status, data = get(f"{rest}{ep}", headers, {"limit": 1})
-        tag = {200: "[OK] existe", 401: "[401] auth", 403: "[403] interdit",
-               404: "[--] absent", None: "[err]"}.get(status, f"[{status}]")
+        tag = {
+            200: "[OK] existe",
+            401: "[401] auth",
+            403: "[403] interdit",
+            404: "[--] absent",
+            None: "[err]",
+        }.get(status, f"[{status}]")
         print(f"   {ep:22} -> {tag}")
         if status == 200:
             found.append(ep)
@@ -155,15 +167,17 @@ def main():
     print("\n> 3. Peut-on filtrer les videos par etat (cote serveur) ?")
     for label, params in [
         ("?encoding_in_progress=true", {"encoding_in_progress": "true", "limit": 1}),
-        ("?encoded=false",            {"encoded": "false", "limit": 1}),
-        ("?is_draft=false",           {"is_draft": "false", "limit": 1}),
+        ("?encoded=false", {"encoded": "false", "limit": 1}),
+        ("?is_draft=false", {"is_draft": "false", "limit": 1}),
     ]:
         status, data = get(f"{rest}/videos/", headers, params)
         cnt = data.get("count") if isinstance(data, dict) else "?"
         # Note : si le filtre est ignore, le count = total (signe qu'il ne filtre pas)
         print(f"   {label:30} -> HTTP {status}, count={cnt}")
-    print("   (si count == total a chaque fois, le filtre est ignore : "
-          "il faudra scanner et trier cote client)")
+    print(
+        "   (si count == total a chaque fois, le filtre est ignore : "
+        "il faudra scanner et trier cote client)"
+    )
 
     # ----------------------------------------------------------------- #
     # 4) Comptage par etat (sur un echantillon pagine raisonnable)
@@ -176,8 +190,9 @@ def main():
     pages = 0
     while url_page and pages < 5:
         try:
-            r = requests.get(url_page, params=(params if pages == 0 else None),
-                             headers=headers, timeout=30)
+            r = requests.get(
+                url_page, params=(params if pages == 0 else None), headers=headers, timeout=30
+            )
             d = r.json()
         except Exception as e:
             print(f"   [!] arret pagination : {e}")
@@ -195,15 +210,14 @@ def main():
             elif draft:
                 drafts += 1
             else:
-                failed += 1   # ni encodee, ni en cours, ni brouillon = suspecte
+                failed += 1  # ni encodee, ni en cours, ni brouillon = suspecte
         url_page = d.get("next") if isinstance(d, dict) else None
         pages += 1
 
     print(f"   Analysees : {seen}")
     print(f"     [OK]  encodees ............. {encoded}")
     print(f"     [..]  en cours d'encodage .. {in_progress}")
-    print(f"     [!!]  echec probable ....... {failed}  "
-          f"(ni encodee, ni en cours, ni brouillon)")
+    print(f"     [!!]  echec probable ....... {failed}  (ni encodee, ni en cours, ni brouillon)")
     print(f"     [DR]  brouillons non lances  {drafts}")
 
     # ----------------------------------------------------------------- #

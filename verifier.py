@@ -7,15 +7,14 @@ Lancement :  python verifier.py
 (ou double-clic sur le fichier si Python est associé aux .py)
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
-__license__     = "Usage interne — Université de Toulouse"
+__version__ = "0.1.0"
+__date__ = "2026"
+__license__ = "Usage interne — Université de Toulouse"
 
 
-import sys
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -45,8 +44,7 @@ def main():
     # 1) Le token fonctionne-t-il ?
     print("\n▶ 1. Test du token (GET /rest/videos/) ...")
     try:
-        r = requests.get(f"{rest}/videos/", headers=headers,
-                         params={"limit": 1}, timeout=20)
+        r = requests.get(f"{rest}/videos/", headers=headers, params={"limit": 1}, timeout=20)
     except Exception as e:
         print(f"   ❌ Connexion impossible : {e}")
         return
@@ -65,8 +63,10 @@ def main():
         r = requests.options(f"{rest}/videos/", headers=headers, timeout=20)
         post = r.json().get("actions", {}).get("POST", {})
         if not post:
-            print("   (Le schéma n'est pas exposé — ouvrez "
-                  f"{rest}/videos/ dans un navigateur connecté en admin.)")
+            print(
+                "   (Le schéma n'est pas exposé — ouvrez "
+                f"{rest}/videos/ dans un navigateur connecté en admin.)"
+            )
         else:
             for name, meta in post.items():
                 req = "★ REQUIS  " if meta.get("required") else "  optionnel"
@@ -79,8 +79,7 @@ def main():
     print("\n▶ 3. Endpoints disponibles ...")
     for ep in ["users", "types", "videos", "channels", "contributors"]:
         try:
-            rr = requests.get(f"{rest}/{ep}/", headers=headers,
-                             params={"limit": 1}, timeout=15)
+            rr = requests.get(f"{rest}/{ep}/", headers=headers, params={"limit": 1}, timeout=15)
             mark = "✅" if rr.status_code == 200 else "⚠️ "
             print(f"   {mark} /rest/{ep}/   (HTTP {rr.status_code})")
         except Exception as e:
@@ -91,15 +90,14 @@ def main():
     try:
         r = requests.get(f"{rest}/types/", headers=headers, timeout=15)
         for t in r.json().get("results", []):
-            print(f"   • {t.get('title','?'):24} → {t.get('url','?')}")
+            print(f"   • {t.get('title', '?'):24} → {t.get('url', '?')}")
     except Exception as e:
         print(f"   (non listés : {e})")
 
     # 5) DIAGNOSTIC de /rest/users/ (liste des utilisateurs)
     print("\n▶ 5. Contenu de /rest/users/ (diagnostic liste utilisateurs) ...")
     try:
-        r = requests.get(f"{rest}/users/", headers=headers,
-                         params={"limit": 5}, timeout=20)
+        r = requests.get(f"{rest}/users/", headers=headers, params={"limit": 5}, timeout=20)
         print(f"   HTTP {r.status_code}")
         if r.status_code == 200:
             data = r.json()
@@ -110,8 +108,10 @@ def main():
                 if results:
                     print(f"   Champs disponibles : {list(results[0].keys())}")
                     for u in results:
-                        print(f"     - username={u.get('username','?')} | "
-                              f"url={u.get('url','(AUCUNE)')} | email={u.get('email','(absent)')}")
+                        print(
+                            f"     - username={u.get('username', '?')} | "
+                            f"url={u.get('url', '(AUCUNE)')} | email={u.get('email', '(absent)')}"
+                        )
                 else:
                     print("   ⚠️  Liste VIDE. Le compte rattaché au token n'a probablement")
                     print("       pas le droit de lister les utilisateurs (il faut un compte")

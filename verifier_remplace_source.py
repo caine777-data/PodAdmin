@@ -23,15 +23,16 @@ Etapes :
 Lancer avec un token SUPERUTILISATEUR.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
 import os
 import tempfile
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -61,7 +62,8 @@ def main():
         return
     rest = f"{url}/rest"
     headers = {"Authorization": f"Token {token}"}
-    hj = dict(headers); hj["Accept"] = "application/json"
+    hj = dict(headers)
+    hj["Accept"] = "application/json"
 
     ref = input("Slug (ou id) d'une video de TEST (jetable) : ").strip()
     if not ref:
@@ -92,8 +94,10 @@ def main():
             fields = actions.get(verb, {})
             if "video" in fields:
                 meta = fields["video"]
-                print(f"   [{verb}] video : type={meta.get('type')}  "
-                      f"required={meta.get('required')}  read_only={meta.get('read_only')}")
+                print(
+                    f"   [{verb}] video : type={meta.get('type')}  "
+                    f"required={meta.get('required')}  read_only={meta.get('read_only')}"
+                )
                 found = True
         if not found:
             print("   Le champ `video` n'apparait PAS dans les actions PUT/PATCH/POST.")
@@ -119,12 +123,14 @@ def main():
     print("   ⚠️  Ceci envoie un nouveau fichier sur la video de test.")
     go = input("   Taper EXACTEMENT 'REMPLACER' pour tester (sinon Entree pour sauter) : ").strip()
     if go == "REMPLACER":
-        src = input("   Chemin d'un fichier video a envoyer (Entree = petit fichier "
-                    "bidon genere) : ").strip()
+        src = input(
+            "   Chemin d'un fichier video a envoyer (Entree = petit fichier bidon genere) : "
+        ).strip()
         tmp = None
         if not src:
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            tmp.write(os.urandom(200000)); tmp.close()   # ~200 Ko (bidon)
+            tmp.write(os.urandom(200000))
+            tmp.close()  # ~200 Ko (bidon)
             src = tmp.name
             print(f"   (fichier bidon genere : {src} — ne sera pas un vrai .mp4 encodable)")
         if os.path.isfile(src):
@@ -137,8 +143,10 @@ def main():
                 print(f"      corps : {json.dumps(body, ensure_ascii=False)[:300]}")
             # Relecture
             s2, v2 = req("GET", vurl, hj)
-            print(f"   video apres = {json.dumps(v2.get('video') if isinstance(v2, dict) else None, ensure_ascii=False)[:90]}")
-            changed = (isinstance(v2, dict) and v2.get("video") != v.get("video"))
+            print(
+                f"   video apres = {json.dumps(v2.get('video') if isinstance(v2, dict) else None, ensure_ascii=False)[:90]}"
+            )
+            changed = isinstance(v2, dict) and v2.get("video") != v.get("video")
             print(f"   => FICHIER REMPLACE ? {'OUI' if changed else 'NON (inchange)'}")
         else:
             print("   [X] Fichier introuvable.")

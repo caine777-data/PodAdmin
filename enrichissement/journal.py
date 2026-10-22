@@ -11,12 +11,12 @@ Le fichier n'est jamais réécrit : on ne fait qu'y ajouter des lignes.
 from __future__ import annotations
 
 __author__ = "Cédric MONNA"
-from __version__ import __version__   # noqa: E402
-
 import getpass
 import json
 import os
 from datetime import datetime
+
+from __version__ import __version__  # noqa: E402
 
 from . import reglages as cfg
 

@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from enrichissement import sous_titres as st                                         # noqa: E402
+from enrichissement import sous_titres as st  # noqa: E402
 
 
 def phrases(*textes, debit=0.07):
@@ -21,16 +21,19 @@ def phrases(*textes, debit=0.07):
             d = debit * len(w) + 0.1
             mots.append({"text": " " + w, "start": t, "end": t + d})
             t += d + 0.05
-        sortie.append({"text": texte, "start": mots[0]["start"],
-                       "end": mots[-1]["end"], "words": mots})
+        sortie.append(
+            {"text": texte, "start": mots[0]["start"], "end": mots[-1]["end"], "words": mots}
+        )
         t += 0.6
     return sortie
 
 
-LONG = ("Prenez un exemple, le vol d'identité. Un matin, j'ouvre mon logiciel de "
-        "messagerie et je constate l'arrivée d'un courriel du Crédit Agricole. "
-        "Jusqu'ici, rien d'anormal, c'est ma banque. Dans un premier temps, le logo "
-        "attire toute mon attention, puis je me précipite sur la lecture du message.")
+LONG = (
+    "Prenez un exemple, le vol d'identité. Un matin, j'ouvre mon logiciel de "
+    "messagerie et je constate l'arrivée d'un courriel du Crédit Agricole. "
+    "Jusqu'ici, rien d'anormal, c'est ma banque. Dans un premier temps, le logo "
+    "attire toute mon attention, puis je me précipite sur la lecture du message."
+)
 
 
 class TestDecoupage(unittest.TestCase):
@@ -74,31 +77,47 @@ class TestDecoupage(unittest.TestCase):
     def test_hesitation_apres_et(self):
         """Retour de Marie : « le bleu et » / « le noir » sur deux sous-titres."""
         mots, t = [], 0.0
-        for w in "On distingue deux couleurs, le bleu et".split():
-            mots.append({"text": " " + w, "start": t, "end": t + 0.3}); t += 0.35
-        t += 1.8                                   # hésitation de l'orateur
-        for w in "le noir.".split():
-            mots.append({"text": " " + w, "start": t, "end": t + 0.3}); t += 0.35
-        sts = st.decouper(st.mots_depuis_aristote(
-            [{"text": "x", "start": 0, "end": t, "words": mots}]), self.p)
+        for w in ["On", "distingue", "deux", "couleurs,", "le", "bleu", "et"]:
+            mots.append({"text": " " + w, "start": t, "end": t + 0.3})
+            t += 0.35
+        t += 1.8  # hésitation de l'orateur
+        for w in ["le", "noir."]:
+            mots.append({"text": " " + w, "start": t, "end": t + 0.3})
+            t += 0.35
+        sts = st.decouper(
+            st.mots_depuis_aristote([{"text": "x", "start": 0, "end": t, "words": mots}]), self.p
+        )
         for s in sts:
             self.assertFalse(s.texte.replace("\n", " ").endswith(" et"), s.texte)
 
     def test_elisions_recollees(self):
-        brut = [{"text": "le vol d'identité", "start": 0, "end": 2, "words": [
-            {"text": " le", "start": 0, "end": .3}, {"text": " vol", "start": .3, "end": .7},
-            {"text": " d", "start": .7, "end": .8}, {"text": "'identité", "start": .8, "end": 1.6},
-            {"text": " ?", "start": 1.6, "end": 1.7}]}]
+        brut = [
+            {
+                "text": "le vol d'identité",
+                "start": 0,
+                "end": 2,
+                "words": [
+                    {"text": " le", "start": 0, "end": 0.3},
+                    {"text": " vol", "start": 0.3, "end": 0.7},
+                    {"text": " d", "start": 0.7, "end": 0.8},
+                    {"text": "'identité", "start": 0.8, "end": 1.6},
+                    {"text": " ?", "start": 1.6, "end": 1.7},
+                ],
+            }
+        ]
         mots = st.mots_depuis_aristote(brut)
         self.assertEqual([m.texte for m in mots], ["le", "vol", "d'identité ?"])
 
     def test_hallucination_filtree(self):
         brut = phrases("Bonjour à tous.", "Sous-titrage ST' 501")
-        self.assertEqual(" ".join(m.texte for m in st.mots_depuis_aristote(brut)),
-                         "Bonjour à tous.")
+        self.assertEqual(
+            " ".join(m.texte for m in st.mots_depuis_aristote(brut)), "Bonjour à tous."
+        )
 
     def test_phrase_sans_mots(self):
-        mots = st.mots_depuis_aristote([{"text": "Une phrase sans horodatage", "start": 2, "end": 4}])
+        mots = st.mots_depuis_aristote(
+            [{"text": "Une phrase sans horodatage", "start": 2, "end": 4}]
+        )
         self.assertEqual(len(mots), 4)
         self.assertAlmostEqual(mots[0].debut, 2)
         self.assertAlmostEqual(mots[-1].fin, 4)

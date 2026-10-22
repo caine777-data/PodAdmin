@@ -27,29 +27,29 @@ rapide, lignes déséquilibrées).
 from __future__ import annotations
 
 __author__ = "Cédric MONNA"
-from __version__ import __version__   # noqa: E402  (source unique)
-
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
+
+from __version__ import __version__  # noqa: E402, F401  (source unique)
 
 # ─────────────────────────────── Réglages ────────────────────────────────
 
 
 @dataclass
 class Parametres:
-    car_par_ligne: int = 42          # CPL
+    car_par_ligne: int = 42  # CPL
     lignes_max: int = 2
-    duree_min: float = 1.0           # secondes
+    duree_min: float = 1.0  # secondes
     duree_max: float = 6.0
-    cps_cible: float = 17.0          # caractères par seconde visés
-    cps_max: float = 20.0            # au-delà : lecture trop rapide
-    ecart_min: float = 0.08          # entre deux sous-titres
-    enchainement: float = 0.5        # écart < à ce seuil : on colle les sous-titres
-    pause_forte: float = 1.5         # silence qui impose une coupure
+    cps_cible: float = 17.0  # caractères par seconde visés
+    cps_max: float = 20.0  # au-delà : lecture trop rapide
+    ecart_min: float = 0.08  # entre deux sous-titres
+    enchainement: float = 0.5  # écart < à ce seuil : on colle les sous-titres
+    pause_forte: float = 1.5  # silence qui impose une coupure
     filtrer_hallucinations: bool = True
 
     @classmethod
-    def depuis_dict(cls, d: dict | None) -> "Parametres":
+    def depuis_dict(cls, d: dict | None) -> Parametres:
         p = cls()
         for k, v in (d or {}).items():
             if hasattr(p, k):
@@ -74,14 +74,13 @@ class Mot:
 class SousTitre:
     debut: float
     fin: float
-    texte: str                       # lignes séparées par « \n »
+    texte: str  # lignes séparées par « \n »
 
     def en_dict(self) -> dict:
-        return {"start": round(self.debut, 3), "end": round(self.fin, 3),
-                "text": self.texte}
+        return {"start": round(self.debut, 3), "end": round(self.fin, 3), "text": self.texte}
 
     @classmethod
-    def depuis_dict(cls, d: dict) -> "SousTitre":
+    def depuis_dict(cls, d: dict) -> SousTitre:
         return cls(float(d["start"]), float(d["end"]), str(d["text"]))
 
 
@@ -95,25 +94,140 @@ class Alerte:
 # pas se terminer sur « le », « de », « et »…). Liste française et anglaise.
 MOTS_FAIBLES = {
     # articles et déterminants
-    "le", "la", "les", "l'", "un", "une", "des", "du", "de", "d'", "au", "aux",
-    "ce", "cet", "cette", "ces", "mon", "ma", "mes", "ton", "ta", "tes", "son",
-    "sa", "ses", "notre", "nos", "votre", "vos", "leur", "leurs", "quel",
-    "quelle", "quels", "quelles", "chaque", "plusieurs", "certains",
+    "le",
+    "la",
+    "les",
+    "l'",
+    "un",
+    "une",
+    "des",
+    "du",
+    "de",
+    "d'",
+    "au",
+    "aux",
+    "ce",
+    "cet",
+    "cette",
+    "ces",
+    "mon",
+    "ma",
+    "mes",
+    "ton",
+    "ta",
+    "tes",
+    "son",
+    "sa",
+    "ses",
+    "notre",
+    "nos",
+    "votre",
+    "vos",
+    "leur",
+    "leurs",
+    "quel",
+    "quelle",
+    "quels",
+    "quelles",
+    "chaque",
+    "plusieurs",
+    "certains",
     # prépositions
-    "à", "en", "dans", "par", "pour", "sur", "sous", "avec", "sans", "chez",
-    "vers", "entre", "contre", "depuis", "pendant", "selon", "après", "avant",
-    "jusqu'", "jusqu'à",
+    "à",
+    "en",
+    "dans",
+    "par",
+    "pour",
+    "sur",
+    "sous",
+    "avec",
+    "sans",
+    "chez",
+    "vers",
+    "entre",
+    "contre",
+    "depuis",
+    "pendant",
+    "selon",
+    "après",
+    "avant",
+    "jusqu'",
+    "jusqu'à",
     # conjonctions, pronoms relatifs, pronoms clitiques
-    "et", "ou", "mais", "donc", "or", "ni", "car", "que", "qu'", "qui", "dont",
-    "où", "si", "comme", "quand", "lorsque", "puisque", "parce",
-    "je", "j'", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
-    "ne", "n'", "se", "s'", "me", "m'", "te", "t'", "y",
+    "et",
+    "ou",
+    "mais",
+    "donc",
+    "or",
+    "ni",
+    "car",
+    "que",
+    "qu'",
+    "qui",
+    "dont",
+    "où",
+    "si",
+    "comme",
+    "quand",
+    "lorsque",
+    "puisque",
+    "parce",
+    "je",
+    "j'",
+    "tu",
+    "il",
+    "elle",
+    "on",
+    "nous",
+    "vous",
+    "ils",
+    "elles",
+    "ne",
+    "n'",
+    "se",
+    "s'",
+    "me",
+    "m'",
+    "te",
+    "t'",
+    "y",
     # auxiliaires courants
-    "est", "sont", "a", "ont", "c'est",
+    "est",
+    "sont",
+    "a",
+    "ont",
+    "c'est",
     # anglais
-    "the", "a", "an", "of", "to", "in", "on", "at", "for", "with", "and", "or",
-    "but", "that", "which", "who", "is", "are", "was", "were", "i", "you",
-    "he", "she", "we", "they", "it", "my", "your", "his", "her", "our", "their",
+    "the",
+    "an",
+    "of",
+    "to",
+    "in",
+    "at",
+    "for",
+    "with",
+    "and",
+    "but",
+    "that",
+    "which",
+    "who",
+    "is",
+    "are",
+    "was",
+    "were",
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "it",
+    "my",
+    "your",
+    "his",
+    "her",
+    "our",
+    "their",
 }
 
 FIN_PHRASE = (".", "?", "!", "…", "»")
@@ -131,12 +245,12 @@ _RE_HALLU = [re.compile(p, re.IGNORECASE) for p in HALLUCINATIONS]
 
 
 def _est_faible(mot: str) -> bool:
-    m = mot.lower().strip("«»\"“”()[]")
+    m = mot.lower().strip('«»"“”()[]')
     return m in MOTS_FAIBLES or m.endswith("'") or m.endswith("’")
 
 
 def _fin_phrase(mot: str) -> bool:
-    return mot.rstrip("»\"”)  ").endswith((".", "?", "!", "…"))
+    return mot.rstrip('»"”)  ').endswith((".", "?", "!", "…"))
 
 
 def _fin_ponct(mot: str) -> bool:
@@ -145,8 +259,9 @@ def _fin_ponct(mot: str) -> bool:
 
 def _nom_compose(mot: str, suivant: str) -> bool:
     """« George Doran », « Paul Sabatier » : deux majuscules à ne pas séparer."""
-    return (mot[:1].isupper() and suivant[:1].isupper()
-            and not _fin_phrase(mot) and not _fin_ponct(mot))
+    return (
+        mot[:1].isupper() and suivant[:1].isupper() and not _fin_phrase(mot) and not _fin_ponct(mot)
+    )
 
 
 # ──────────────────────── Lecture de la transcription ──────────────────────
@@ -190,12 +305,15 @@ def _fusionner(mots: list[Mot]) -> list[Mot]:
         if sortie:
             prec = sortie[-1]
             if re.fullmatch(r"[?!:;»)\]]+", t):
-                prec.texte += " " + t          # espace insécable
+                prec.texte += " " + t  # espace insécable
                 prec.fin = max(prec.fin, m.fin)
                 continue
             # « d » + « 'identité », « l' » + « école », « a » + « -t-il »
-            if re.fullmatch(r"[.,…]+", t) or t.startswith(("-", "'", "’")) \
-                    or prec.texte.endswith(("'", "’", "« ", "(")):
+            if (
+                re.fullmatch(r"[.,…]+", t)
+                or t.startswith(("-", "'", "’"))
+                or prec.texte.endswith(("'", "’", "« ", "("))
+            ):
                 prec.texte += t
                 prec.fin = max(prec.fin, m.fin)
                 continue
@@ -203,8 +321,7 @@ def _fusionner(mots: list[Mot]) -> list[Mot]:
     return sortie
 
 
-def mots_depuis_aristote(phrases: list[dict],
-                         filtrer_hallucinations: bool = True) -> list[Mot]:
+def mots_depuis_aristote(phrases: list[dict], filtrer_hallucinations: bool = True) -> list[Mot]:
     """Transforme `transcript.sentences` d'Aristote en liste de mots horodatés.
 
     Chaque phrase peut porter une clé `words` (horodatage mot par mot, cas
@@ -315,8 +432,9 @@ def couper_lignes(mots: list[str], p: Parametres) -> tuple[list[str], float] | N
 # ─────────────────────────── Découpage en sous-titres ───────────────────────
 
 
-def _cout_sous_titre(mots: list[Mot], a: int, b: int, n: int,
-                     p: Parametres) -> tuple[float, list[str]] | None:
+def _cout_sous_titre(
+    mots: list[Mot], a: int, b: int, n: int, p: Parametres
+) -> tuple[float, list[str]] | None:
     """Coût d'un sous-titre formé des mots[a:b], ou None s'il est impossible."""
     textes = [m.texte for m in mots[a:b]]
     res = couper_lignes(textes, p)
@@ -327,7 +445,7 @@ def _cout_sous_titre(mots: list[Mot], a: int, b: int, n: int,
     if duree > p.duree_max and b - a > 1:
         return None
 
-    cout = 2.0 + cout_lignes                  # coût fixe : évite l'émiettement
+    cout = 2.0 + cout_lignes  # coût fixe : évite l'émiettement
     dernier = mots[b - 1].texte
     # Bout de phrase orphelin, en fin (« du dispositif. ») ou en début
     # (« Today, ») : on préfère rééquilibrer avec le sous-titre voisin.
@@ -335,7 +453,7 @@ def _cout_sous_titre(mots: list[Mot], a: int, b: int, n: int,
     milieu_fin = b < n and not _fin_phrase(dernier)
     if (milieu_debut or milieu_fin) and sum(len(x) for x in lignes) < 20:
         cout += 3.0
-    if b < n:                                 # nature de la coupure finale
+    if b < n:  # nature de la coupure finale
         pause = mots[b].debut - mots[b - 1].fin
         if _fin_phrase(dernier):
             cout += 0.0
@@ -384,13 +502,17 @@ def decouper(mots: list[Mot], p: Parametres | None = None) -> list[SousTitre]:
             # Un long silence à l'intérieur impose une coupure, SAUF après un
             # mot faible : « le bleu et… [hésitation] le noir » doit rester
             # d'un seul tenant, sinon « le bleu et » s'affiche seul.
-            if a < b - 1 and mots[a + 1].debut - mots[a].fin >= p.pause_forte                     and not _est_faible(mots[a].texte):
+            if (
+                a < b - 1
+                and mots[a + 1].debut - mots[a].fin >= p.pause_forte
+                and not _est_faible(mots[a].texte)
+            ):
                 break
             if meilleur[a] == INF:
                 continue
             res = _cout_sous_titre(mots, a, b, n, p)
             if res is None:
-                if b - a == 1:              # mot isolé trop long : on l'accepte
+                if b - a == 1:  # mot isolé trop long : on l'accepte
                     res = (50.0, [mots[a].texte])
                 else:
                     continue
@@ -419,8 +541,7 @@ def ajuster_horaires(sts: list[SousTitre], p: Parametres) -> list[SousTitre]:
     """
     for i, st in enumerate(sts):
         nb_car = len(st.texte.replace("\n", ""))
-        voulu = max(st.fin, st.debut + p.duree_min,
-                    st.debut + nb_car / p.cps_cible)
+        voulu = max(st.fin, st.debut + p.duree_min, st.debut + nb_car / p.cps_cible)
         voulu = min(voulu, st.debut + max(p.duree_max, st.fin - st.debut))
         if i + 1 < len(sts):
             limite = sts[i + 1].debut - p.ecart_min
@@ -468,16 +589,20 @@ def _horodatage(t: float, sep: str) -> str:
 def vers_vtt(sts: list[SousTitre]) -> str:
     blocs = ["WEBVTT\n"]
     for i, st in enumerate(sts, 1):
-        blocs.append(f"{i}\n{_horodatage(st.debut, '.')} --> "
-                     f"{_horodatage(st.fin, '.')}\n{st.texte.strip()}\n")
+        blocs.append(
+            f"{i}\n{_horodatage(st.debut, '.')} --> "
+            f"{_horodatage(st.fin, '.')}\n{st.texte.strip()}\n"
+        )
     return "\n".join(blocs)
 
 
 def vers_srt(sts: list[SousTitre]) -> str:
     blocs = []
     for i, st in enumerate(sts, 1):
-        blocs.append(f"{i}\n{_horodatage(st.debut, ',')} --> "
-                     f"{_horodatage(st.fin, ',')}\n{st.texte.strip()}\n")
+        blocs.append(
+            f"{i}\n{_horodatage(st.debut, ',')} --> "
+            f"{_horodatage(st.fin, ',')}\n{st.texte.strip()}\n"
+        )
     return "\n".join(blocs)
 
 
@@ -509,8 +634,9 @@ def regrouper_phrases(sts: list[SousTitre], duree_max: float = 20.0) -> list[Sou
     return groupes
 
 
-def decouper_traduction(groupes: list[SousTitre], textes: list[str],
-                        p: Parametres) -> list[SousTitre]:
+def decouper_traduction(
+    groupes: list[SousTitre], textes: list[str], p: Parametres
+) -> list[SousTitre]:
     """Redécoupe des phrases traduites aux normes, sur la durée de chaque phrase.
 
     La traduction n'a pas d'horodatage mot par mot : la durée de chaque phrase
@@ -543,8 +669,7 @@ def lire_vtt_srt(contenu: str) -> list[SousTitre]:
         for i, l in enumerate(lignes):
             if "-->" in l:
                 a, b = l.split("-->")
-                texte = "\n".join(lignes[i + 1:])
-                sts.append(SousTitre(lire_horodatage(a),
-                                     lire_horodatage(b.split()[0]), texte))
+                texte = "\n".join(lignes[i + 1 :])
+                sts.append(SousTitre(lire_horodatage(a), lire_horodatage(b.split()[0]), texte))
                 break
     return sts

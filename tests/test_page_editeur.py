@@ -5,6 +5,7 @@ livré entre-temps, une seule fenêtre par vidéo, export partie par partie.
 Côté page : contrôles statiques (la page elle-même a été vérifiée dans un
 navigateur, avec un faux Aristote).
 """
+
 import json
 import os
 import re
@@ -19,15 +20,20 @@ import pytest
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RACINE)
 
-from enrichissement import projet as pj          # noqa: E402
+from enrichissement import projet as pj  # noqa: E402
 
 PAGE = open(os.path.join(RACINE, "assets", "editeur.html"), encoding="utf-8").read()
 SCRIPT = re.search(r"<script>(.*)</script>", PAGE, re.S).group(1)
 
 
 def q(texte, **k):
-    return pj._completer_question({"question": texte, "choix": [{"texte": "a", "correct": True},
-                                                                 {"texte": "b", "correct": False}], **k})
+    return pj._completer_question(
+        {
+            "question": texte,
+            "choix": [{"texte": "a", "correct": True}, {"texte": "b", "correct": False}],
+            **k,
+        }
+    )
 
 
 class TestFusionDepuisLaPage:
@@ -36,11 +42,14 @@ class TestFusionDepuisLaPage:
         e["quiz"] = [q("Première ?"), q("Deuxième ?")]
         page = [dict(x) for x in e["quiz"]]
         vus = [x["id"] for x in page]
-        e["quiz"].append(q("Arrivée pendant la saisie ?"))      # Aristote livre
-        page[0]["question"] = "Première, corrigée ?"             # la page modifie
+        e["quiz"].append(q("Arrivée pendant la saisie ?"))  # Aristote livre
+        page[0]["question"] = "Première, corrigée ?"  # la page modifie
         pj.fusionner_page(e, {"quiz": page, "quiz_vus": vus})
         assert [x["question"] for x in e["quiz"]] == [
-            "Première, corrigée ?", "Deuxième ?", "Arrivée pendant la saisie ?"]
+            "Première, corrigée ?",
+            "Deuxième ?",
+            "Arrivée pendant la saisie ?",
+        ]
 
     def test_suppression_par_la_page_respectee(self):
         e = pj.enrichissement({"sous_titres": []})
@@ -51,34 +60,69 @@ class TestFusionDepuisLaPage:
 
     def test_question_redigee_dans_la_page_recoit_ses_champs(self):
         e = pj.enrichissement({"sous_titres": []})
-        pj.fusionner_page(e, {"quiz": [{"id": "abc12345", "question": "Rédigée ?", "origine": "redigee",
-                                        "choix": [{"texte": "a", "correct": True}]}], "quiz_vus": ["abc12345"]})
+        pj.fusionner_page(
+            e,
+            {
+                "quiz": [
+                    {
+                        "id": "abc12345",
+                        "question": "Rédigée ?",
+                        "origine": "redigee",
+                        "choix": [{"texte": "a", "correct": True}],
+                    }
+                ],
+                "quiz_vus": ["abc12345"],
+            },
+        )
         assert e["quiz"][0]["origine"] == "redigee" and e["quiz"][0]["retenue"] is True
 
     def test_saisie_sur_une_ancienne_version_ignoree(self):
         p = {"sous_titres": [{"start": 0, "end": 1, "text": "x"}]}
         e = pj.enrichissement(p)
         pj.nouvelle_demande(p, "meta", "e1", ["meta"])
-        pj.appliquer_demande(p, "meta", {"enrichmentVersionMetadata": {"title": "Nouveau"}}, pj.st.Parametres())
-        ignorees = pj.fusionner_page(e, {"metadonnees": {"titre": "Saisie sur l'ancienne"}, "versions": {}})
+        pj.appliquer_demande(
+            p, "meta", {"enrichmentVersionMetadata": {"title": "Nouveau"}}, pj.st.Parametres()
+        )
+        ignorees = pj.fusionner_page(
+            e, {"metadonnees": {"titre": "Saisie sur l'ancienne"}, "versions": {}}
+        )
         assert ignorees == ["meta"] and e["metadonnees"]["titre"] == "Nouveau"
-        ignorees = pj.fusionner_page(e, {"metadonnees": {"titre": "Saisie à jour"}, "versions": {"meta": 1}})
+        ignorees = pj.fusionner_page(
+            e, {"metadonnees": {"titre": "Saisie à jour"}, "versions": {"meta": 1}}
+        )
         assert ignorees == [] and e["metadonnees"]["titre"] == "Saisie à jour"
 
     def test_traduction_par_langue(self):
         p = {"sous_titres": [{"start": 0, "end": 1, "text": "x"}]}
         e = pj.enrichissement(p)
         e["versions"]["trad:en"] = 2
-        ignorees = pj.fusionner_page(e, {"traductions": {"en": [{"start": 0, "end": 1, "text": "y"}],
-                                                         "pt": [{"start": 0, "end": 1, "text": "z"}]},
-                                         "versions": {"trad:en": 1}})
-        assert ignorees == ["trad:en"] and e["traductions"] == {"pt": [{"start": 0, "end": 1, "text": "z"}]}
+        ignorees = pj.fusionner_page(
+            e,
+            {
+                "traductions": {
+                    "en": [{"start": 0, "end": 1, "text": "y"}],
+                    "pt": [{"start": 0, "end": 1, "text": "z"}],
+                },
+                "versions": {"trad:en": 1},
+            },
+        )
+        assert ignorees == ["trad:en"] and e["traductions"] == {
+            "pt": [{"start": 0, "end": 1, "text": "z"}]
+        }
 
 
 class TestGift:
     def test_reponses_vides_ecartees(self):
-        quiz = [{"question": "Q ?", "choix": [{"texte": "oui", "correct": True}, {"texte": "  ", "correct": False},
-                                              {"texte": "non", "correct": False}]}]
+        quiz = [
+            {
+                "question": "Q ?",
+                "choix": [
+                    {"texte": "oui", "correct": True},
+                    {"texte": "  ", "correct": False},
+                    {"texte": "non", "correct": False},
+                ],
+            }
+        ]
         g = pj.quiz_vers_gift(quiz, "Cours")
         assert g.count("\t~") == 1 and "\t=oui" in g
 
@@ -86,6 +130,7 @@ class TestGift:
 @pytest.fixture
 def serveur(tmp_path, monkeypatch):
     from enrichissement import editeur
+
     monkeypatch.setattr(pj, "DOSSIER_PROJETS", str(tmp_path / "projets"))
     p = pj.nouveau(str(tmp_path / "cours.mp4"), "fr")
     p["sous_titres"] = [{"start": 0, "end": 3, "text": "Bonjour."}]
@@ -107,8 +152,12 @@ def serveur(tmp_path, monkeypatch):
 def appel(srv, pid, chemin, corps=None):
     url = f"http://127.0.0.1:{srv.port}/api/{pid}{chemin}?t={srv.jeton}"
     data = None if corps is None else json.dumps(corps).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="GET" if corps is None else "POST",
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="GET" if corps is None else "POST",
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read())
 
@@ -119,7 +168,7 @@ class TestUneFenetreParVideo:
         assert len(serveur.fenetres) == 1 and serveur.fenetres[0].endswith("&partie=quiz")
 
     def test_page_ouverte_recoit_l_ordre_au_lieu_d_une_nouvelle_fenetre(self, serveur):
-        appel(serveur.srv, serveur.pid, "/etat")                   # la page se signale
+        appel(serveur.srv, serveur.pid, "/etat")  # la page se signale
         assert serveur.srv.ouvrir(serveur.pid, "meta") is True
         assert serveur.fenetres == [], "seconde fenêtre ouverte"
         assert appel(serveur.srv, serveur.pid, "/etat")["commande"] == "meta"
@@ -156,8 +205,12 @@ class TestExportParPartie:
         vus = [x["id"] for x in pj.enrichissement(p)["quiz"]]
         pj.enrichissement(p)["quiz"].append(q("Arrivée ?"))
         pj.enregistrer(p)
-        d = appel(serveur.srv, serveur.pid, "/enrichissement",
-                  {"quiz": [], "quiz_vus": vus, "metadonnees": {"titre": "T2"}, "versions": {}})
+        d = appel(
+            serveur.srv,
+            serveur.pid,
+            "/enrichissement",
+            {"quiz": [], "quiz_vus": vus, "metadonnees": {"titre": "T2"}, "versions": {}},
+        )
         assert [x["question"] for x in d["quiz"]] == ["Arrivée ?"] and d["ignorees"] == []
 
 
@@ -165,11 +218,17 @@ class TestPageStatique:
     def test_plus_de_soustitreur_ni_de_fenetre_groupee(self):
         visible = re.sub(r'localStorage\.\w+Item\("soustitreur-apparence"[^)]*\)', "", PAGE)
         assert "SousTitreur" not in visible
-        for disparu in ("d-enrichir", "b-ouvrir-enrichir", "enr-langue", "langueTraduite", "#onglets"):
+        for disparu in (
+            "d-enrichir",
+            "b-ouvrir-enrichir",
+            "enr-langue",
+            "langueTraduite",
+            "#onglets",
+        ):
             assert disparu not in PAGE, disparu
 
     def test_trois_parties_et_routes_separees(self):
-        html = PAGE[:PAGE.index("<script>")]
+        html = PAGE[: PAGE.index("<script>")]
         assert re.findall(r'data-partie="(\w+)"', html) == ["st", "meta", "quiz"]
         for route in ('apiAction("demander")', 'apiAction("relu")', "quiz_vus", "VERSIONS"):
             assert route in SCRIPT, route
@@ -177,7 +236,9 @@ class TestPageStatique:
     def test_les_resultats_se_reperent_a_leur_version(self):
         """Guetter le passage « en cours » → « terminé » manquait un résultat
         quand une autre action rafraîchissait l'état (vu dans le navigateur)."""
-        corps = SCRIPT[SCRIPT.index("async function interroger"):SCRIPT.index("function recevoir")]
+        corps = SCRIPT[
+            SCRIPT.index("async function interroger") : SCRIPT.index("function recevoir")
+        ]
         assert "versions" in corps and "VERSIONS[k]" in corps
 
     @pytest.mark.skipif(not shutil.which("node"), reason="Node.js absent")
@@ -186,9 +247,12 @@ class TestPageStatique:
         l'état (« traduction prête ») avant l'interrogation. La traduction doit
         quand même être chargée dans la page. On exécute les VRAIES fonctions
         de la page, avec un serveur simulé."""
-        fonctions = "\n".join(re.search(rf"(?:async )?function {nom}\(.*?\n}}\n", SCRIPT, re.S).group(0)
-                              for nom in ("interroger", "recevoir"))
-        banc = """
+        fonctions = "\n".join(
+            re.search(rf"(?:async )?function {nom}\(.*?\n}}\n", SCRIPT, re.S).group(0)
+            for nom in ("interroger", "recevoir")
+        )
+        banc = (
+            """
 let E = {traductions: {}, quiz: [], metadonnees: {},
          parties: {"trad:en": {etat: "pret", detail: "", perime: false}}};
 let VERSIONS = {}, QUIZ_VUS = new Set(), minuterieEnr = null, rendues = [], messages = [];
@@ -201,7 +265,9 @@ const appels = [];
 const fetch = async url => { appels.push(url); const d = JSON.parse(JSON.stringify(SERVEUR));
   if (url === "etat") return {ok: true, json: async () => ({parties: d.parties, versions: d.versions, commande: ""})};
   return {ok: true, json: async () => d}; };
-""" + fonctions + """
+"""
+            + fonctions
+            + """
 interroger().then(async () => {
   const premier = {en: (E.traductions.en || []).length, version: VERSIONS["trad:en"], rendues, messages, appels: [...appels]};
   appels.length = 0;
@@ -209,6 +275,7 @@ interroger().then(async () => {
   console.log(JSON.stringify({...premier, ensuite: appels}));
 });
 """
+        )
         f = tmp_path / "banc.js"
         f.write_text(banc, encoding="utf-8")
         r = subprocess.run(["node", str(f)], capture_output=True, text=True, encoding="utf-8")
@@ -239,13 +306,17 @@ class TestFichierExporteRetrouvable:
 
     def test_ouvrir_le_dossier_du_projet(self, serveur, monkeypatch):
         from enrichissement import editeur
+
         ouverts = []
         monkeypatch.setattr(editeur, "_ouvrir_dossier", ouverts.append)
-        assert appel(serveur.srv, serveur.pid, "/ouvrir_dossier", {"chemin": "C:/Windows"}) == {"ok": True}
+        assert appel(serveur.srv, serveur.pid, "/ouvrir_dossier", {"chemin": "C:/Windows"}) == {
+            "ok": True
+        }
         assert ouverts == [serveur.dossier], "le chemin vient du projet, jamais de la page"
 
     def test_dossier_absent_documents(self, tmp_path):
         from enrichissement import editeur
+
         assert editeur.dossier_exports({"dossier": str(tmp_path / "disparu")}).endswith("Documents")
 
     def test_les_deux_exports_proposent_le_dossier(self):
@@ -259,7 +330,8 @@ class TestInterrogationLegere:
         p = pj.charger(serveur.pid)
         # Le volume vient des traductions (une heure : ~800 sous-titres par langue).
         pj.enrichissement(p)["traductions"]["en"] = [
-            {"start": i, "end": i + 1, "text": "Hello everyone."} for i in range(800)]
+            {"start": i, "end": i + 1, "text": "Hello everyone."} for i in range(800)
+        ]
         pj.enregistrer(p)
         url = f"http://127.0.0.1:{serveur.srv.port}/api/{serveur.pid}"
         leger = urllib.request.urlopen(f"{url}/etat?t={serveur.srv.jeton}").read()
@@ -282,7 +354,8 @@ class TestInterrogationLegere:
         assert len(lectures) == 2
 
     def test_suivi_n_ecrit_que_les_changements(self, serveur, monkeypatch):
-        from enrichissement import editeur
+        from enrichissement import editeur  # noqa: F401  (import conservé tel quel)
+
         ecritures = []
         vrai = pj.enregistrer
         monkeypatch.setattr(pj, "enregistrer", lambda p: ecritures.append(1) or vrai(p))
@@ -295,6 +368,7 @@ class TestInterrogationLegere:
 
             def version_finale(self, eid):
                 return {"enrichmentVersionMetadata": {"title": "T2"}}
+
         p = pj.charger(serveur.pid)
         pj.nouvelle_demande(p, "meta", "e9", ["meta"])
         vrai(p)
@@ -317,17 +391,19 @@ class TestInterrogationLegere:
     def test_suivi_ne_transmet_que_les_changements_d_etat(self, serveur, monkeypatch):
         """Seconde protection, testée seule : le rappel du suivi."""
         appels = []
-        monkeypatch.setattr(serveur.srv, "_maj_demande", lambda *a, **k: appels.append(k.get("detail")))
+        monkeypatch.setattr(
+            serveur.srv, "_maj_demande", lambda *a, **k: appels.append(k.get("detail"))
+        )
 
         class FauxAristote:
             def attendre(self, eid, rappel=None, **k):
                 for statut in ["PENDING"] * 3 + ["IN_PROGRESS"] * 6:
                     rappel(statut, {})
                 raise RuntimeError("fin du banc")
+
         serveur.srv._suivre(serveur.pid, FauxAristote(), "meta", "e7")
         # Deux changements d'état, puis l'enregistrement de l'échec du banc.
         assert appels == ["PENDING", "IN_PROGRESS", ""], appels
-
 
 
 class TestFinitionPage:
@@ -336,7 +412,9 @@ class TestFinitionPage:
         PodAdmin ne l'écrit pas ; la page s'ouvrait toujours en sombre."""
         serveur.srv.reglages = lambda: {"theme": "light"}
         assert appel(serveur.srv, serveur.pid, "/etat")["theme"] == "light"
-        corps = SCRIPT[SCRIPT.index("async function interroger"):SCRIPT.index("function recevoir")]
+        corps = SCRIPT[
+            SCRIPT.index("async function interroger") : SCRIPT.index("function recevoir")
+        ]
         assert "document.documentElement.dataset.theme = d.theme" in corps
 
     def test_l_onglet_transmet_le_vrai_theme(self):

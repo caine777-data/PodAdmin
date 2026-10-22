@@ -33,6 +33,7 @@ def charger_requests():
     """Importe `requests`, en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -42,9 +43,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -56,8 +59,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -65,8 +70,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     # ── Combien de contributeurs ? ────────────────────────────────────────
     print(f"\n{'=' * 66}\n  CONTRIBUTEURS SUR L'INSTANCE\n{'=' * 66}")
@@ -102,15 +106,17 @@ def run():
             print(f"      • {role:16} {n}")
         print("\n   Quelques exemples :")
         for c in contributeurs[:5]:
-            print(f"      • {str(c.get('name', '?')):28} "
-                  f"{str(c.get('role', '?')):12} {str(c.get('email_address', '') or '—')}")
+            print(
+                f"      • {c.get('name', '?')!s:28} "
+                f"{c.get('role', '?')!s:12} {c.get('email_address', '') or '—'!s}"
+            )
 
     # ── L'API permet-elle de supprimer ? ──────────────────────────────────
     print(f"\n{'=' * 66}\n  ACTIONS POSSIBLES\n{'=' * 66}")
     try:
         r = sess.options(f"{rest}/contributors/", timeout=20)
         if r.status_code == 200:
-            actions = (r.json().get("actions") or {})
+            actions = r.json().get("actions") or {}
             print(f"   Écriture (POST) : {'oui' if actions.get('POST') else 'non'}")
     except Exception:
         pass
@@ -121,8 +127,9 @@ def run():
                 r = sess.options(exemple, timeout=20)
                 autorises = r.headers.get("Allow", "")
                 print(f"   Méthodes sur un contributeur : {autorises or '(non précisé)'}")
-                print(f"   Suppression possible : "
-                      f"{'oui' if 'DELETE' in autorises else 'à vérifier'}")
+                print(
+                    f"   Suppression possible : {'oui' if 'DELETE' in autorises else 'à vérifier'}"
+                )
             except Exception:
                 pass
 
@@ -153,6 +160,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

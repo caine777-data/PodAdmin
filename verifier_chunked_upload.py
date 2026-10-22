@@ -23,20 +23,21 @@ Ce script :
 Lancer avec un token SUPERUTILISATEUR.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import hashlib
 import json
 import os
 import tempfile
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
-CHUNK = 1024 * 1024          # 1 Mo par morceau (petit, pour le test)
+CHUNK = 1024 * 1024  # 1 Mo par morceau (petit, pour le test)
 
 
 def req(method, url, headers, **kw):
@@ -63,7 +64,8 @@ def main():
         return
     rest = f"{url}/rest"
     headers = {"Authorization": f"Token {token}"}
-    hj = dict(headers); hj["Accept"] = "application/json"
+    hj = dict(headers)
+    hj["Accept"] = "application/json"
 
     # ------------------------------------------------------------------ #
     # A) Decouverte de l'endpoint chunké via la racine /rest/
@@ -80,8 +82,12 @@ def main():
             mark = "  <-- CHUNK ?" if ("chunk" in name.lower()) else ""
             print(f"     {name:30} {link}{mark}")
     # Repli : chemins classiques a tester
-    guesses = [f"{rest}/chunked_upload/", f"{rest}/chunkedupload/",
-               f"{rest}/dash/", f"{url}/podfile/chunk_upload/"]
+    guesses = [
+        f"{rest}/chunked_upload/",
+        f"{rest}/chunkedupload/",
+        f"{rest}/dash/",
+        f"{url}/podfile/chunk_upload/",
+    ]
     if candidates:
         chunk_url = candidates[0][1]
     else:
@@ -94,8 +100,10 @@ def main():
                 chunk_url = g
                 break
     if not chunk_url:
-        chunk_url = input("\n   Endpoint chunké introuvable. Collez-le si vous le "
-                          "connaissez (ou Entree pour arreter) : ").strip()
+        chunk_url = input(
+            "\n   Endpoint chunké introuvable. Collez-le si vous le "
+            "connaissez (ou Entree pour arreter) : "
+        ).strip()
         if not chunk_url:
             print("   Abandon : pas d'endpoint chunké.")
             return
@@ -107,8 +115,9 @@ def main():
     print("\n> B. Test du protocole sur un petit fichier (3 Mo) ...")
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
     try:
-        data = os.urandom(3 * CHUNK)      # 3 Mo -> 3 morceaux d'1 Mo
-        tmp.write(data); tmp.close()
+        data = os.urandom(3 * CHUNK)  # 3 Mo -> 3 morceaux d'1 Mo
+        tmp.write(data)
+        tmp.close()
         total = len(data)
         md5 = hashlib.md5(data).hexdigest()
         fname = "test_chunk_podadmin.bin"
@@ -127,9 +136,13 @@ def main():
                 h = dict(headers)
                 h["Content-Range"] = crange
                 # 1er morceau -> PUT sur l'endpoint ; suivants -> PUT sur l'URL renvoyee
-                s, body = req("PUT", upload_url, h,
-                              data={"filename": fname},
-                              files={"file": (fname, chunk, "application/octet-stream")})
+                s, body = req(
+                    "PUT",
+                    upload_url,
+                    h,
+                    data={"filename": fname},
+                    files={"file": (fname, chunk, "application/octet-stream")},
+                )
                 print(f"   PUT {crange} -> HTTP {s}")
                 if s and s >= 400:
                     print(f"      corps : {json.dumps(body, ensure_ascii=False)[:250]}")
@@ -137,7 +150,7 @@ def main():
                     break
                 if isinstance(body, dict):
                     if first and body.get("url"):
-                        upload_url = body["url"]     # bascule sur l'URL de l'upload
+                        upload_url = body["url"]  # bascule sur l'URL de l'upload
                     if body.get("offset") is not None:
                         offset = body["offset"]
                     else:

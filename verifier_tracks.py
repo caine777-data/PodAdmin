@@ -16,13 +16,12 @@ LECTURE SEULE (OPTIONS + GET). Ne cree, ne modifie, ne supprime rien.
 Lancer avec un token SUPERUTILISATEUR :  python verifier_tracks.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
-import json
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -110,8 +109,10 @@ def main():
     elif sample_src and isinstance(sample_src, str) and sample_src.startswith("http"):
         verdict_src = "URL d'un fichier deja televerse (workflow en 2 temps via /files/)"
     elif src_type in ("field", "string", "url"):
-        verdict_src = ("probablement une URL/reference de fichier "
-                       "(workflow en 2 temps via /files/) — a confirmer")
+        verdict_src = (
+            "probablement une URL/reference de fichier "
+            "(workflow en 2 temps via /files/) — a confirmer"
+        )
     print(f"   -> {verdict_src}")
 
     # ------------------------------------------------------------------ #

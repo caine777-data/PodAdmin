@@ -16,17 +16,17 @@ La sonde fait deux choses, sans rien modifier :
 Sonde autonome. Filet anti-fermeture en fin de script.
 """
 
-__author__  = "Cédric MONNA"
+__author__ = "Cédric MONNA"
 __version__ = "1.0.0"
-
-import json
 
 
 def run():
     import requests
 
-    base = input("URL de l'instance [https://videos.utoulouse.fr] : ").strip() \
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
         or "https://videos.utoulouse.fr"
+    )
     base = base.rstrip("/")
     token = input("Token (Bearer) : ").strip()
     if not token:
@@ -35,8 +35,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     # ── 1. OPTIONS : schéma de la ressource vidéo ────────────────────────────
     print("\n> 1. OPTIONS /rest/videos/ (schéma des champs)…")
@@ -44,8 +43,9 @@ def run():
         r = sess.options(f"{rest}/videos/", timeout=30)
         print(f"   HTTP {r.status_code}")
         data = r.json()
-        actions = (data.get("actions") or {}).get("POST") \
-            or (data.get("actions") or {}).get("PUT") or {}
+        actions = (
+            (data.get("actions") or {}).get("POST") or (data.get("actions") or {}).get("PUT") or {}
+        )
         if not actions:
             print("   (Aucun schéma d'action exposé — l'instance restreint peut-être OPTIONS.)")
         # Chercher les champs contenant « 360 »
@@ -100,6 +100,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

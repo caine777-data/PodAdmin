@@ -22,13 +22,14 @@ Lancer avec un token SUPERUTILISATEUR.
     Puis lancez ce script et donnez le slug de cette video a l'etape 2.
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
@@ -73,7 +74,7 @@ def main():
             break
         for v in data.get("results", []):
             rag = v.get("restrict_access_to_groups")
-            if rag:                       # non vide
+            if rag:  # non vide
                 found.append(v)
         next_url = data.get("next")
         pages += 1
@@ -82,8 +83,10 @@ def main():
         for v in found[:3]:
             print(f"\n   slug = {v.get('slug')}")
             print(f"   is_restricted             = {v.get('is_restricted')}")
-            print(f"   restrict_access_to_groups = "
-                  f"{json.dumps(v.get('restrict_access_to_groups'), ensure_ascii=False)}")
+            print(
+                f"   restrict_access_to_groups = "
+                f"{json.dumps(v.get('restrict_access_to_groups'), ensure_ascii=False)}"
+            )
         print("\n   >>> Le contenu ci-dessus est LE FORMAT a reutiliser en ecriture.")
     else:
         print("   Aucune video restreinte a un groupe trouvee dans le scan.")
@@ -98,15 +101,18 @@ def main():
         vurl = f"{rest}/videos/{slug}/"
         status, v = req("GET", vurl, headers)
         if status != 200:
-            status, data = req("GET", f"{rest}/videos/", headers,
-                               params={"search": slug, "limit": 50})
+            status, data = req(
+                "GET", f"{rest}/videos/", headers, params={"search": slug, "limit": 50}
+            )
             res = data.get("results", []) if isinstance(data, dict) else []
             v = next((x for x in res if x.get("slug") == slug), None)
         if isinstance(v, dict):
             print(f"\n   slug = {v.get('slug')}")
             print(f"   is_restricted             = {v.get('is_restricted')}")
-            print(f"   restrict_access_to_groups = "
-                  f"{json.dumps(v.get('restrict_access_to_groups'), ensure_ascii=False)}")
+            print(
+                f"   restrict_access_to_groups = "
+                f"{json.dumps(v.get('restrict_access_to_groups'), ensure_ascii=False)}"
+            )
             rag = v.get("restrict_access_to_groups")
             if rag:
                 print("\n   >>> VOILA LE FORMAT EXACT attendu par l'API pour ce champ.")

@@ -7,6 +7,7 @@ importé et redécoupé, sans rien envoyer.
 Scénario dans un PROCESSUS SÉPARÉ (une seule instance Tk, dossier personnel
 temporaire), avec un faux Aristote. Aucun réseau.
 """
+
 import ast
 import os
 import subprocess
@@ -19,15 +20,21 @@ sys.path.insert(0, RACINE)
 def test_rien_n_importe_ffmpeg_ni_le_module_media():
     """ffmpeg (imageio-ffmpeg) n'est pas embarqué : aucun import ne doit le
     réclamer, sans quoi l'application compilée planterait à l'envoi."""
-    fichiers = ["app.py"] + [os.path.join("enrichissement", f)
-                             for f in os.listdir(os.path.join(RACINE, "enrichissement"))
-                             if f.endswith(".py")]
+    fichiers = ["app.py"] + [
+        os.path.join("enrichissement", f)
+        for f in os.listdir(os.path.join(RACINE, "enrichissement"))
+        if f.endswith(".py")
+    ]
     for f in fichiers:
         arbre = ast.parse(open(os.path.join(RACINE, f), encoding="utf-8").read())
         for n in ast.walk(arbre):
-            noms = ([a.name for a in n.names] if isinstance(n, ast.Import)
-                    else [n.module or ""] + [a.name for a in n.names] if isinstance(n, ast.ImportFrom)
-                    else [])
+            noms = (
+                [a.name for a in n.names]
+                if isinstance(n, ast.Import)
+                else [n.module or ""] + [a.name for a in n.names]
+                if isinstance(n, ast.ImportFrom)
+                else []
+            )
             for nom in noms:
                 assert not any(x in nom for x in ("imageio", "ffmpeg", "media")), (f, nom)
 
@@ -36,10 +43,11 @@ def test_la_limite_reste_sous_le_refus_mesure():
     """La sonde a vu ILaaS refuser à partir de 811 Mo : la limite doit rester
     en dessous, marge comprise pour l'enveloppe multipart."""
     from enrichissement import reglages
+
     assert 700 * 1024 * 1024 <= reglages.LIMITE_ENVOI_OCTETS < 795 * 1024 * 1024
 
 
-SCENARIO = r'''
+SCENARIO = r"""
 import os, sys, time
 sys.path.insert(0, RACINE)
 import app as A
@@ -134,13 +142,19 @@ assert "casse.srt : fichier illisible" in journal
 assert "importé et redécoupé" in journal
 print("SCENARIO OK")
 a.destroy()
-'''
+"""
 
 
 def test_fichiers_du_poste_de_bout_en_bout(tmp_path):
     script = tmp_path / "scenario.py"
     script.write_text(f"RACINE = {RACINE!r}\n" + SCENARIO, encoding="utf-8")
     env = {**os.environ, "USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1"}
-    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True,
-                       timeout=120, env=env, cwd=RACINE)
+    r = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=RACINE,
+    )
     assert r.returncode == 0 and "SCENARIO OK" in r.stdout, r.stdout[-3000:] + r.stderr[-3000:]

@@ -15,6 +15,7 @@ Chargé par pytest avant le moindre test, donc avant que `config`,
     trouvé et l'application SE CONNECTAIT réellement à l'instance pendant les
     tests. Le coffre « null » ne renvoie rien et ignore les écritures.
 """
+
 import os
 import tempfile
 

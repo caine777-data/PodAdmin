@@ -19,20 +19,27 @@ NE CREE / NE MODIFIE RIEN. Sans danger pour la production.
 Lancer avec un token SUPERUTILISATEUR :  python verifier_files.py
 """
 
-__author__      = "Cédric MONNA"
-__contact__     = "cedricmonna@gmail.com"
+__author__ = "Cédric MONNA"
+__contact__ = "cedricmonna@gmail.com"
 __institution__ = "Université de Toulouse — MFCA"
-__version__     = "0.1.0"
-__date__        = "2026"
+__version__ = "0.1.0"
+__date__ = "2026"
 
 import json
+
 import requests
 
 DEFAULT_URL = "https://videos.utoulouse.fr"
 
 # Endpoints candidats pour les dossiers (folder)
-FOLDER_CANDIDATES = ["/folders/", "/folder/", "/userfolders/", "/userfolder/",
-                     "/user_folders/", "/myfolders/"]
+FOLDER_CANDIDATES = [
+    "/folders/",
+    "/folder/",
+    "/userfolders/",
+    "/userfolder/",
+    "/user_folders/",
+    "/myfolders/",
+]
 
 
 def get(url, headers, params=None):
@@ -73,11 +80,12 @@ def main():
         post = {}
     for field in ("folder", "name", "file", "created_by"):
         meta = post.get(field, {})
-        print(f"   [{field:11}] type={meta.get('type')}  requis={meta.get('required')}"
-              f"  read_only={meta.get('read_only')}")
+        print(
+            f"   [{field:11}] type={meta.get('type')}  requis={meta.get('required')}"
+            f"  read_only={meta.get('read_only')}"
+        )
         if meta.get("choices"):
-            print(f"       choices (extrait) : "
-                  f"{[c.get('value') for c in meta['choices'][:5]]} ...")
+            print(f"       choices (extrait) : {[c.get('value') for c in meta['choices'][:5]]} ...")
 
     # ------------------------------------------------------------------ #
     # 2) Fichiers existants : format reel de folder / created_by
@@ -108,8 +116,13 @@ def main():
     folder_ep = None
     for ep in FOLDER_CANDIDATES:
         status, data = get(f"{rest}{ep}", headers, {"limit": 3})
-        tag = {200: "[OK] existe", 401: "[401]", 403: "[403]",
-               404: "[--] absent", None: "[err]"}.get(status, f"[{status}]")
+        tag = {
+            200: "[OK] existe",
+            401: "[401]",
+            403: "[403]",
+            404: "[--] absent",
+            None: "[err]",
+        }.get(status, f"[{status}]")
         print(f"   {ep:16} -> {tag}")
         if status == 200 and not folder_ep:
             folder_ep = ep
@@ -119,7 +132,7 @@ def main():
             # Champs filtrables ?
             try:
                 ro = requests.options(f"{rest}{ep}", headers=headers, timeout=15)
-                print(f"       Allow : {ro.headers.get('Allow','(non fourni)')}")
+                print(f"       Allow : {ro.headers.get('Allow', '(non fourni)')}")
             except Exception:
                 pass
 

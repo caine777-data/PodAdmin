@@ -5,6 +5,7 @@ CONSULTE `version.json`, et le workflow qui le PUBLIE. Une divergence entre les
 deux ne produit aucune erreur — seulement un bandeau qui n'apparaît jamais, ou
 qui apparaît en permanence.
 """
+
 import os
 import re
 import sys
@@ -29,11 +30,12 @@ def _bash():
     n'a jamais tourné. On préfère donc explicitement le bash de Git s'il
     existe, avant de se rabattre sur la résolution normale."""
     git_bash = os.path.join(
-        os.environ.get("ProgramFiles", r"C:\Program Files"),
-        "Git", "usr", "bin", "bash.exe")
+        os.environ.get("ProgramFiles", r"C:\Program Files"), "Git", "usr", "bin", "bash.exe"
+    )
     if os.path.exists(git_bash):
         return git_bash
     import shutil
+
     return shutil.which("bash") or "bash"
 
 
@@ -42,6 +44,7 @@ def app():
     """Instance partagée, réseau neutralisé : ni connexion automatique, ni
     vérification de mise à jour réelle (elle interrogerait GitHub)."""
     import tempfile
+
     os.environ.setdefault("HOME", tempfile.mkdtemp())
     try:
         import app as module_app
@@ -70,16 +73,17 @@ class TestSourceUniqueDeVersion:
 
     def test_l_application_lit_la_source_unique(self):
         import __version__ as v
-
         import app as module_app
-        assert module_app.APP_VERSION == v.__version__, (
-            f"l'application annonce {module_app.APP_VERSION} au lieu de "
-            f"{v.__version__}")
+
+        assert v.__version__ == module_app.APP_VERSION, (
+            f"l'application annonce {module_app.APP_VERSION} au lieu de {v.__version__}"
+        )
 
     def test_app_et_config_n_ont_plus_leur_propre_numero(self):
         for nom in ("app.py", "config.py"):
             assert not re.search(r'^__version__\s*=\s*"', _lire(nom), re.M), (
-                f"{nom} redéfinit sa propre version : elle divergera")
+                f"{nom} redéfinit sa propre version : elle divergera"
+            )
 
     def test_installeur_windows_ne_code_pas_la_version_en_dur(self):
         """⚠️ RÉGRESSION RÉELLE : AppVersion était codé en dur dans le script
@@ -88,21 +92,21 @@ class TestSourceUniqueDeVersion:
         avant la mise en place de __version__.py."""
         w = _lire(".github/workflows/build.yml")
         assert "AppVersion=$appVersion" in w, (
-            "AppVersion n'est plus lu dynamiquement depuis __version__.py "
-            "dans le workflow Windows")
+            "AppVersion n'est plus lu dynamiquement depuis __version__.py dans le workflow Windows"
+        )
         assert not re.search(r"AppVersion=\d+\.\d+\.\d+", w), (
-            "AppVersion est de nouveau codé en dur avec un numéro littéral")
+            "AppVersion est de nouveau codé en dur avec un numéro littéral"
+        )
 
     def test_version_txt_concorde(self):
         """Métadonnées de l'exécutable Windows : il ne peut pas importer de
         Python, d'où ce contrôle."""
         import __version__ as v
+
         texte = _lire("version.txt")
-        assert f"u'{v.__version__}'" in texte, (
-            f"version.txt ne mentionne pas {v.__version__}")
+        assert f"u'{v.__version__}'" in texte, f"version.txt ne mentionne pas {v.__version__}"
         attendu = ", ".join(str(x) for x in v.VERSION_TUPLE)
-        assert f"({attendu})" in texte, (
-            f"filevers/prodvers ne valent pas ({attendu})")
+        assert f"({attendu})" in texte, f"filevers/prodvers ne valent pas ({attendu})"
 
 
 class TestVerification:
@@ -111,6 +115,7 @@ class TestVerification:
     def test_l_adresse_pointe_le_depot_public(self):
         """Le dépôt du code est PRIVÉ : un enseignant n'y a pas accès."""
         import config as cfg
+
         assert "podadmin-releases" in cfg.UPDATE_URL
         assert cfg.UPDATE_URL.endswith("/version.json")
 
@@ -118,6 +123,7 @@ class TestVerification:
         """« 2.10.0 » est plus récent que « 2.9.0 » : une comparaison
         alphabétique conclurait l'inverse."""
         import maj
+
         assert maj.comparer_versions("2.10.0", "2.9.0") > 0
         assert maj.comparer_versions("2.1.0", "2.2.0") < 0
         assert maj.comparer_versions("2.2.0", "2.2.0") == 0
@@ -125,8 +131,8 @@ class TestVerification:
     def test_un_reseau_absent_ne_bloque_rien(self):
         """La vérification ne doit JAMAIS empêcher de travailler."""
         import maj
-        info = maj.etat_mise_a_jour("2.2.0", "https://exemple.invalid/v.json",
-                                    timeout=1)
+
+        info = maj.etat_mise_a_jour("2.2.0", "https://exemple.invalid/v.json", timeout=1)
         assert info is None
 
 
@@ -138,9 +144,14 @@ class TestBandeau:
         assert app.maj_bandeau is None
 
     def test_affichage_et_remplacement(self, app):
-        app._afficher_bandeau_maj({"version": "9.9.9",
-                                   "url": "https://exemple.invalid",
-                                   "notes": "Test.", "urgent": False})
+        app._afficher_bandeau_maj(
+            {
+                "version": "9.9.9",
+                "url": "https://exemple.invalid",
+                "notes": "Test.",
+                "urgent": False,
+            }
+        )
         app.update()
         premier = app.maj_bandeau
         assert premier.winfo_ismapped() and premier.winfo_height() > 1
@@ -153,6 +164,7 @@ class TestBandeau:
         """Le bandeau appelle `_ouvrir_lien_maj` : sans elle, le clic sur
         « Télécharger » lèverait une erreur."""
         import app as module_app
+
         assert hasattr(module_app.App, "_ouvrir_lien_maj")
 
 
@@ -185,27 +197,25 @@ class TestTransmissionDesChampsObligatoires:
         fin = w.index("EOF", ouverture + 3)
         bloc = w[deb:fin]
         assert "inputs.obligatoire" in w[:deb], (
-            "le formulaire obligatoire n'est lu dans aucune variable avant "
-            "l'écriture du fichier")
-        assert '"obligatoire":' in bloc, (
-            "le champ obligatoire n'est pas écrit dans version.json")
+            "le formulaire obligatoire n'est lu dans aucune variable avant l'écriture du fichier"
+        )
+        assert '"obligatoire":' in bloc, "le champ obligatoire n'est pas écrit dans version.json"
 
     def test_le_bloc_ecrit_version_minimale_depuis_le_formulaire(self):
         w = self._workflow()
-        assert "inputs.version_minimale" in w, (
-            "le formulaire version_minimale n'est lu nulle part")
+        assert "inputs.version_minimale" in w, "le formulaire version_minimale n'est lu nulle part"
         # Ne doit plus être figé à une chaîne vide littérale.
-        bloc = w[w.index("cat > version.json"):w.index("EOF", w.index("cat > version.json"))]
+        bloc = w[w.index("cat > version.json") : w.index("EOF", w.index("cat > version.json"))]
         assert '"version_minimale": ""' not in bloc, (
             "version_minimale est encore figé à une chaîne vide en dur : le "
-            "formulaire n'est jamais réellement pris en compte")
+            "formulaire n'est jamais réellement pris en compte"
+        )
 
     def test_simulation_bash_reproduit_la_regle_documentee(self):
         """Rejoue littéralement la logique bash du workflow (sans l'exécuter
         via GitHub Actions) pour les 3 combinaisons qui comptent, et vérifie
         le JSON obtenu — c'est exactement le calcul qui a été trouvé cassé
         lors d'un test réel."""
-        import json
         import subprocess
 
         script = self._workflow()
@@ -220,19 +230,26 @@ class TestTransmissionDesChampsObligatoires:
         bloc_brut = script[deb:fin]
         # Neutralise la syntaxe GitHub Actions ${{ ... }} par des variables
         # d'environnement shell classiques, injectées avant exécution.
-        bloc_bash = (bloc_brut
-                     .replace('${{ steps.v.outputs.num }}', "$V_NUM")
-                     .replace('${{ inputs.notes }}', "$IN_NOTES")
-                     .replace('${{ inputs.obligatoire }}', "$IN_OBLIGATOIRE")
-                     .replace('${{ inputs.version_minimale }}', "$IN_MINIMALE"))
+        bloc_bash = (
+            bloc_brut.replace("${{ steps.v.outputs.num }}", "$V_NUM")
+            .replace("${{ inputs.notes }}", "$IN_NOTES")
+            .replace("${{ inputs.obligatoire }}", "$IN_OBLIGATOIRE")
+            .replace("${{ inputs.version_minimale }}", "$IN_MINIMALE")
+        )
 
         cas = [
-            ({"IN_OBLIGATOIRE": "true", "IN_MINIMALE": ""},
-             {"obligatoire": True, "version_minimale": "2.3.0"}),
-            ({"IN_OBLIGATOIRE": "true", "IN_MINIMALE": "2.1.0"},
-             {"obligatoire": True, "version_minimale": "2.1.0"}),
-            ({"IN_OBLIGATOIRE": "false", "IN_MINIMALE": ""},
-             {"obligatoire": False, "version_minimale": ""}),
+            (
+                {"IN_OBLIGATOIRE": "true", "IN_MINIMALE": ""},
+                {"obligatoire": True, "version_minimale": "2.3.0"},
+            ),
+            (
+                {"IN_OBLIGATOIRE": "true", "IN_MINIMALE": "2.1.0"},
+                {"obligatoire": True, "version_minimale": "2.1.0"},
+            ),
+            (
+                {"IN_OBLIGATOIRE": "false", "IN_MINIMALE": ""},
+                {"obligatoire": False, "version_minimale": ""},
+            ),
         ]
         import tempfile
 
@@ -242,7 +259,8 @@ class TestTransmissionDesChampsObligatoires:
         # d'arguments. On écrit le script dans un VRAI fichier temporaire,
         # exactement comme GitHub Actions le ferait lui-même.
         with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".sh", delete=False, encoding="utf-8") as f:
+            mode="w", suffix=".sh", delete=False, encoding="utf-8"
+        ) as f:
             f.write(bloc_bash)
             f.write('\necho "OBL=$OBLIGATOIRE"\necho "MIN=$MINIMALE"\n')
             chemin_script = f.name
@@ -257,26 +275,35 @@ class TestTransmissionDesChampsObligatoires:
                 # générique sur stdout, ce qui ressemblait à tort à un défaut
                 # du script bash lui-même.
                 env = dict(os.environ)
-                env.update({"V_NUM": "2.3.0", "IN_NOTES": "test",
-                            "DEPOT_PUBLIC": "", "GITHUB_REPOSITORY_OWNER": "x"})
+                env.update(
+                    {
+                        "V_NUM": "2.3.0",
+                        "IN_NOTES": "test",
+                        "DEPOT_PUBLIC": "",
+                        "GITHUB_REPOSITORY_OWNER": "x",
+                    }
+                )
                 env.update(env_supp)
                 resultat = subprocess.run(
-                    [_bash(), chemin_script],
-                    capture_output=True, text=True, env=env)
+                    [_bash(), chemin_script], capture_output=True, text=True, env=env
+                )
                 sortie = resultat.stdout
                 lignes_obl = [l for l in sortie.splitlines() if l.startswith("OBL=")]
                 lignes_min = [l for l in sortie.splitlines() if l.startswith("MIN=")]
                 assert lignes_obl and lignes_min, (
                     f"cas {env_supp} : le script n'a produit aucune sortie "
-                    f"exploitable (stderr : {resultat.stderr!r})")
+                    f"exploitable (stderr : {resultat.stderr!r})"
+                )
                 obl = lignes_obl[-1][4:]
                 mini = lignes_min[-1][4:]
                 assert (obl == "true") == attendu["obligatoire"], (
                     f"cas {env_supp} : obligatoire calculé = {obl!r}, "
-                    f"attendu {attendu['obligatoire']}")
+                    f"attendu {attendu['obligatoire']}"
+                )
                 assert mini == attendu["version_minimale"], (
                     f"cas {env_supp} : version_minimale calculée = {mini!r}, "
-                    f"attendu {attendu['version_minimale']!r}")
+                    f"attendu {attendu['version_minimale']!r}"
+                )
         finally:
             os.remove(chemin_script)
 
@@ -289,7 +316,8 @@ class TestWorkflowDePublication:
 
     def test_la_version_est_lue_dans_le_code(self):
         assert "__version__.py" in self._workflow(), (
-            "le workflow ne lit pas la version dans le code")
+            "le workflow ne lit pas la version dans le code"
+        )
 
     def test_publication_sur_le_depot_public(self):
         w = self._workflow()
@@ -308,13 +336,14 @@ class TestWorkflowDePublication:
             nom = re.search(r"name:\s*([\w.-]+)", bloc)
             chemin = re.search(r"path:\s*([^\s]+)", bloc)
             if nom and chemin:
-                attendus.add(f"{nom.group(1)}/"
-                             f"{os.path.basename(chemin.group(1).rstrip('/'))}")
-        bloc = w[w.index("files: |"):]
-        bloc = bloc[:bloc.index("\n\n")]
+                attendus.add(f"{nom.group(1)}/{os.path.basename(chemin.group(1).rstrip('/'))}")
+        bloc = w[w.index("files: |") :]
+        bloc = bloc[: bloc.index("\n\n")]
         publies = {l.strip() for l in bloc.split("\n")[1:] if l.strip()}
         assert not (publies - attendus), (
-            f"publiés mais jamais produits : {sorted(publies - attendus)}")
+            f"publiés mais jamais produits : {sorted(publies - attendus)}"
+        )
+
 
 class TestVerrouLocalDuBlocage:
     """Modèle 1 durci : blocage informé, mémorisé localement une fois confirmé.
@@ -330,6 +359,7 @@ class TestVerrouLocalDuBlocage:
         jamais toucher au vrai fichier de configuration de la machine qui
         exécute ces tests."""
         import config as cfg
+
         chemin = tmp_path / "config_test.json"
         monkeypatch.setattr(cfg, "CONFIG_PATH", str(chemin))
         return cfg
@@ -341,8 +371,11 @@ class TestVerrouLocalDuBlocage:
     def test_enregistrement_puis_lecture(self, tmp_path, monkeypatch):
         cfg = self._config_isolee(tmp_path, monkeypatch)
         cfg.enregistrer_blocage_confirme(
-            "2.5.0", "3.0.0",
-            url="https://example.invalid/releases", notes="Mise à jour de sécurité.")
+            "2.5.0",
+            "3.0.0",
+            url="https://example.invalid/releases",
+            notes="Mise à jour de sécurité.",
+        )
         r = cfg.blocage_local_actif("2.5.0")
         assert r is not None
         assert r["version"] == "3.0.0"
@@ -356,7 +389,8 @@ class TestVerrouLocalDuBlocage:
         cfg = self._config_isolee(tmp_path, monkeypatch)
         cfg.enregistrer_blocage_confirme("2.5.0", "3.0.0")
         assert cfg.blocage_local_actif("2.6.0") is None, (
-            "le verrou local d'une version a fuité vers une autre version")
+            "le verrou local d'une version a fuité vers une autre version"
+        )
 
     def test_lever_le_verrou(self, tmp_path, monkeypatch):
         cfg = self._config_isolee(tmp_path, monkeypatch)
@@ -368,9 +402,9 @@ class TestVerrouLocalDuBlocage:
         """C'est tout le sens du mécanisme : le verrou doit continuer de
         s'appliquer même quand `recuperer_info` échoue (réseau coupé)."""
         cfg = self._config_isolee(tmp_path, monkeypatch)
-        cfg.enregistrer_blocage_confirme("2.5.0", "3.0.0",
-                                         url="https://x.invalid", notes="X")
+        cfg.enregistrer_blocage_confirme("2.5.0", "3.0.0", url="https://x.invalid", notes="X")
         import maj
+
         monkeypatch.setattr(maj, "recuperer_info", lambda *a, **k: None)
         # Le verrou local, LUI, ne dépend d'aucun appel réseau : il doit
         # rester actif quel que soit l'état du réseau au moment du contrôle.
@@ -383,41 +417,46 @@ class TestBlocageObligatoireDansMaj:
     simple retard mineur, hors de portée de `version_minimale`."""
 
     def _simuler(self, version_installee, donnees_serveur):
-        import maj
         from unittest import mock
+
+        import maj
+
         with mock.patch.object(maj, "recuperer_info", return_value=donnees_serveur):
             return maj.etat_mise_a_jour(version_installee, "https://x.invalid")
 
     def test_a_jour_avec_obligatoire_annonce_ne_bloque_rien(self):
-        r = self._simuler("2.5.0", {
-            "version": "2.5.0", "version_minimale": "2.0.0", "obligatoire": True})
+        r = self._simuler(
+            "2.5.0", {"version": "2.5.0", "version_minimale": "2.0.0", "obligatoire": True}
+        )
         assert r is None
 
     def test_en_retard_mais_au_dessus_du_seuil_minimal(self):
         """Version installée 2.5.0, seuil minimal 2.0.0 : la personne est en
         retard par rapport à la dernière version (3.0.0), mais AU-DESSUS du
         seuil minimal — un simple retard, pas une urgence."""
-        r = self._simuler("2.5.0", {
-            "version": "3.0.0", "version_minimale": "2.0.0", "obligatoire": True})
+        r = self._simuler(
+            "2.5.0", {"version": "3.0.0", "version_minimale": "2.0.0", "obligatoire": True}
+        )
         assert r is not None
         assert r["urgent"] is False, (
-            "urgent=True alors que la version installée est au-dessus du "
-            "seuil minimal")
+            "urgent=True alors que la version installée est au-dessus du seuil minimal"
+        )
         assert r["obligatoire"] is False, (
             "obligatoire=true dans le fichier a bloqué un simple retard "
-            "mineur, alors que le seuil version_minimale n'est pas franchi")
+            "mineur, alors que le seuil version_minimale n'est pas franchi"
+        )
 
     def test_en_dessous_du_seuil_minimal_avec_obligatoire(self):
-        r = self._simuler("1.5.0", {
-            "version": "3.0.0", "version_minimale": "2.0.0", "obligatoire": True})
+        r = self._simuler(
+            "1.5.0", {"version": "3.0.0", "version_minimale": "2.0.0", "obligatoire": True}
+        )
         assert r["urgent"] is True
         assert r["obligatoire"] is True
 
     def test_ancien_format_sans_champ_obligatoire(self):
         """Rétrocompatibilité : un version.json publié avant l'ajout de ce
         champ ne doit jamais déclencher de blocage par accident."""
-        r = self._simuler("1.5.0", {
-            "version": "3.0.0", "version_minimale": "2.0.0"})
+        r = self._simuler("1.5.0", {"version": "3.0.0", "version_minimale": "2.0.0"})
         assert r["urgent"] is True
         assert r["obligatoire"] is False
 
@@ -426,6 +465,7 @@ class TestBlocageObligatoireDansMaj:
         sans réseau supplémentaire — sinon app.py ferait deux requêtes à
         chaque démarrage."""
         import maj
+
         appels = []
 
         def espion(*a, **k):
@@ -433,11 +473,11 @@ class TestBlocageObligatoireDansMaj:
             return {"version": "2.0.0"}
 
         import unittest.mock as mock
+
         with mock.patch.object(maj, "recuperer_info", espion):
             donnees = maj.recuperer_info("https://x.invalid")
             maj.etat_mise_a_jour("2.0.0", "https://x.invalid", infos=donnees)
-        assert len(appels) == 1, (
-            f"recuperer_info appelé {len(appels)} fois, attendu 1 seule")
+        assert len(appels) == 1, f"recuperer_info appelé {len(appels)} fois, attendu 1 seule"
 
 
 class TestFenetreBloquanteAppelleLeVerrou:
@@ -466,7 +506,8 @@ class TestFenetreBloquanteAppelleLeVerrou:
         corps = source[deb:fin]
         assert "lever_blocage_local" in corps, (
             "le verrou local n'est jamais levé quand le serveur confirme "
-            "que l'application est à jour")
+            "que l'application est à jour"
+        )
 
     def test_le_demarrage_consulte_le_verrou_local_en_tout_premier(self):
         """Avant même l'auto-connexion ou l'assistant de premier lancement :
@@ -487,7 +528,8 @@ class TestFenetreBloquanteAppelleLeVerrou:
         assert pos_auto_connect != -1, "l'auto-connexion introuvable dans __init__"
         assert pos_verrou < pos_auto_connect, (
             "le verrou local est consulté APRÈS l'auto-connexion : une "
-            "interaction serait possible avant le blocage")
+            "interaction serait possible avant le blocage"
+        )
 
 
 class TestFermetureToujoursPossibleDepuisLeBlocage:
@@ -523,13 +565,14 @@ class TestFermetureToujoursPossibleDepuisLeBlocage:
         import tempfile
 
         with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False, dir=RACINE,
-                encoding="utf-8") as f:
+            mode="w", suffix=".py", delete=False, dir=RACINE, encoding="utf-8"
+        ) as f:
             f.write(code_python)
             chemin = f.name
         try:
-            r = subprocess.run([sys.executable, chemin], capture_output=True,
-                              text=True, timeout=15, cwd=RACINE)
+            r = subprocess.run(
+                [sys.executable, chemin], capture_output=True, text=True, timeout=15, cwd=RACINE
+            )
             return r.returncode, r.stdout + r.stderr
         finally:
             os.remove(chemin)
@@ -565,18 +608,22 @@ class TestFermetureToujoursPossibleDepuisLeBlocage:
         assert "focus_force" not in appels_de_fonction, (
             "focus_force() est de retour dans le CODE de la fenêtre de "
             "blocage — c'est précisément ce qui a rendu ALT+F4 inopérant "
-            "lors d'un incident réel")
+            "lors d'un incident réel"
+        )
 
         # "-topmost" : recherché comme argument littéral d'un appel
         # `.attributes(...)`, pas comme simple sous-chaîne du texte source.
         for noeud in ast.walk(methode):
-            if (isinstance(noeud, ast.Call) and isinstance(noeud.func, ast.Attribute)
-                    and noeud.func.attr == "attributes"):
+            if (
+                isinstance(noeud, ast.Call)
+                and isinstance(noeud.func, ast.Attribute)
+                and noeud.func.attr == "attributes"
+            ):
                 for arg in noeud.args:
                     valeur = getattr(arg, "value", None)
                     assert valeur != "-topmost", (
-                        "-topmost combiné à grab_set peut reproduire le "
-                        "même incident")
+                        "-topmost combiné à grab_set peut reproduire le même incident"
+                    )
 
     def test_la_fenetre_est_mise_au_premier_plan_une_seule_fois(self):
         """Deux risques opposés, un seul équilibre :
@@ -587,29 +634,44 @@ class TestFermetureToujoursPossibleDepuisLeBlocage:
         Le helper commun `_focus_toplevel` fait les deux choses une seule
         fois : c'est lui qui doit être employé."""
         import ast
+
         arbre = ast.parse(_lire("app.py"))
-        methode = next(n for n in ast.walk(arbre)
-                       if isinstance(n, ast.FunctionDef)
-                       and n.name == "_bloquer_demarrage")
-        appels = {n.func.id for n in ast.walk(methode)
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        methode = next(
+            n
+            for n in ast.walk(arbre)
+            if isinstance(n, ast.FunctionDef) and n.name == "_bloquer_demarrage"
+        )
+        appels = {
+            n.func.id
+            for n in ast.walk(methode)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
         assert "_focus_toplevel" in appels, (
             "la fenêtre de blocage n'est plus mise au premier plan : elle "
-            "peut s'ouvrir derrière la fenêtre principale")
+            "peut s'ouvrir derrière la fenêtre principale"
+        )
         # Aucune fonction imbriquée qui se re-planifie elle-même (la boucle
         # de l'incident s'appelait `reprendre_le_focus`).
-        imbriquees = [n for n in ast.walk(methode)
-                      if isinstance(n, ast.FunctionDef) and n is not methode]
+        imbriquees = [
+            n for n in ast.walk(methode) if isinstance(n, ast.FunctionDef) and n is not methode
+        ]
         for f in imbriquees:
-            noms = {c.func.attr for c in ast.walk(f)
-                    if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+            noms = {
+                c.func.attr
+                for c in ast.walk(f)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            }
             assert "after" not in noms, (
                 f"« {f.name} » se re-planifie avec after() : c'est la forme "
-                "exacte de la boucle qui a rendu ALT+F4 inopérant")
+                "exacte de la boucle qui a rendu ALT+F4 inopérant"
+            )
 
-    _PREAMBULE = ('''
+    _PREAMBULE = (
+        """
 import sys, os, tempfile
-sys.path.insert(0, ''' + repr(RACINE) + ''')
+sys.path.insert(0, """
+        + repr(RACINE)
+        + """)
 os.environ["HOME"] = tempfile.mkdtemp()
 import customtkinter as ctk
 ctk.set_appearance_mode("light")
@@ -622,7 +684,8 @@ a._bloquer_demarrage({"version": "9.9.9", "url": "https://x.invalid",
                       "notes": "Test.", "urgent": True, "obligatoire": True})
 a.update()
 win = [w for w in a.winfo_children() if isinstance(w, ctk.CTkToplevel)][0]
-''')
+"""
+    )
 
     def test_le_bouton_quitter_existe_et_ferme_lapplication(self):
         """Reproduit littéralement l'incident : clique sur 'Quitter' et
@@ -631,7 +694,9 @@ win = [w for w in a.winfo_children() if isinstance(w, ctk.CTkToplevel)][0]
         Exécuté en SOUS-PROCESSUS (voir _executer_dans_sous_processus) :
         garantit qu'une seule instance de l'application existe pendant le
         test, comme dans l'usage réel."""
-        code = self._PREAMBULE + '''
+        code = (
+            self._PREAMBULE
+            + """
 btn_quitter = None
 for w in win.winfo_children():
     if isinstance(w, ctk.CTkButton) and w.cget("text") == "Quitter":
@@ -645,18 +710,21 @@ except Exception:
     existe = False
 print("RESULTAT:", not existe)
 assert not existe
-'''
+"""
+        )
         code_retour, sortie = self._executer_dans_sous_processus(code)
         assert code_retour == 0 and "RESULTAT: True" in sortie, (
-            f"le bouton 'Quitter' ne ferme pas l'application "
-            f"(code={code_retour}) :\n{sortie}")
+            f"le bouton 'Quitter' ne ferme pas l'application (code={code_retour}) :\n{sortie}"
+        )
 
     def test_la_croix_de_la_modale_ferme_lapplication_entiere(self):
         """⚠️ Le point EXACT de l'incident : la croix ne doit ni ne rien faire
         (déroutant) ni être neutralisée au point qu'aucune fermeture système
         ne fonctionne — elle doit fermer l'application, tout comme le ferait
         une fermeture système normale."""
-        code = self._PREAMBULE + '''
+        code = (
+            self._PREAMBULE
+            + """
 proto = win.protocol("WM_DELETE_WINDOW")
 assert proto, "aucun protocole de fermeture enregistré sur la croix"
 win.tk.call(proto)
@@ -667,21 +735,26 @@ except Exception:
     existe = False
 print("RESULTAT:", not existe)
 assert not existe
-'''
+"""
+        )
         code_retour, sortie = self._executer_dans_sous_processus(code)
         assert code_retour == 0 and "RESULTAT: True" in sortie, (
             f"la croix de la fenêtre de blocage ne ferme plus l'application : "
             f"c'est exactement le défaut qui a forcé à tuer le processus "
             f"depuis le gestionnaire de tâches lors d'un incident réel "
-            f"(code={code_retour}) :\n{sortie}")
+            f"(code={code_retour}) :\n{sortie}"
+        )
 
     def test_la_fenetre_principale_garde_son_protocole_de_fermeture_normal(self):
         """La fenêtre PRINCIPALE (celle avec la barre latérale) ne doit
         JAMAIS voir son propre WM_DELETE_WINDOW redéfini par le blocage :
         seule la petite modale doit avoir un comportement particulier."""
-        code = ('''
+        code = (
+            """
 import sys, os, tempfile
-sys.path.insert(0, ''' + repr(RACINE) + ''')
+sys.path.insert(0, """
+            + repr(RACINE)
+            + """)
 os.environ["HOME"] = tempfile.mkdtemp()
 import customtkinter as ctk
 ctk.set_appearance_mode("light")
@@ -697,11 +770,13 @@ a.update()
 proto_apres = a.protocol("WM_DELETE_WINDOW")
 print("RESULTAT:", proto_avant == proto_apres)
 assert proto_avant == proto_apres
-''')
+"""
+        )
         code_retour, sortie = self._executer_dans_sous_processus(code)
         assert code_retour == 0 and "RESULTAT: True" in sortie, (
             f"le blocage a modifié le protocole de fermeture de la fenêtre "
-            f"PRINCIPALE (code={code_retour}) :\n{sortie}")
+            f"PRINCIPALE (code={code_retour}) :\n{sortie}"
+        )
 
 
 class TestMessageDeBlocageNeutre:
@@ -712,39 +787,51 @@ class TestMessageDeBlocageNeutre:
     @staticmethod
     def _textes(win):
         import customtkinter as ctk
-        return [str(w.cget("text")) for w in win.winfo_children()
-                if isinstance(w, ctk.CTkLabel)]
+
+        return [str(w.cget("text")) for w in win.winfo_children() if isinstance(w, ctk.CTkLabel)]
 
     def test_les_notes_ne_sont_pas_affichees(self, app):
         import customtkinter as ctk
 
         import app as module_app
+
         notes = "RAISON CONFIDENTIELLE A NE PAS AFFICHER"
-        app._bloquer_demarrage({"version": "9.9.9", "url": "https://x.invalid",
-                               "notes": notes, "urgent": True,
-                               "obligatoire": True})
+        app._bloquer_demarrage(
+            {
+                "version": "9.9.9",
+                "url": "https://x.invalid",
+                "notes": notes,
+                "urgent": True,
+                "obligatoire": True,
+            }
+        )
         app.update()
-        win = [w for w in app.winfo_children()
-               if isinstance(w, ctk.CTkToplevel)
-               and w.title() == "Mise à jour requise"][-1]
+        win = [
+            w
+            for w in app.winfo_children()
+            if isinstance(w, ctk.CTkToplevel) and w.title() == "Mise à jour requise"
+        ][-1]
         textes = self._textes(win)
         try:
             assert not any(notes in t for t in textes), (
                 "le champ notes est affiché dans la fenêtre de blocage : la "
-                "raison du blocage ne doit jamais apparaître")
+                "raison du blocage ne doit jamais apparaître"
+            )
             assert module_app.MESSAGE_BLOCAGE in textes, (
-                "le message neutre de blocage n'est pas affiché")
+                "le message neutre de blocage n'est pas affiché"
+            )
         finally:
             win.destroy()
             app.update()
 
     def test_le_message_neutre_ne_donne_aucune_raison(self):
         import app as module_app
+
         message = module_app.MESSAGE_BLOCAGE.lower()
         for mot in ("mot de passe", "véhicule", "sécurité", "parce que", "car "):
             assert mot not in message, (
-                f"le message de blocage contient « {mot} » : il ne doit "
-                "donner aucune raison")
+                f"le message de blocage contient « {mot} » : il ne doit donner aucune raison"
+            )
 
 
 class TestBoutonDeTelechargementToujoursPresent:
@@ -756,6 +843,7 @@ class TestBoutonDeTelechargementToujoursPresent:
     @staticmethod
     def _bouton_present(win):
         import customtkinter as ctk
+
         for w in win.winfo_children():
             if isinstance(w, ctk.CTkButton) and "élécharger" in str(w.cget("text")):
                 return True
@@ -777,29 +865,47 @@ class TestBoutonDeTelechargementToujoursPresent:
 
     def test_bouton_present_avec_url(self, app):
         import customtkinter as ctk
-        app._bloquer_demarrage({"version": "9.9.9", "url": "https://x.invalid",
-                               "notes": "Test.", "urgent": True,
-                               "obligatoire": True})
+
+        app._bloquer_demarrage(
+            {
+                "version": "9.9.9",
+                "url": "https://x.invalid",
+                "notes": "Test.",
+                "urgent": True,
+                "obligatoire": True,
+            }
+        )
         app.update()
-        win = [w for w in app.winfo_children()
-               if isinstance(w, ctk.CTkToplevel)
-               and w.title() == "Mise à jour requise"][-1]
+        win = [
+            w
+            for w in app.winfo_children()
+            if isinstance(w, ctk.CTkToplevel) and w.title() == "Mise à jour requise"
+        ][-1]
         assert self._bouton_present(win)
         self._nettoyer(win, app)
 
     def test_bouton_present_meme_sans_url(self, app):
         """Le cas qui comptait vraiment : `url` vide ou absente."""
         import customtkinter as ctk
-        app._bloquer_demarrage({"version": "9.9.9", "url": "",
-                               "notes": "Sans URL.", "urgent": True,
-                               "obligatoire": True})
+
+        app._bloquer_demarrage(
+            {
+                "version": "9.9.9",
+                "url": "",
+                "notes": "Sans URL.",
+                "urgent": True,
+                "obligatoire": True,
+            }
+        )
         app.update()
-        win = [w for w in app.winfo_children()
-               if isinstance(w, ctk.CTkToplevel)
-               and w.title() == "Mise à jour requise"][-1]
+        win = [
+            w
+            for w in app.winfo_children()
+            if isinstance(w, ctk.CTkToplevel) and w.title() == "Mise à jour requise"
+        ][-1]
         assert self._bouton_present(win), (
-            "fenêtre bloquante SANS bouton de téléchargement : blocage sans "
-            "aucune issue possible")
+            "fenêtre bloquante SANS bouton de téléchargement : blocage sans aucune issue possible"
+        )
         self._nettoyer(win, app)
 
     def test_le_code_source_n_a_plus_de_bouton_conditionnel(self):
@@ -810,7 +916,8 @@ class TestBoutonDeTelechargementToujoursPresent:
         fin = source.index("def _afficher_bandeau_maj(")
         corps = source[deb:fin]
         assert 'if info.get("url"):' not in corps, (
-            "le bouton de téléchargement est encore conditionnel à la "
-            "présence de l'URL")
+            "le bouton de téléchargement est encore conditionnel à la présence de l'URL"
+        )
         assert "UPDATE_FALLBACK_URL" in corps, (
-            "aucune URL de repli n'est utilisée si info['url'] est vide")
+            "aucune URL de repli n'est utilisée si info['url'] est vide"
+        )

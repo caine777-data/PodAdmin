@@ -31,23 +31,26 @@ import json
 # Ressources non exploitées par PodAdmin, regroupées par intérêt pressenti.
 A_EXAMINER = [
     # (nom, pourquoi c'est intéressant)
-    ("view_count",       "Statistiques de consultation — le plus prometteur : "
-                         "transformerait l'Inventaire en outil de pilotage"),
-    ("playlists",        "Listes de lecture créées par les enseignants"),
-    ("playlist_videos",  "Contenu des listes de lecture"),
-    ("chapters",         "Chapitrage des vidéos"),
-    ("enrichments",      "Enrichissements pédagogiques (quiz, documents…)"),
-    ("overlays",         "Incrustations affichées sur la vidéo"),
-    ("discipline",       "Classement par discipline"),
-    ("groups",           "Groupes Django (distincts des groupes d'accès)"),
-    ("documents",        "Documents joints"),
-    ("mainfiles",        "Fichiers principaux"),
-    ("mainimages",       "Images principales"),
-    ("encodings_video",  "Détail des encodages vidéo (diagnostic)"),
-    ("encodings_audio",  "Détail des encodages audio"),
-    ("renditions",       "Qualités d'encodage configurées"),
-    ("recording",        "Enregistrements automatisés (amphis équipés)"),
-    ("recorder",         "Matériel d'enregistrement déclaré"),
+    (
+        "view_count",
+        "Statistiques de consultation — le plus prometteur : "
+        "transformerait l'Inventaire en outil de pilotage",
+    ),
+    ("playlists", "Listes de lecture créées par les enseignants"),
+    ("playlist_videos", "Contenu des listes de lecture"),
+    ("chapters", "Chapitrage des vidéos"),
+    ("enrichments", "Enrichissements pédagogiques (quiz, documents…)"),
+    ("overlays", "Incrustations affichées sur la vidéo"),
+    ("discipline", "Classement par discipline"),
+    ("groups", "Groupes Django (distincts des groupes d'accès)"),
+    ("documents", "Documents joints"),
+    ("mainfiles", "Fichiers principaux"),
+    ("mainimages", "Images principales"),
+    ("encodings_video", "Détail des encodages vidéo (diagnostic)"),
+    ("encodings_audio", "Détail des encodages audio"),
+    ("renditions", "Qualités d'encodage configurées"),
+    ("recording", "Enregistrements automatisés (amphis équipés)"),
+    ("recorder", "Matériel d'enregistrement déclaré"),
 ]
 
 
@@ -55,6 +58,7 @@ def charger_requests():
     """Importe `requests`, en proposant de l'installer si nécessaire."""
     try:
         import requests
+
         return requests
     except ImportError:
         pass
@@ -64,9 +68,11 @@ def charger_requests():
         return None
     import subprocess
     import sys as _sys
+
     try:
         subprocess.check_call([_sys.executable, "-m", "pip", "install", "requests"])
         import requests
+
         return requests
     except Exception as e:
         print(f"[X] Installation impossible : {e}")
@@ -75,8 +81,14 @@ def charger_requests():
 
 def examiner(sess, rest: str, nom: str, interet: str) -> dict:
     """Examine une ressource : accès, volume, champs, modifiabilité."""
-    bilan = {"nom": nom, "accessible": False, "nombre": None,
-             "modifiable": False, "champs": [], "exemple": None}
+    bilan = {
+        "nom": nom,
+        "accessible": False,
+        "nombre": None,
+        "modifiable": False,
+        "champs": [],
+        "exemple": None,
+    }
 
     print(f"\n{'─' * 68}")
     print(f"  {nom.upper()}")
@@ -122,12 +134,13 @@ def examiner(sess, rest: str, nom: str, interet: str) -> dict:
     try:
         r = sess.options(f"{rest}/{nom}/", timeout=20)
         if r.status_code == 200:
-            actions = (r.json().get("actions") or {})
+            actions = r.json().get("actions") or {}
             if actions.get("POST"):
                 bilan["modifiable"] = True
                 champs = actions["POST"]
-                requis = [k for k, v in champs.items()
-                          if v.get("required") and not v.get("read_only")]
+                requis = [
+                    k for k, v in champs.items() if v.get("required") and not v.get("read_only")
+                ]
                 print(f"\n   ✏  MODIFIABLE — {len(champs)} champ(s) en écriture.")
                 if requis:
                     print(f"      Champs obligatoires : {', '.join(sorted(requis))}")
@@ -147,9 +160,7 @@ def synthese(bilans: list):
     for b in bilans:
         if not b["accessible"]:
             fermees.append(b)
-        elif b["nombre"] in (0, None) and not b["champs"]:
-            vides.append(b)
-        elif b["nombre"] == 0:
+        elif (b["nombre"] in (0, None) and not b["champs"]) or b["nombre"] == 0:
             vides.append(b)
         else:
             exploitables.append(b)
@@ -158,7 +169,7 @@ def synthese(bilans: list):
         print("   EXPLOITABLES (données présentes) :")
         for b in sorted(exploitables, key=lambda x: -(x["nombre"] or 0)):
             mode = "modifiable" if b["modifiable"] else "lecture seule"
-            print(f"      • {b['nom']:18} {str(b['nombre']):>6} élément(s)   [{mode}]")
+            print(f"      • {b['nom']:18} {b['nombre']!s:>6} élément(s)   [{mode}]")
     if vides:
         print("\n   VIDES — aucun développement à prévoir :")
         print("      " + ", ".join(b["nom"] for b in vides))
@@ -184,8 +195,10 @@ def run():
     if requests is None:
         return
 
-    base = (input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
-            or "https://videos.utoulouse.fr").rstrip("/")
+    base = (
+        input("URL de l'instance [https://videos.utoulouse.fr] : ").strip()
+        or "https://videos.utoulouse.fr"
+    ).rstrip("/")
     token = input("Token (compte superutilisateur de préférence) : ").strip()
     if not token:
         print("[X] Token vide.")
@@ -193,8 +206,7 @@ def run():
 
     rest = f"{base}/rest"
     sess = requests.Session()
-    sess.headers.update({"Authorization": f"Token {token}",
-                         "Accept": "application/json"})
+    sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
 
     print(f"\n{'=' * 68}")
     print(f"  EXPLORATION DE {len(A_EXAMINER)} RESSOURCES NON EXPLOITÉES")
@@ -215,6 +227,7 @@ if __name__ == "__main__":
         print("\nInterrompu.")
     except Exception:
         import traceback
+
         print("\n[ERREUR] La sonde a rencontré un problème :\n")
         traceback.print_exc()
     input("\nAppuyez sur Entrée pour fermer…")

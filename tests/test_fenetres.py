@@ -2903,9 +2903,14 @@ class TestListesDeChoixNatives:
         import app as module_app
         app.all_users = self._comptes(450)
         choisis = []
-        cadre = module_app.ctk.CTkFrame(app)
+        # Fenêtre à part, AFFICHÉE : sous Linux (CI), une ligne d'un tableau
+        # non affiché n'a pas de position, et le clic simulé tombait dans le vide.
+        cadre = module_app.ctk.CTkToplevel(app)
+        cadre.geometry("420x320")
         try:
             etat = app._mini_user_picker(cadre, "Source", choisis.append)
+            etat["frame"].pack(fill="both", expand=True)
+            cadre.update()
             if etat is None:
                 etat = app._reassign_pickers[-1]
             liste = etat["results"]

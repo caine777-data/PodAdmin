@@ -193,3 +193,61 @@ def test_aristote_voit_podadmin():
     """Audit O8 : nom vu dans les journaux d'ILaaS."""
     from __version__ import __version__
     assert AA.AristoteAPI("id", "s").session.headers["User-Agent"] == f"PodAdmin/{__version__}"
+
+
+class ReponseBrute:
+    """Réponse non JSON (page HTML de maintenance), en octets UTF-8."""
+
+    def __init__(self, code, corps: str):
+        self.status_code = code
+        self.content = corps.encode("utf-8")
+        self.text = self.content.decode("latin-1")     # ce que lit requests sans charset
+
+    def json(self):
+        raise ValueError("pas du JSON")
+
+
+PAGE_MAINTENANCE = (
+    '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n'
+    "<title>Maintenance en cours · Maintenance in progress</title>\n"
+    "<style>:root{--bg:#fbfaf8}</style></head><body>…</body></html>")
+
+
+class TestMaintenance:
+    """2026-10-22 : ILaaS en maintenance renvoie 503 et une page HTML. PodAdmin
+    l'affichait brute, balises comprises, et conseillait de vérifier les
+    identifiants."""
+
+    def _client_jeton(self, reponse):
+        c = AA.AristoteAPI("id", "secret", "https://stt.exemple.fr/api")
+        c.session = SimpleNamespace(post=lambda *a, **k: reponse, headers={})
+        return c
+
+    def test_page_html_reduite_a_son_titre(self):
+        msg = AA._message_erreur(ReponseBrute(503, PAGE_MAINTENANCE))
+        assert msg == "page « Maintenance en cours · Maintenance in progress »"
+        assert "<" not in msg
+
+    def test_html_sans_titre(self):
+        assert AA._message_erreur(ReponseBrute(502, "<html><body>x</body></html>")) == \
+            "page HTML sans détail"
+
+    def test_texte_simple_garde(self):
+        assert AA._message_erreur(ReponseBrute(500, "Erreur interne")) == "Erreur interne"
+
+    def test_maintenance_au_jeton_ne_parle_pas_d_identifiants(self):
+        c = self._client_jeton(ReponseBrute(503, PAGE_MAINTENANCE))
+        with pytest.raises(AA.AristoteErreur) as e:
+            c.jeton()
+        msg = str(e.value)
+        assert "indisponible" in msg and "maintenance" in msg.lower()
+        assert "identifiant" not in msg, msg
+        assert "<" not in msg
+        assert AA.est_passagere(e.value), "une maintenance doit être reprenable"
+
+    def test_identifiants_refuses_restent_signales(self):
+        c = self._client_jeton(Reponse(401, {"errors": [{"message": "Invalid client"}]}))
+        with pytest.raises(AA.AristoteErreur) as e:
+            c.jeton()
+        assert "Vérifiez l'identifiant et le secret" in str(e.value)
+        assert not AA.est_passagere(e.value)

@@ -23,9 +23,11 @@ from __future__ import annotations
 __author__ = "Cédric MONNA"
 from __version__ import __version__   # noqa: E402
 
+import html
 import json
 import mimetypes
 import os
+import re
 import time
 from typing import Callable
 
@@ -99,7 +101,33 @@ def _message_erreur(r: requests.Response) -> str:
                 str(e.get("message") or next(iter(e.values()), "")) for e in errs)
         return str(d)[:300]
     except ValueError:
-        return (r.text or "")[:300]
+        pass
+    # Page HTML (maintenance, passerelle en panne…) : on n'en garde que le
+    # titre. Le 2026-10-22, la page de maintenance d'ILaaS s'affichait brute,
+    # balises comprises, dans l'onglet Enrichissement IA. Décodée en UTF-8 :
+    # sans jeu de caractères déclaré, requests lit du Latin-1 (« Ã‚Â· »).
+    texte = (r.content or b"").decode("utf-8", "replace")
+    if "<html" in texte[:500].lower() or "<!doctype" in texte[:500].lower():
+        titre = re.search(r"<title[^>]*>(.*?)</title>", texte, re.I | re.S)
+        titre = " ".join(html.unescape(titre.group(1)).split()) if titre else ""
+        return f"page « {titre} »" if titre else "page HTML sans détail"
+    return texte[:300]
+
+
+def _erreur_connexion(r: requests.Response) -> "AristoteErreur":
+    """Échec de l'obtention du jeton. On ne parle d'identifiants QUE si le
+    serveur les refuse : devant un 503 de maintenance, « Vérifiez
+    l'identifiant et le secret » envoyait chercher la panne au mauvais
+    endroit."""
+    detail = _message_erreur(r)
+    if r.status_code in CODES_PASSAGERS:
+        return AristoteErreur(
+            f"Aristote est indisponible pour le moment ({r.status_code} : {detail}). "
+            "Le service est peut-être en maintenance : réessayez plus tard.",
+            status=r.status_code, passagere=True)
+    return AristoteErreur(
+        f"Connexion refusée par Aristote ({r.status_code}) : "
+        f"{detail}. Vérifiez l'identifiant et le secret.", status=r.status_code)
 
 
 class AristoteAPI:
@@ -130,9 +158,7 @@ class AristoteAPI:
             headers={"Accept": "application/json"},
             timeout=self.timeout)
         if r.status_code != 200:
-            raise AristoteErreur(
-                f"Connexion refusée par Aristote ({r.status_code}) : "
-                f"{_message_erreur(r)}. Vérifiez l'identifiant et le secret.")
+            raise _erreur_connexion(r)
         d = r.json()
         self._jeton = d["access_token"]
         self._expire = time.time() + float(d.get("expires_in", 3600))

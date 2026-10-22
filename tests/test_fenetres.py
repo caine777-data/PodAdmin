@@ -3306,3 +3306,112 @@ class TestPastillesDeFiltre:
             app._browse_effacer_filtres()
             app.geometry("1180x760")
             app.update()
+
+
+class TestPanneauDeDetailReutilise:
+    """Panneau de détail construit une fois puis rempli (1.13.0) : 0,6 s par
+    clic auparavant, 0,08 s ensuite. Le risque d'un panneau réutilisé : agir
+    sur la vidéo PRÉCÉDENTE. Ces tests le ferment."""
+
+    BASE = "https://exemple.invalid/rest"
+
+    def _peupler(self, app, monkeypatch):
+        app.videos = [{"slug": f"d{i}", "title": f"Vidéo {i}", "is_draft": False,
+                       "is_restricted": False, "encoded": True, "channel": [],
+                       "type": f"{self.BASE}/types/{1 + i % 2}/", "owner": "",
+                       "discipline": [], "restrict_access_to_groups":
+                           [f"{self.BASE}/groups/1/"] if i == 1 else [],
+                       "date_added": "2026-01-01", "url": f"{self.BASE}/videos/d{i}/"}
+                      for i in range(4)]
+        app.browse_chan_by_url = {}
+        app.type_map = {"Cours": f"{self.BASE}/types/1/", "Conférence": f"{self.BASE}/types/2/"}
+        app.access_groups = [{"url": f"{self.BASE}/groups/{k}/", "code_name": f"g{k}"}
+                             for k in range(3)]
+        app.browse_multi.clear()
+        app.browse_selected = None
+        monkeypatch.setattr(app, "_run", lambda *a, **k: None)   # pas de réseau
+        app._show_tab("browse")
+        app._browse_do_filter()
+        app.update()
+
+    def test_meme_panneau_valeurs_de_la_nouvelle_video(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        app._browse_select(app.videos[0])
+        titre = app._detail_w["titre"]
+        app._browse_select(app.videos[1])
+        d = app._detail_w
+        assert d["titre"] is titre, "le panneau a été reconstruit"
+        assert d["titre"].cget("text") == "Vidéo 1"
+        assert app.browse_title_entry.get() == "Vidéo 1"
+        assert d["type"].get() == "Conférence"
+        assert d["groupes"][f"{self.BASE}/groups/1/"].get() is True
+        app._browse_select(app.videos[2])
+        assert d["type"].get() == "Cours"
+        assert d["groupes"][f"{self.BASE}/groups/1/"].get() is False
+
+    def test_les_actions_visent_la_video_affichee(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        envois = []
+        monkeypatch.setattr(app, "_browse_patch", lambda v, p, m: envois.append((v["slug"], p)))
+        app._browse_select(app.videos[0])
+        app._browse_select(app.videos[2])
+        app._detail_w["statut"]._command("Brouillon")
+        assert envois[-1] == ("d2", {"is_draft": True, "is_restricted": False})
+        assert app.videos[0]["is_draft"] is False, "la vidéo précédente a été modifiée"
+        vus = []
+        monkeypatch.setattr(app, "_browse_delete", lambda v: vus.append(v["slug"]))
+        monkeypatch.setattr(app, "_browse_edit_disciplines", lambda v: vus.append(v["slug"]))
+        import customtkinter as ctk
+        for w in app.browse_detail.winfo_children():
+            for b in [w, *w.winfo_children()]:
+                if isinstance(b, ctk.CTkButton) and any(
+                        t in str(b.cget("text")) for t in ("Supprimer cette", "Disciplines")):
+                    b.invoke()
+        assert vus == ["d2", "d2"], vus
+
+    def test_sous_titres_d_une_video_quittee_ignores(self, app, monkeypatch):
+        import customtkinter as ctk
+        self._peupler(app, monkeypatch)
+        app._browse_select(app.videos[0])
+        app._browse_select(app.videos[1])
+        app._sub_render(app.videos[0], [{"lang": "fr", "kind": "subtitles"}])
+        textes = [str(w.cget("text")) for w in app.browse_subs.winfo_children()
+                  if isinstance(w, ctk.CTkLabel)]
+        assert textes == ["Chargement…"], f"pistes de la vidéo précédente affichées : {textes}"
+        app._sub_render(app.videos[1], [])
+        assert any("Aucun sous-titre" in str(w.cget("text"))
+                   for w in app.browse_subs.winfo_children())
+
+    def test_message_garde_pour_la_meme_video(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        app._browse_select(app.videos[0])
+        app._browse_set_msg("✅  enregistré", "green")
+        app._browse_render_detail()                  # rafraîchissement après un envoi
+        assert "enregistré" in app.browse_msg.cget("text")
+        app._browse_select(app.videos[1])
+        assert app.browse_msg.cget("text") == ""
+
+    def test_reconstruit_apres_le_panneau_de_lot(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        app._browse_select(app.videos[0])
+        app._browse_toggle_multi(app.videos[1])      # panneau de lot : le cadre est vidé
+        assert not app._browse_detail_pret()
+        app._browse_vider_multi()
+        assert app._browse_detail_pret()
+        assert app._detail_w["titre"].cget("text") == "Vidéo 0"
+
+    def test_reconstruit_si_les_groupes_changent(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        app._browse_select(app.videos[0])
+        app.access_groups = app.access_groups + [{"url": f"{self.BASE}/groups/9/",
+                                                  "code_name": "g9"}]
+        app._browse_select(app.videos[1])
+        assert f"{self.BASE}/groups/9/" in app._detail_w["groupes"]
+
+    def test_aucune_selection_puis_selection(self, app, monkeypatch):
+        self._peupler(app, monkeypatch)
+        app.browse_selected = None
+        app._browse_render_detail()
+        assert app._detail_w is None
+        app._browse_select(app.videos[3])
+        assert app._detail_w["titre"].cget("text") == "Vidéo 3"

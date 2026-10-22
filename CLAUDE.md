@@ -213,3 +213,8 @@ après envoi par morceaux, marqueur visible dans le slug.
   dans une `RangeeFluide` (passage à la ligne par `pack(in_=…)`). Recherche
   seule en haut. Tri sans menu (`browse_tri` = `ValeurSimple`, réglé par les
   en-têtes). « Anomalies » remplace Détecter + case mois (`ANOMALIES_VIDEOS`).
+- Panneau de détail de l'onglet Vidéos construit UNE fois puis rempli
+  (`_browse_construire_detail` / `_browse_remplir_detail`, refs dans
+  `_detail_w`) : 0,6 s → 0,08 s par clic. Toute commande du panneau lit
+  `self.browse_selected` au clic, jamais une vidéo capturée. Reconstruit
+  après l'état vide, le panneau de lot, ou si `access_groups` change.

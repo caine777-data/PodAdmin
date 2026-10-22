@@ -6610,16 +6610,25 @@ class App(_AppBase):
         if self.browse_multi:
             self._browse_render_multi_panel()
             return
+        # PANNEAU CONSTRUIT UNE FOIS, PUIS SEULEMENT REMPLI (1.13.0).
+        #
+        # Il comptait une centaine de widgets, détruits puis recréés à chaque
+        # clic sur une vidéo : 0,6 s mesurées par clic (2026-10-22), sensibles
+        # en parcourant la liste. Désormais, d'une vidéo à l'autre, on ne
+        # change que les textes et les valeurs (_browse_remplir_detail). La
+        # construction n'a lieu qu'au premier affichage, après l'état vide ou
+        # le panneau de lot (qui vident le cadre), ou quand la liste des
+        # groupes d'accès a changé (une case par groupe).
+        v = self.browse_selected
+        if v and self._browse_detail_pret():
+            self._browse_remplir_detail(v)
+            return
         # CONSTRUCTION À L'ÉCART, puis affichage d'un seul coup.
         #
-        # Ce panneau crée 94 widgets à chaque clic sur une vidéo. Créés
-        # directement dans un conteneur VISIBLE, Tk les dessine au fur et à
-        # mesure : on voyait le panneau se remplir par saccades.
-        #
-        # `grid_remove` le retire de l'affichage le temps de la reconstruction,
-        # sans perdre ses options de placement ; il revient complet. Le nombre
-        # de widgets ne change pas, mais l'utilisateur ne voit plus qu'une
-        # seule transition au lieu de quatre-vingt-quatorze.
+        # Créés directement dans un conteneur VISIBLE, Tk dessine les widgets
+        # au fur et à mesure : on voyait le panneau se remplir par saccades.
+        # `grid_remove` le retire de l'affichage le temps de la construction,
+        # sans perdre ses options de placement ; il revient complet.
         #
         # Le `try` est indispensable : une exception pendant la construction
         # laisserait sinon le panneau invisible pour toute la session. Le
@@ -6641,32 +6650,36 @@ class App(_AppBase):
                 except Exception:
                     pass
 
-    def _browse_construire_detail(self):
-        """Peuple le panneau de détail (appelé pendant qu'il est masqué)."""
-        for w in self.browse_detail.winfo_children():
-            w.destroy()
-        v = self.browse_selected
-        if not v:
-            # Ce panneau-ci n'est pas vide par manque de données : il attend
-            # un geste. L'aide décrit donc ce que le clic apportera, plutôt
-            # que de répéter l'invitation.
-            etat_vide(self.browse_detail, "👈", "Sélectionnez une vidéo.",
-                      "Titre, statut, chaînes, co-propriétaires et sous-titres "
-                      "s'afficheront ici.")
-            return
+    def _browse_cle_groupes(self) -> tuple:
+        """Signature de la liste des groupes d'accès : le panneau porte une
+        case par groupe, il faut le reconstruire si cette liste change."""
+        return tuple((g.get("url", ""), g.get("code_name", "?"))
+                     for g in (self.access_groups or []))
 
-        slug = v.get("slug", "?")
+    def _browse_detail_pret(self) -> bool:
+        """Le panneau construit est-il encore là, et à jour des groupes ?"""
+        d = getattr(self, "_detail_w", None)
+        try:
+            return bool(d) and d["titre"].winfo_exists() and \
+                d["groupes_cle"] == self._browse_cle_groupes()
+        except Exception:
+            return False
 
-        # — Informations —
-        ctk.CTkLabel(self.browse_detail, text=v.get("title", "(sans titre)"),
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     wraplength=420, justify="left").pack(anchor="w", padx=4, pady=(4, 0))
+    @staticmethod
+    def _browse_statut_de(vid) -> str:
+        """Libellé de statut d'une vidéo (Brouillon / Public / Restreint)."""
+        if vid.get("is_draft"):
+            return "Brouillon"
+        return "Restreint" if vid.get("is_restricted") else "Public"
+
+    def _browse_info_video(self, v) -> str:
+        """Bloc d'informations sous le titre (slug, propriétaire, chaînes…)."""
         chans = v.get("channel") or []
         if isinstance(chans, str):
             chans = [chans]
         chan_names = ", ".join(self.browse_chan_by_url.get(str(c).rstrip("/"), "?")
                                for c in chans) or "(aucune)"
-        info = (f"slug : {slug}\n"
+        info = (f"slug : {v.get('slug', '?')}\n"
                 f"propriétaire : {self._browse_owner_label(v)}\n"
                 f"durée : {v.get('duration_in_time', '—')}     "
                 f"encodée : {'oui' if v.get('encoded') else 'non'}\n"
@@ -6680,9 +6693,38 @@ class App(_AppBase):
                        for t in self._rel_urls(v.get("theme"), normalise=False)]
         if noms_themes:
             info += f"\nthèmes : {', '.join(noms_themes)}"
-        ctk.CTkLabel(self.browse_detail, text=info, justify="left", anchor="w",
-                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12)).pack(
-            anchor="w", padx=4, pady=(2, 4))
+        return info
+
+    def _browse_construire_detail(self):
+        """Construit le panneau de détail (appelé pendant qu'il est masqué),
+        puis le remplit avec la vidéo sélectionnée.
+
+        ⚠️ Toutes les commandes lisent `self.browse_selected` AU MOMENT DU
+        CLIC, jamais une vidéo capturée à la construction : le même panneau
+        sert à toutes les vidéos qu'on consulte ensuite."""
+        for w in self.browse_detail.winfo_children():
+            w.destroy()
+        self._detail_w = None
+        v = self.browse_selected
+        if not v:
+            # Ce panneau-ci n'est pas vide par manque de données : il attend
+            # un geste. L'aide décrit donc ce que le clic apportera, plutôt
+            # que de répéter l'invitation.
+            etat_vide(self.browse_detail, "👈", "Sélectionnez une vidéo.",
+                      "Titre, statut, chaînes, co-propriétaires et sous-titres "
+                      "s'afficheront ici.")
+            return
+        courante = (lambda: self.browse_selected)
+        d = {"groupes_cle": self._browse_cle_groupes(), "slug": None}
+
+        # — Informations —
+        d["titre"] = ctk.CTkLabel(self.browse_detail, text="",
+                                  font=ctk.CTkFont(size=15, weight="bold"),
+                                  wraplength=420, justify="left")
+        d["titre"].pack(anchor="w", padx=4, pady=(4, 0))
+        d["info"] = ctk.CTkLabel(self.browse_detail, text="", justify="left", anchor="w",
+                                 text_color=T_SECONDAIRE, font=ctk.CTkFont(size=12))
+        d["info"].pack(anchor="w", padx=4, pady=(2, 4))
 
         # Prévisualisation : PodAdmin (Tkinter) n'a pas de lecteur vidéo intégré,
         # on délègue la lecture au navigateur (page publique Pod de la vidéo).
@@ -6690,12 +6732,13 @@ class App(_AppBase):
         rangee.pack(anchor="w", padx=4, pady=(0, 10))
         ctk.CTkButton(rangee, text="▶  Ouvrir dans le navigateur",
                       width=210, height=28, fg_color="#0f766e", hover_color="#115e59",
-                      command=lambda s=slug: self._open_video_in_browser(s)).pack(side="left")
+                      command=lambda: self._open_video_in_browser(courante().get("slug", "?"))
+                      ).pack(side="left")
         # Raccourci vers l'onglet Enrichissement IA, sur CETTE vidéo (décision
         # de Cédric, refonte 1.11.0). Neutre : ce n'est pas l'action de l'écran.
         b_enr = ctk.CTkButton(rangee, text="🤖  Enrichir…", width=120, height=28,
                               fg_color=C_NEUTRE, hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
-                              command=lambda vid=v: self._enrichir_video(vid))
+                              command=lambda: self._enrichir_video(courante()))
         b_enr.pack(side="left", padx=(8, 0))
         ajouter_infobulle(b_enr, "Sous-titres, traduction, métadonnées et quiz par Aristote")
 
@@ -6703,15 +6746,15 @@ class App(_AppBase):
         ren = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         ren.pack(fill="x", padx=4)
         self.browse_title_entry = ctk.CTkEntry(ren)
-        self.browse_title_entry.insert(0, v.get("title", ""))
         self.browse_title_entry.pack(side="left", fill="x", expand=True)
         ctk.CTkButton(ren, text="Renommer", width=90, fg_color=C_NEUTRE,
-                      command=lambda: self._browse_rename(v), text_color=T_SUR_NEUTRE).pack(side="left", padx=6)
+                      command=lambda: self._browse_rename(courante()),
+                      text_color=T_SUR_NEUTRE).pack(side="left", padx=6)
 
         # — Statut (interrupteurs) —
         # Important : on met à jour le cache local AVANT de lancer le thread,
-        # pour que _browse_render_detail() reconstruise le panneau avec la
-        # bonne valeur même si la réponse réseau tarde.
+        # pour que le panneau affiche la bonne valeur même si la réponse
+        # réseau tarde.
         ctk.CTkLabel(self.browse_detail, text="Statut", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(10, 2))
         # Les trois statuts sont EXCLUSIFS (et non des cases indépendantes) :
@@ -6721,25 +6764,22 @@ class App(_AppBase):
         # Un bouton segmenté garantit qu'on ne peut en choisir qu'un, et chaque
         # choix envoie les DEUX booléens cohérents d'un coup (corrige le bug où
         # l'ancien statut restait actif).
-        def _status_of(vid):
-            """Renvoie le libellé de statut d'une vidéo (Brouillon/Public/Restreint)."""
-            if vid.get("is_draft"):
-                return "Brouillon"
-            return "Restreint" if vid.get("is_restricted") else "Public"
         status_seg = ctk.CTkSegmentedButton(
             self.browse_detail, values=["Brouillon", "Public", "Restreint"])
-        status_seg.set(_status_of(v))
         status_seg.pack(fill="x", padx=4, pady=(0, 2))
+        d["statut"] = status_seg
         ctk.CTkLabel(self.browse_detail,
                      text="Restreint = visible mais connexion requise.",
                      font=ctk.CTkFont(size=10), text_color=T_DISCRET).pack(anchor="w", padx=6)
+
         def _apply_status(choice):
             # Calcule les deux booléens à partir du statut choisi
+            vid = courante()
             payload = {"Brouillon": {"is_draft": True, "is_restricted": False},
                        "Public":    {"is_draft": False, "is_restricted": False},
                        "Restreint": {"is_draft": False, "is_restricted": True}}[choice]
-            v.update(payload)                       # MAJ cache local immédiate
-            self._browse_patch(v, payload, f"statut → {choice.lower()}")
+            vid.update(payload)                     # MAJ cache local immédiate
+            self._browse_patch(vid, payload, f"statut → {choice.lower()}")
         status_seg.configure(command=_apply_status)
 
         # — Vidéo 360° (panoramique / immersive) —
@@ -6749,13 +6789,15 @@ class App(_AppBase):
         # Diagnostic du nom exact : lancer verifier_champ_360.py.
         ctk.CTkLabel(self.browse_detail, text="Format", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
-        is360_var = ctk.BooleanVar(value=bool(v.get(FIELD_360)))
+        is360_var = ctk.BooleanVar(value=False)
+        d["v360"] = is360_var
 
         def _apply_360():
             """Active/désactive le format 360° pour la vidéo affichée."""
+            vid = courante()
             val = bool(is360_var.get())
-            v[FIELD_360] = val                       # MAJ cache local immédiate
-            self._browse_patch(v, {FIELD_360: val},
+            vid[FIELD_360] = val                     # MAJ cache local immédiate
+            self._browse_patch(vid, {FIELD_360: val},
                                f"vidéo 360 → {'oui' if val else 'non'}")
 
         ctk.CTkCheckBox(self.browse_detail, text="Vidéo 360° (panoramique / immersive)",
@@ -6772,42 +6814,37 @@ class App(_AppBase):
         # Tout décocher retire la restriction par groupe (et repasse en public).
         ctk.CTkLabel(self.browse_detail, text="Restreindre à des groupes", anchor="w",
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        grp_vars = {}    # url → BooleanVar
+        d["groupes"] = grp_vars
         if not self.access_groups:
             ctk.CTkLabel(self.browse_detail,
                          text="(aucun groupe d'accès chargé)",
                          font=ctk.CTkFont(size=11), text_color=T_DISCRET).pack(anchor="w", padx=6)
         else:
-            # URLs des groupes actuellement appliqués à la vidéo (normalisées)
-            cur = v.get("restrict_access_to_groups") or []
-            if isinstance(cur, str):
-                cur = [cur]
-            cur_urls = {str(g.get("url") if isinstance(g, dict) else g).rstrip("/")
-                        for g in cur}
             grp_box = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
             grp_box.pack(fill="x", padx=4)
-            grp_vars = {}    # url → BooleanVar
             for g in self.access_groups:
                 gurl = g.get("url", "")
-                var = ctk.BooleanVar(value=str(gurl).rstrip("/") in cur_urls)
+                var = ctk.BooleanVar(value=False)
                 grp_vars[gurl] = var
                 ctk.CTkCheckBox(grp_box, text=g.get("code_name", "?"), variable=var,
                                 font=ctk.CTkFont(size=11)).pack(anchor="w", pady=1)
 
             def _apply_groups():
                 # Liste des URLs cochées
+                vid = courante()
                 urls = [u for u, var in grp_vars.items() if var.get()]
-                v["restrict_access_to_groups"] = urls
+                vid["restrict_access_to_groups"] = urls
                 # Couplage statut : restreint si au moins un groupe, sinon public
-                v["is_restricted"] = bool(urls)
+                vid["is_restricted"] = bool(urls)
                 payload = {"restrict_access_to_groups": urls, "is_restricted": bool(urls)}
                 if urls:
-                    v["is_draft"] = False
+                    vid["is_draft"] = False
                     payload["is_draft"] = False     # publier (sinon brouillon = invisible)
                     status_seg.set("Restreint")
-                self._browse_patch(v, payload, f"groupes → {len(urls)} groupe(s)")
+                self._browse_patch(vid, payload, f"groupes → {len(urls)} groupe(s)")
             ctk.CTkButton(self.browse_detail, text="Appliquer les groupes", width=180,
                           height=26, fg_color=C_ACTION, hover_color=C_ACTION_SURV, command=_apply_groups).pack(anchor="w", padx=4, pady=(4, 0))
-
 
         # — Classement : type ET disciplines, les deux nomenclatures de la
         #   vidéo, côte à côte. Le bouton Disciplines était d'abord rangé dans
@@ -6816,30 +6853,28 @@ class App(_AppBase):
                      font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=4, pady=(12, 2))
         ligne_classement = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         ligne_classement.pack(fill="x", padx=4)
-        # Titre du type courant de la vidéo (résolu depuis son URL)
-        cur_url = v.get("type")
-        cur_url = cur_url.get("url") if isinstance(cur_url, dict) else cur_url
-        url_to_title = {str(u).rstrip("/"): t for t, u in (self.type_map or {}).items()}
-        cur_title = url_to_title.get(str(cur_url).rstrip("/"), "(non défini)")
-        titles = sorted((self.type_map or {}).keys(), key=str.lower) or ["(aucun type)"]
-        type_menu = ctk.CTkOptionMenu(ligne_classement, width=200, values=titles, **STYLE_CHAMP)
-        type_menu.set(cur_title if cur_title in titles else titles[0])
+        type_menu = ctk.CTkOptionMenu(ligne_classement, width=200, values=["(aucun type)"],
+                                      **STYLE_CHAMP)
         type_menu.pack(side="left")
+        d["type"], d["type_titres"] = type_menu, None
         ctk.CTkButton(ligne_classement, text="🏷️  Disciplines…", fg_color=C_NEUTRE,
                       hover_color=C_NEUTRE_SURV, text_color=T_SUR_NEUTRE,
-                      command=lambda: self._browse_edit_disciplines(v)).pack(side="left", padx=(6, 0))
+                      command=lambda: self._browse_edit_disciplines(courante())).pack(side="left", padx=(6, 0))
         # Disciplines actuelles, lisibles sans ouvrir la fenêtre.
-        noms_disc = self._noms_disciplines(v)
-        ctk.CTkLabel(self.browse_detail,
-                     text="Disciplines : " + (", ".join(noms_disc) if noms_disc else "aucune"),
-                     text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
-                     anchor="w", justify="left", wraplength=360).pack(anchor="w", padx=4, pady=(4, 0))
+        d["disciplines"] = ctk.CTkLabel(self.browse_detail, text="",
+                                        text_color=T_SECONDAIRE, font=ctk.CTkFont(size=11),
+                                        anchor="w", justify="left", wraplength=360)
+        d["disciplines"].pack(anchor="w", padx=4, pady=(4, 0))
+
         def _apply_type(choice):
             # Change le type de la vidéo (PATCH valeur unique = URL du type)
+            vid = courante()
+            cur_url = vid.get("type")
+            cur_url = cur_url.get("url") if isinstance(cur_url, dict) else cur_url
             new_url = (self.type_map or {}).get(choice)
             if new_url and str(new_url).rstrip("/") != str(cur_url).rstrip("/"):
-                v["type"] = new_url
-                self._browse_patch(v, {"type": new_url}, f"type → {choice}")
+                vid["type"] = new_url
+                self._browse_patch(vid, {"type": new_url}, f"type → {choice}")
         type_menu.configure(command=_apply_type)
 
         # — Co-propriétaires & chaînes —
@@ -6848,9 +6883,11 @@ class App(_AppBase):
         rel = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         rel.pack(fill="x", padx=4)
         ctk.CTkButton(rel, text="👥  Co-propriétaires…", fg_color=C_NEUTRE,
-                      command=lambda: self._browse_edit_owners(v), text_color=T_SUR_NEUTRE).pack(side="left", padx=(0, 6))
+                      command=lambda: self._browse_edit_owners(courante()),
+                      text_color=T_SUR_NEUTRE).pack(side="left", padx=(0, 6))
         ctk.CTkButton(rel, text="🗂  Chaînes…", fg_color=C_NEUTRE,
-                      command=lambda: self._browse_edit_channels(v), text_color=T_SUR_NEUTRE).pack(side="left")
+                      command=lambda: self._browse_edit_channels(courante()),
+                      text_color=T_SUR_NEUTRE).pack(side="left")
 
         # — Sous-titres —
         ctk.CTkLabel(self.browse_detail, text="Sous-titres", anchor="w",
@@ -6858,14 +6895,11 @@ class App(_AppBase):
         # Conteneur listant les pistes existantes (rempli en arrière-plan)
         self.browse_subs = ctk.CTkFrame(self.browse_detail, fg_color="transparent")
         self.browse_subs.pack(fill="x", padx=4)
-        ctk.CTkLabel(self.browse_subs, text="Chargement…", text_color=T_SECONDAIRE,
-                     font=ctk.CTkFont(size=11)).pack(anchor="w")
         # Bouton d'ajout d'un fichier .vtt / .srt
         ctk.CTkButton(self.browse_detail, text="➕  Ajouter un sous-titre (.vtt / .srt)",
                       fg_color=C_NEUTRE,
-                      command=lambda: self._sub_add_dialog(v), text_color=T_SUR_NEUTRE).pack(anchor="w", padx=4, pady=(6, 0))
-        # Chargement des pistes de cette vidéo en arrière-plan
-        self._run(self._sub_load, v)
+                      command=lambda: self._sub_add_dialog(courante()),
+                      text_color=T_SUR_NEUTRE).pack(anchor="w", padx=4, pady=(6, 0))
 
         # — Fichier source (remplacer + ré-encoder) —
         ctk.CTkLabel(self.browse_detail, text="Fichier source", anchor="w",
@@ -6877,7 +6911,7 @@ class App(_AppBase):
                      justify="left", wraplength=360).pack(anchor="w", padx=4)
         ctk.CTkButton(self.browse_detail, text="🎬  Remplacer le fichier & ré-encoder",
                       fg_color=C_ALERTE, hover_color=C_ALERTE_SURV,
-                      command=lambda: self._browse_replace_source(v)).pack(anchor="w", padx=4, pady=(4, 0))
+                      command=lambda: self._browse_replace_source(courante())).pack(anchor="w", padx=4, pady=(4, 0))
 
         # — Suppression —
         ctk.CTkLabel(self.browse_detail, text="Zone sensible", anchor="w",
@@ -6885,12 +6919,61 @@ class App(_AppBase):
                      text_color=T_ERREUR).pack(anchor="w", padx=4, pady=(14, 2))
         ctk.CTkButton(self.browse_detail, text="🗑  Supprimer cette vidéo",
                       fg_color=C_DESTRUCTIF, hover_color=C_DESTR_SURV,
-                      command=lambda: self._browse_delete(v)).pack(anchor="w", padx=4, pady=(0, 8))
+                      command=lambda: self._browse_delete(courante())).pack(anchor="w", padx=4, pady=(0, 8))
 
         # Zone de message du panneau
         self.browse_msg = ctk.CTkLabel(self.browse_detail, text="", text_color=T_SECONDAIRE,
                                        font=ctk.CTkFont(size=11), wraplength=420, justify="left")
         self.browse_msg.pack(anchor="w", padx=4, pady=(4, 8))
+
+        self._detail_w = d
+        self._browse_remplir_detail(v)
+
+    def _browse_remplir_detail(self, v):
+        """Met le panneau construit aux valeurs de la vidéo `v`, sans créer ni
+        détruire de widget (hors la liste des sous-titres, petite et
+        rechargée en arrière-plan)."""
+        d = self._detail_w
+        nouvelle = d.get("slug") != v.get("slug")
+        d["slug"] = v.get("slug")
+        d["titre"].configure(text=v.get("title", "(sans titre)"))
+        d["info"].configure(text=self._browse_info_video(v))
+        self.browse_title_entry.delete(0, "end")
+        self.browse_title_entry.insert(0, v.get("title", ""))
+        d["statut"].set(self._browse_statut_de(v))
+        d["v360"].set(bool(v.get(FIELD_360)))
+        # Groupes appliqués à la vidéo (URLs normalisées)
+        cur = v.get("restrict_access_to_groups") or []
+        if isinstance(cur, str):
+            cur = [cur]
+        cur_urls = {str(g.get("url") if isinstance(g, dict) else g).rstrip("/") for g in cur}
+        for gurl, var in d["groupes"].items():
+            var.set(str(gurl).rstrip("/") in cur_urls)
+        # Type courant (résolu depuis son URL) ; la liste n'est réécrite que si
+        # les types ont changé.
+        cur_url = v.get("type")
+        cur_url = cur_url.get("url") if isinstance(cur_url, dict) else cur_url
+        url_to_title = {str(u).rstrip("/"): t for t, u in (self.type_map or {}).items()}
+        cur_title = url_to_title.get(str(cur_url).rstrip("/"), "(non défini)")
+        titles = sorted((self.type_map or {}).keys(), key=str.lower) or ["(aucun type)"]
+        if titles != d["type_titres"]:
+            d["type"].configure(values=titles)
+            d["type_titres"] = titles
+        d["type"].set(cur_title if cur_title in titles else titles[0])
+        noms_disc = self._noms_disciplines(v)
+        d["disciplines"].configure(
+            text="Disciplines : " + (", ".join(noms_disc) if noms_disc else "aucune"))
+        if nouvelle:
+            # Autre vidéo : on efface le message de la précédente et on
+            # recharge ses sous-titres. Pour la MÊME vidéo (rafraîchissement
+            # après une modification), le message « ✅ … » reste affiché.
+            self.browse_msg.configure(text="")
+            for w in self.browse_subs.winfo_children():
+                w.destroy()
+            ctk.CTkLabel(self.browse_subs, text="Chargement…", text_color=T_SECONDAIRE,
+                         font=ctk.CTkFont(size=11)).pack(anchor="w")
+            # Chargement des pistes de cette vidéo en arrière-plan
+            self._run(self._sub_load, v)
 
     # ── Actions sur la vidéo sélectionnée ──────────────────────────────────
 
@@ -6908,6 +6991,12 @@ class App(_AppBase):
         """Affiche la liste des pistes existantes (langue · type · 🗑)."""
         # Le panneau a pu être reconstruit entre-temps : on vérifie qu'il existe
         if not hasattr(self, "browse_subs") or not self.browse_subs.winfo_exists():
+            return
+        # Le conteneur sert à toutes les vidéos consultées : une réponse arrivée
+        # après qu'on est passé à une autre vidéo (flèches, clics rapides) ne
+        # doit pas afficher ses pistes sous la mauvaise vidéo.
+        courante = self.browse_selected
+        if not courante or courante.get("slug") != v.get("slug"):
             return
         for w in self.browse_subs.winfo_children():
             w.destroy()

@@ -1653,3 +1653,20 @@ class TestPaginationSuitLeTotal:
         assert PodAPI._pages_necessaires([], 7) == 7
         assert PodAPI._pages_necessaires({"results": [1]}, 7) == 7
         assert PodAPI._pages_necessaires({"count": 0, "results": []}, 7) == 7
+
+
+class TestNomenclaturesPaginees:
+    """Types, disciplines et sites ne lisaient que la première page : au plus
+    12 éléments sur ce serveur (signalé depuis Pod Téléverseur, 2026-10-23)."""
+
+    def test_au_dela_de_douze(self):
+        from pod_api import PodAPI
+
+        for methode, chemin in (
+            ("get_types", "/types/"),
+            ("get_disciplines", "/discipline/"),
+            ("get_sites", "/sites/"),
+        ):
+            api, _ = TestPaginationSuitLeTotal._api(TestPaginationSuitLeTotal(), 30)
+            assert len(getattr(PodAPI, methode)(api)) == 30, f"{methode} tronqué"
+            assert api.est_tronque(chemin) is False

@@ -340,18 +340,20 @@ class PodAPI:
     # ── 2. Types / chaînes / sites ────────────────────────────────────────
 
     def get_types(self) -> list[dict]:
-        """Liste les types de vidéo de l'instance."""
-        data = self._get("/types/", {"limit": 100})
-        return data.get("results", []) if isinstance(data, dict) else (data or [])
+        """Liste les types de vidéo de l'instance.
+
+        Paginé comme les autres listes : Pod renvoie 12 éléments par page et
+        ignore `limit`, une seule page n'aurait lu que les 12 premiers types."""
+        return self._paginate("/types/", {"limit": 100})
 
     def get_channels(self) -> list[dict]:
         """Liste toutes les chaînes (paginé)."""
         return self._paginate("/channels/", {"limit": 200})
 
     def get_sites(self) -> list[dict]:
-        """Sites de l'instance (requis pour l'upload multi-établissements)."""
-        data = self._get("/sites/", {"limit": 100})
-        return data.get("results", []) if isinstance(data, dict) else (data or [])
+        """Sites de l'instance (requis pour l'upload multi-établissements).
+        Paginé : voir get_types."""
+        return self._paginate("/sites/", {"limit": 100})
 
     # ── 2 bis. Nomenclatures : types et disciplines ───────────────────────
     #
@@ -391,9 +393,11 @@ class PodAPI:
         return self._delete(url)
 
     def get_disciplines(self) -> list[dict]:
-        """Liste les disciplines de l'instance."""
-        data = self._get("/discipline/", {"limit": 200})
-        return data.get("results", []) if isinstance(data, dict) else (data or [])
+        """Liste les disciplines de l'instance.
+
+        Paginé : voir get_types. Au 2026-10-23, l'instance en compte 11 ; la
+        13e aurait disparu des menus et des filtres, sans message."""
+        return self._paginate("/discipline/", {"limit": 200})
 
     def create_discipline(self, title: str, site_url: str = "", *, description: str = "") -> dict:
         """Crée une discipline.

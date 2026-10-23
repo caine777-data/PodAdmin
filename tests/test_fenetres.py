@@ -3825,3 +3825,37 @@ class TestEnteteColonneMail:
     def test_colonne_nommee_mail(self, app):
         """Décision de Cédric (2026-10-23) : « Mail » plutôt que « Courriel »."""
         assert app.comptes_results.arbre.heading("mail", "text") == "Mail"
+
+
+class TestIconeStatutVideo:
+    """Une vidéo restreinte s'affichait avec 🌐, comme une publique (2026-10-23)."""
+
+    def test_icones(self):
+        import app as module_app
+
+        icone = module_app.App._browse_icone_statut
+        assert icone({"is_draft": True}) == "📝"
+        assert icone({"is_draft": True, "is_restricted": True}) == "📝", "le brouillon l'emporte"
+        assert icone({"is_draft": False, "is_restricted": True}) == "🔒"
+        assert icone({"is_draft": False, "is_restricted": False}) == "🌐"
+        assert icone({}) == "🌐"
+
+    def test_colonne_du_tableau(self, app):
+        app.videos = [
+            {
+                "slug": "r1",
+                "title": "Restreinte",
+                "is_draft": False,
+                "is_restricted": True,
+                "encoded": True,
+                "channel": [],
+                "type": "",
+                "owner": "",
+                "date_added": "2026-01-01",
+                "url": "x",
+            }
+        ]
+        app.browse_chan_by_url, app.type_map = {}, {}
+        app._show_tab("browse")
+        app._browse_effacer_filtres()
+        assert app.browse_tree.item("r1", "values")[0] == "🔒"

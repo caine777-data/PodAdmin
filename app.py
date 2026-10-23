@@ -6987,13 +6987,23 @@ class App(_AppBase):
         self.browse_pastilles.reorganiser_plus_tard()
         self._browse_do_filter()
 
+    @staticmethod
+    def _browse_icone_statut(v) -> str:
+        """Icône de la colonne statut : 📝 brouillon, 🔒 restreint, 🌐 public.
+
+        Une vidéo restreinte s'affichait avec 🌐, comme une vidéo publique :
+        rien, dans la liste, ne la distinguait. Le brouillon l'emporte sur
+        la restriction, comme dans le panneau de détail (_browse_statut_de) :
+        un brouillon n'est visible de personne, restreint ou non."""
+        return {"Brouillon": "📝", "Restreint": "🔒"}.get(App._browse_statut_de(v), "🌐")
+
     def _browse_valeurs(self, v) -> tuple:
         """Valeurs affichées dans les colonnes pour une vidéo."""
         date = str(v.get("date_added") or "")[:10]
         if len(date) == 10 and date[4] == "-":
             date = f"{date[8:10]}/{date[5:7]}/{date[:4]}"  # AAAA-MM-JJ → JJ/MM/AAAA
         return (
-            "📝" if v.get("is_draft") else "🌐",
+            self._browse_icone_statut(v),
             v.get("title") or "(sans titre)",
             self._browse_owner_label(v),
             date,
@@ -12049,7 +12059,8 @@ class App(_AppBase):
 
         section(
             "☑  Traiter plusieurs vidéos à la fois (onglet Vidéos)",
-            "Dans la liste de l'onglet Vidéos :\n"
+            "Dans la liste de l'onglet Vidéos, la première colonne donne le statut : "
+            "📝 brouillon, 🌐 public, 🔒 restreint (connexion requise).\n"
             f"• {TOUCHE_AJOUT} + clic pour ajouter ou retirer une vidéo de la sélection ;\n"
             "• Maj + clic pour sélectionner toute une plage.\n\n"
             "Les lignes retenues passent en bleu, et le panneau de droite bascule sur "

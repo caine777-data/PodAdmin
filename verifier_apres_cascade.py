@@ -145,18 +145,18 @@ def confirmer_la_perte(sess, rest, videos, lecture_complete):
     trouvee = [v for v in videos if isinstance(v, dict) and v.get("slug") == SLUG_PERDU]
     print(f"      Dans le listing complet → {'PRÉSENTE' if trouvee else 'absente'}")
 
-    # Voie 3 : recherche plein texte, le slug ayant pu changer.
-    try:
-        r = sess.get(f"{rest}/videos/", params={"search": "certification-pix"}, timeout=30)
-        if r.status_code == 200:
-            data = r.json()
-            proches = data.get("results", []) if isinstance(data, dict) else (data or [])
-            print(f"      Recherche « certification-pix » → {len(proches)} résultat(s)")
-            for v in proches[:5]:
-                if isinstance(v, dict):
-                    print(f"         • {v.get('slug')} — {v.get('title')}")
-    except Exception as e:
-        print(f"      Recherche            → erreur : {e}")
+    # Voie 3 : recherche approchée, le slug ayant pu changer. Faite ici dans
+    # le listing complet : Pod n'a pas de ?search= (ignoré en silence, il
+    # renvoyait les 12 premières vidéos de l'instance).
+    proches = [
+        v
+        for v in videos
+        if isinstance(v, dict)
+        and "certification-pix" in f"{v.get('slug', '')} {v.get('title', '')}".lower()
+    ]
+    print(f"      Recherche « certification-pix » → {len(proches)} résultat(s)")
+    for v in proches[:5]:
+        print(f"         • {v.get('slug')} — {v.get('title')}")
 
     print()
     if not lecture_complete:

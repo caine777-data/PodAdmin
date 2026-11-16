@@ -119,9 +119,10 @@ def main():
     vurl = f"{rest}/videos/{vslug}/"
     status, v = req("GET", vurl, headers)
     if status != 200:
-        status, data = req("GET", f"{rest}/videos/", headers, params={"search": vslug, "limit": 50})
-        res = data.get("results", []) if isinstance(data, dict) else []
-        v = next((x for x in res if x.get("slug") == vslug), None)
+        # Pod n'a pas de ?search= (ignoré en silence) : le slug commence par
+        # l'ID numérique (« 1234-titre »), on relit ce détail et on recoupe.
+        status, data = req("GET", f"{rest}/videos/{vslug.split('-', 1)[0]}/", headers)
+        v = data if status == 200 and isinstance(data, dict) and data.get("slug") == vslug else None
         if v:
             vurl = v.get("url")
     if not isinstance(v, dict):

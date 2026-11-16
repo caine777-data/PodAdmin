@@ -671,19 +671,24 @@ class PodAPI:
         """Retrouve le dict d'une vidéo à partir de son SLUG (None si introuvable).
         Nécessaire après une création par upload chunké (qui ne renvoie qu'un slug)
         pour récupérer l'objet complet (avec son 'url') et pouvoir le PATCHer.
-        Stratégie robuste en LECTURE SEULE : filtre serveur ?slug= puis, à défaut,
-        recherche plein-texte ?search= ; correspondance EXACTE du slug dans les deux cas."""
+
+        /videos/ n'a ni `slug` ni `search` (voir l'en-tête du module). Le slug
+        de Pod commence par l'ID numérique (« 1234-titre ») : on lit le détail
+        /videos/1234/ et on n'accepte la vidéo que si son slug est identique.
+
+        Une erreur de lecture (404, coupure réseau) renvoie aussi None : la
+        vidéo vient d'être créée, l'appelant la signale « à vérifier » plutôt
+        que de déclarer l'envoi en échec et de pousser à un second envoi."""
         slug = str(slug).strip().strip("/")
-        if not slug:
+        tete = slug.split("-", 1)[0]
+        if not tete.isdigit():
             return None
-        for params in ({"slug": slug, "limit": 20}, {"search": slug, "limit": 20}):
-            try:
-                results = self.search_videos(params)
-            except Exception:
-                results = []
-            for v in results:
-                if str(v.get("slug", "")).strip("/") == slug:
-                    return v
+        try:
+            video = self.get_video(int(tete))
+        except (PodAPIError, requests.RequestException):
+            return None
+        if isinstance(video, dict) and str(video.get("slug", "")).strip("/") == slug:
+            return video
         return None
 
     # ── Résolution de l'endpoint d'une vidéo ──────────────────────────────

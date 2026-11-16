@@ -14,7 +14,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pod_api import PodAPI, id_depuis_url  # noqa: E402
+import requests  # noqa: E402
+
+from pod_api import PodAPI, PodAPIError, id_depuis_url  # noqa: E402
 
 BASE = "https://videos.exemple.fr/rest"
 
@@ -82,3 +84,43 @@ class TestRechercheDeComptes:
         monkeypatch.setattr(a, "_get", lambda e, p=None: {"count": 3, "results": list(COMPTES)})
         assert [u["username"] for u in a.search_users("martin")] == ["martin"]
         assert a.search_users("absent") == []
+
+
+class TestVideoParSlug:
+    def _api(self, monkeypatch, repondre):
+        """API dont la lecture du détail passe par `repondre(endpoint)`."""
+        a = PodAPI("https://videos.exemple.fr", "jeton")
+        lus = []
+
+        def faux_get(endpoint, params=None):
+            lus.append(endpoint)
+            return repondre(endpoint)
+
+        monkeypatch.setattr(a, "_get", faux_get)
+        return a, lus
+
+    def test_lit_le_detail_par_l_id_en_tete_du_slug(self, monkeypatch):
+        a, lus = self._api(monkeypatch, lambda e: {"slug": "1234-cours", "url": "u"})
+        assert a.get_video_by_slug("1234-cours")["url"] == "u"
+        assert lus == ["/videos/1234/"], "la vidéo doit être lue par son ID, pas filtrée"
+
+    def test_slug_different_refuse(self, monkeypatch):
+        """L'ID existe mais porte une autre vidéo : on ne la prend pas."""
+        a, _ = self._api(monkeypatch, lambda e: {"slug": "1234-autre", "url": "u"})
+        assert a.get_video_by_slug("1234-cours") is None
+
+    def test_slug_sans_id_aucune_requete(self, monkeypatch):
+        a, lus = self._api(monkeypatch, lambda e: {"slug": "cours"})
+        assert a.get_video_by_slug("cours") is None
+        assert a.get_video_by_slug("") is None
+        assert lus == []
+
+    @pytest.mark.parametrize(
+        "erreur", [PodAPIError("HTTP 404", status=404), requests.ConnectionError("coupure")]
+    )
+    def test_erreur_de_lecture_donne_none(self, monkeypatch, erreur):
+        def repondre(e):
+            raise erreur
+
+        a, _ = self._api(monkeypatch, repondre)
+        assert a.get_video_by_slug("1234-cours") is None

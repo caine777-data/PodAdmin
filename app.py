@@ -57,6 +57,7 @@ from pod_api import (
     EnvoiAnnule,
     PodAPI,
     PodAPIError,
+    id_depuis_url,
     identifiant_depuis_lien,
 )
 from pod_chunked import EnvoiAnnule as EnvoiAnnuleMorceaux
@@ -2748,12 +2749,19 @@ class App(_AppBase):
         rechercher, pour qu'on la retrouve au lieu de la renvoyer en double.
 
         `delai_s` : durée maximale d'attente (défaut : CHUNK_VERIFY_TIMEOUT_S,
-        30 min — le cas du 504 ; voir CHUNK_VERIFY_TIMEOUT_502_S pour le 502)."""
+        30 min — le cas du 504 ; voir CHUNK_VERIFY_TIMEOUT_502_S pour le 502).
+
+        Les candidates sont TOUTES les vidéos du compte véhicule (filtre
+        `owner`, toutes pages), filtrées ici sur le marqueur : /videos/ n'a pas
+        de `search` (ignoré en silence, il ne montrait que les 12 premières).
+        Véhicule non résolu : repli sur le scan complet de l'instance, plus
+        lourd mais exact (le marqueur reste unique)."""
         import time as _t
 
         deadline = _t.time() + (delai_s if delai_s is not None else cfg.CHUNK_VERIFY_TIMEOUT_S)
         attendu = marqueur.lower()
         vehicule = str(creator_owner_url or "").rstrip("/")
+        id_vehicule = id_depuis_url(vehicule)
 
         def verifier_arret():
             if annuler and annuler():
@@ -2767,7 +2775,10 @@ class App(_AppBase):
         while _t.time() < deadline:
             verifier_arret()
             try:
-                cands = self.api.search_videos({"search": marqueur, "limit": 25})
+                if id_vehicule:
+                    cands = self.api.get_videos_of_owner(id_vehicule)
+                else:
+                    cands = self.api.get_all_videos()
             except Exception:
                 cands = []
             trouvees = []

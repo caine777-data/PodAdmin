@@ -267,6 +267,7 @@ class PodAPI:
         max_pages: int = 300,
         progress_cb: Callable[[int], None] | None = None,
         skip_cb: Callable[[int, int], None] | None = None,
+        cle_troncature: str | None = None,
     ) -> list[dict]:
         """Récupère tous les éléments d'un endpoint paginé en suivant le champ
         'next' jusqu'au bout. progress_cb(nb_cumulé) optionnel.
@@ -280,6 +281,10 @@ class PodAPI:
 
         (Le paramètre skip_cb est conservé pour compatibilité d'appel mais n'est
         plus utilisé : on est revenu à la pagination simple et fiable par 'next'.)
+
+        `cle_troncature` : clé sous laquelle noter la troncature (défaut :
+        l'endpoint). Une lecture FILTRÉE doit en prendre une autre, sinon elle
+        effacerait l'alerte « liste incomplète » du scan complet du même endpoint.
         """
         self.last_scan_skipped = 0
         items: list[dict] = []
@@ -313,7 +318,7 @@ class PodAPI:
         # Sortie de boucle : s'il reste une URL 'next' à suivre, c'est qu'on
         # s'est arrêté sur `max_pages` → la liste est TRONQUÉE.
         tronque = bool(url)
-        self.troncatures[endpoint] = tronque
+        self.troncatures[cle_troncature or endpoint] = tronque
         # Conservé pour compatibilité, mais ne plus s'y fier : un autre scan
         # peut l'écraser. Utiliser `est_tronque()`.
         self.last_scan_truncated = tronque
@@ -663,9 +668,22 @@ class PodAPI:
         return self._paginate("/videos/", extra_params, max_pages, progress_cb)
 
     def search_videos(self, params: dict) -> list[dict]:
-        """GET filtré sur /videos/ (ex. {'owner': <url>} ou {'search': 'mot'})."""
+        """GET filtré sur /videos/, PREMIÈRE PAGE seulement (12 éléments).
+
+        N'utiliser que des filtres réellement appliqués par Pod (voir l'en-tête
+        du module) : `search` ou `slug` seraient ignorés en silence."""
         data = self._get("/videos/", params)
         return data.get("results", []) if isinstance(data, dict) else (data or [])
+
+    def get_videos_of_owner(self, owner_id: int) -> list[dict]:
+        """Toutes les vidéos d'un propriétaire (ID numérique), toutes pages lues.
+
+        Le filtre serveur `owner` est revérifié côté client : si Pod l'ignorait,
+        on n'attribuerait pas pour autant à ce compte les vidéos d'un autre."""
+        videos = self._paginate(
+            "/videos/", {"owner": owner_id}, cle_troncature=f"/videos/?owner={owner_id}"
+        )
+        return [v for v in videos if id_depuis_url(v.get("owner")) == owner_id]
 
     def get_video_by_slug(self, slug: str):
         """Retrouve le dict d'une vidéo à partir de son SLUG (None si introuvable).

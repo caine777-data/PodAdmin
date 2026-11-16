@@ -124,3 +124,27 @@ class TestVideoParSlug:
 
         a, _ = self._api(monkeypatch, repondre)
         assert a.get_video_by_slug("1234-cours") is None
+
+
+class TestVideosDuProprietaire:
+    def test_filtre_owner_revérifie_et_troncature_a_part(self, monkeypatch):
+        """Même si le serveur ignorait `owner`, seules les vidéos du compte
+        reviennent ; et la lecture filtrée n'écrase pas l'alerte de
+        troncature du scan complet de /videos/."""
+        a = PodAPI("https://videos.exemple.fr", "jeton")
+        a.troncatures["/videos/"] = True  # scan complet précédent incomplet
+        vus = {}
+
+        def faux_paginate(endpoint, params=None, **kw):
+            vus.update(endpoint=endpoint, params=params, **kw)
+            a.troncatures[kw.get("cle_troncature") or endpoint] = False
+            return [
+                {"slug": "a", "owner": f"{BASE}/users/18/"},
+                {"slug": "b", "owner": f"{BASE}/users/1/"},
+                {"slug": "c", "owner": f"{BASE}/users/180/"},
+            ]
+
+        monkeypatch.setattr(a, "_paginate", faux_paginate)
+        assert [v["slug"] for v in a.get_videos_of_owner(18)] == ["a"]
+        assert vus["params"] == {"owner": 18}
+        assert a.est_tronque("/videos/"), "l'alerte du scan complet a été effacée"

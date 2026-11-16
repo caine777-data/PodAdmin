@@ -298,9 +298,14 @@ class TestEnvoiParMorceaux:
 VEHICULE = "https://videos.exemple.fr/rest/users/1/"
 
 
-def _faux_app(candidats):
+def _faux_app(candidats, appels=None):
+    """`appels` (liste) note quelle lecture a été faite : véhicule ou scan complet."""
+    appels = [] if appels is None else appels
     return SimpleNamespace(
-        api=SimpleNamespace(search_videos=lambda params: list(candidats)),
+        api=SimpleNamespace(
+            get_videos_of_owner=lambda oid: appels.append(("owner", oid)) or list(candidats),
+            get_all_videos=lambda: appels.append(("tout",)) or list(candidats),
+        ),
         _ui=lambda *a, **k: None,
         _log=lambda *a: None,
         global_msg=SimpleNamespace(configure=lambda **k: None),
@@ -314,12 +319,36 @@ def _video(slug, titre, owner=VEHICULE):
 class TestRecuperationApres504:
     MARQUEUR = "pa0123456789ab"
 
-    def _verifier(self, candidats, monkeypatch, vehicule=VEHICULE, delai=5):
+    def _verifier(self, candidats, monkeypatch, vehicule=VEHICULE, delai=5, appels=None):
         import app as A
 
         monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_TIMEOUT_S", delai)
         monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_INTERVAL_S", 0.05)
-        return A.App._verify_chunked_creation(_faux_app(candidats), self.MARQUEUR, vehicule)
+        return A.App._verify_chunked_creation(
+            _faux_app(candidats, appels), self.MARQUEUR, vehicule
+        )
+
+    def test_lit_toutes_les_videos_du_vehicule_par_son_id(self, monkeypatch):
+        """Régression : `?search=` est ignoré par Pod, seule la 1re page (12
+        vidéos) était examinée. La vidéo marquée est ici la 30e."""
+        appels = []
+        autres = [_video(f"v{i}", f"cours {i}") for i in range(29)]
+        v = self._verifier(
+            [*autres, _video("loin", f"cours {self.MARQUEUR}")], monkeypatch, appels=appels
+        )
+        assert v["slug"] == "loin"
+        assert appels[0] == ("owner", 1), "le compte véhicule doit être lu par son ID"
+
+    def test_vehicule_inconnu_scan_complet(self, monkeypatch):
+        appels = []
+        v = self._verifier(
+            [_video("m", f"cours {self.MARQUEUR}", "https://videos.exemple.fr/rest/users/9/")],
+            monkeypatch,
+            vehicule="",
+            appels=appels,
+        )
+        assert v["slug"] == "m"
+        assert appels[0] == ("tout",)
 
     def test_retrouve_la_video_marquee_parmi_des_homonymes(self, monkeypatch):
         """Même nom de fichier, même compte véhicule, autre dépôt : c'est

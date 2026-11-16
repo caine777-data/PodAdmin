@@ -50,6 +50,13 @@ PAGES_MAX_ABSOLU = 5000
 # que met Pod à répondre une fois le fichier reçu.
 UPLOAD_TIMEOUT = (30, 600)
 
+# Filtres de l'API REST d'Esup-Pod 3.8.4 (code source lu le 2026-11-16, mesuré
+# sur l'instance le même jour) : /users/ ne filtre que sur username, email, id ;
+# /videos/ sur owner (ID numérique), type, date_added, is_draft… Il n'y a NI
+# `search` NI `slug` : un paramètre inconnu est ignoré EN SILENCE et l'API
+# renvoie la première page de tout (12 éléments). Toute recherche passe donc
+# par un filtre réellement appliqué, puis une revérification côté client.
+
 try:
     # Permet un upload streamé avec callback de progression
     from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
@@ -57,6 +64,17 @@ try:
     HAS_TOOLBELT = True
 except ImportError:
     HAS_TOOLBELT = False
+
+
+def id_depuis_url(url) -> int | None:
+    """Identifiant numérique d'une adresse d'API (« …/users/177/ » → 177).
+
+    Accepte aussi un dict portant 'url' (relation développée). None si
+    l'adresse ne se termine pas par un nombre."""
+    if isinstance(url, dict):
+        url = url.get("url", "")
+    trouve = re.search(r"/(\d+)/?$", str(url or ""))
+    return int(trouve.group(1)) if trouve else None
 
 
 class PodAPIError(Exception):
@@ -329,9 +347,25 @@ class PodAPI:
     # ── 1. Utilisateurs (résolution owner) ────────────────────────────────
 
     def search_users(self, query: str) -> list[dict]:
-        """Recherche des utilisateurs → liste de dicts {username, url, ...}."""
-        data = self._get("/users/", {"search": query, "limit": 25})
-        return data.get("results", []) if isinstance(data, dict) else (data or [])
+        """Comptes dont l'identifiant, ou à défaut l'adresse électronique, vaut
+        EXACTEMENT `query` (casse ignorée) → liste de dicts {username, url, ...}.
+
+        Ce n'est pas une recherche partielle : /users/ n'a pas de `search`
+        (voir l'en-tête du module). On interroge les filtres exacts username
+        puis email, et on revérifie chaque résultat : si un filtre venait à
+        être ignoré, on ne renverrait pas pour autant des comptes au hasard."""
+        cible = str(query or "").strip()
+        if not cible:
+            return []
+        for champ in ("username", "email"):
+            data = self._get("/users/", {champ: cible})
+            resultats = data.get("results", []) if isinstance(data, dict) else (data or [])
+            exacts = [
+                u for u in resultats if str(u.get(champ) or "").strip().lower() == cible.lower()
+            ]
+            if exacts:
+                return exacts
+        return []
 
     def get_all_users(self, max_pages: int = 80) -> list[dict]:
         """Récupère TOUS les utilisateurs en suivant la pagination de l'API."""

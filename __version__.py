@@ -10,7 +10,7 @@ l'installeur restent à mettre à jour lors d'une publication : ils ne peuvent p
 importer de code Python.
 """
 
-__version__ = "1.13.4"
+__version__ = "1.13.5"
 
 # Décomposition (entiers), utile pour les métadonnées Windows : (majeur, mineur,
 # correctif, build).

@@ -218,3 +218,8 @@ après envoi par morceaux, marqueur visible dans le slug.
   `_detail_w`) : 0,6 s → 0,08 s par clic. Toute commande du panneau lit
   `self.browse_selected` au clic, jamais une vidéo capturée. Reconstruit
   après l'état vide, le panneau de lot, ou si `access_groups` change.
+- 1.13.6 : `_paginate` lit les pages 2..N EN PARALLÈLE (`_pages_en_parallele`,
+  `OUVRIERS_PAGES = 4`) dès que le total est connu et que Pod numérote ses
+  pages (`?page=`). Vidéos : 19,9 s → 3,3 s. Rien n'est ajouté avant que
+  toutes les pages soient arrivées ; en cas d'échec, reprise séquentielle.
+  Ne pas monter au-delà de 4 sans raison : serveur partagé de l'université.

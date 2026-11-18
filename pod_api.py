@@ -32,13 +32,21 @@ import os
 import re
 import time
 from collections.abc import Callable
-from urllib.parse import urlsplit, urlunsplit
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import requests
 
 # Garde-fou de la pagination : au-delà, la lecture s'arrête et la liste est
 # signalée INCOMPLÈTE. 5 000 pages de 12 éléments = 60 000 éléments.
 PAGES_MAX_ABSOLU = 5000
+
+# Pages lues EN MÊME TEMPS une fois le total connu (1.13.6). Pod renvoie 12
+# éléments par page : 58 pages pour 685 vidéos, lues une à une en 20 s. Mesuré
+# le 2026-11-18 sur videos.utoulouse.fr : 3,6 s à 4 pages simultanées, 2,3 s à
+# 8. On reste à 4 : l'essentiel du gain, sans charger le serveur de
+# l'université, que tous les utilisateurs de Pod partagent.
+OUVRIERS_PAGES = 4
 
 # Délai des ENVOIS DE FICHIER : (connexion, lecture).
 #
@@ -315,6 +323,15 @@ class PodAPI:
             pages += 1
             if progress_cb:
                 progress_cb(len(items))
+            if pages == 1 and url:
+                # Total connu : les pages restantes sont lues en parallèle.
+                lot = self._pages_en_parallele(
+                    self._abs(endpoint), p, data, max_pages, progress_cb, len(items)
+                )
+                if lot is not None:
+                    nb_pages, resultats, url = lot
+                    items.extend(resultats)
+                    pages += nb_pages
         # Sortie de boucle : s'il reste une URL 'next' à suivre, c'est qu'on
         # s'est arrêté sur `max_pages` → la liste est TRONQUÉE.
         tronque = bool(url)
@@ -323,6 +340,57 @@ class PodAPI:
         # peut l'écraser. Utiliser `est_tronque()`.
         self.last_scan_truncated = tronque
         return items
+
+    def _pages_en_parallele(self, url, params, premiere_page, max_pages, progress_cb, deja):
+        """Lit les pages 2 à N en même temps (N d'après le total annoncé).
+
+        Renvoie (pages lues, éléments DANS L'ORDRE, URL `next` de la dernière
+        page) ou None si le parallèle ne s'applique pas ou a échoué : la
+        lecture séquentielle reprend alors à la page 2, comme avant la 1.13.6.
+        Rien n'est ajouté à la liste tant que TOUTES les pages ne sont pas
+        arrivées : un échec ne laisse ni trou ni doublon."""
+        suivante = premiere_page.get("next") if isinstance(premiere_page, dict) else None
+        total = premiere_page.get("count") if isinstance(premiere_page, dict) else None
+        par_page = len((premiere_page or {}).get("results") or [])
+        # Seulement si le serveur numérote ses pages (?page=2) : une pagination
+        # par décalage (?offset=) ou par curseur se lit en suivant `next`.
+        if not suivante or not isinstance(total, int) or par_page <= 0:
+            return None
+        if "page" not in parse_qs(urlsplit(suivante).query):
+            return None
+        derniere = min(math.ceil(total / par_page), max_pages)
+        numeros = list(range(2, derniere + 1))
+        if not numeros:
+            return None
+
+        def lire(numero):
+            r = self.session.get(
+                url,
+                params={**params, "page": numero},
+                headers={"Accept": "application/json"},
+                timeout=30,
+                verify=self.verify_ssl,
+            )
+            d = self._json(r)
+            if not isinstance(d, dict):
+                raise PodAPIError(f"Page {numero} illisible", status=getattr(r, "status_code", 0))
+            return d.get("results", []), d.get("next")
+
+        resultats: list[dict] = []
+        suite = None
+        try:
+            with ThreadPoolExecutor(OUVRIERS_PAGES) as ex:
+                # `map` rend les pages DANS L'ORDRE, quel que soit l'ordre d'arrivée.
+                for res, suivante_page in ex.map(lire, numeros):
+                    resultats.extend(res)
+                    suite = suivante_page  # `next` de la dernière page lue
+                    if progress_cb:
+                        progress_cb(deja + len(resultats))
+        except Exception:
+            return None
+        # `next` de la dernière page : non vide si des éléments sont arrivés
+        # pendant la lecture, ou si `max_pages` a coupé ; la boucle le suit.
+        return len(numeros), resultats, (self._abs(suite) if suite else None)
 
     @staticmethod
     def _pages_necessaires(premiere_page, max_pages: int) -> int:

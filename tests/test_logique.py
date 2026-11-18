@@ -1595,33 +1595,57 @@ class TestPaginationSuitLeTotal:
     class _Serveur:
         """Faux /view_count/ : `total` éléments, 12 par page, liens `next`."""
 
-        def __init__(self, total):
+        def __init__(self, total, en_panne=(), annonce=None, style="page"):
+            import threading
+
             self.total, self.appels = total, 0
+            self.en_panne = set(en_panne)  # pages qui échouent UNE fois
+            self.annonce = annonce  # total annoncé, s'il diffère du réel
+            self.style = style  # "page" (Pod) ou "offset"
+            self.verrou = threading.Lock()
+            self.en_cours = self.max_simultanes = 0
 
         def get(self, url, params=None, **k):
+            import time
             from urllib.parse import parse_qs, urlsplit
 
-            self.appels += 1
-            page = int(parse_qs(urlsplit(url).query).get("page", ["1"])[0])
+            with self.verrou:
+                self.appels += 1
+                self.en_cours += 1
+                self.max_simultanes = max(self.max_simultanes, self.en_cours)
+            try:
+                time.sleep(0.01)  # laisse aux requêtes le temps de se chevaucher
+                q = parse_qs(urlsplit(url).query)
+                page = int(
+                    (params or {}).get("page") or (q.get("page") or q.get("offset") or ["1"])[0]
+                )
+                with self.verrou:
+                    if page in self.en_panne:
+                        self.en_panne.discard(page)
+                        raise ConnectionError(f"page {page} en panne")
+            finally:
+                with self.verrou:
+                    self.en_cours -= 1
             debut = (page - 1) * 12
             fin = min(debut + 12, self.total)
+            cle = "page" if self.style == "page" else "offset"
             suivante = (
-                f"https://pod.exemple.fr/rest/view_count/?page={page + 1}"
+                f"https://pod.exemple.fr/rest/view_count/?{cle}={page + 1}"
                 if fin < self.total
                 else None
             )
             return {
-                "count": self.total,
+                "count": self.annonce if self.annonce is not None else self.total,
                 "next": suivante,
                 "results": [{"n": i} for i in range(debut, fin)],
             }
 
-    def _api(self, total):
+    def _api(self, total, **kw):
         from pod_api import PodAPI
 
         api = PodAPI.__new__(PodAPI)
         api.troncatures, api.verify_ssl = {}, True
-        serveur = self._Serveur(total)
+        serveur = self._Serveur(total, **kw)
         api.session = serveur
         api._abs = lambda u: u if u.startswith("http") else "https://pod.exemple.fr/rest" + u
         api._json = lambda r: r
@@ -1646,6 +1670,34 @@ class TestPaginationSuitLeTotal:
         items = api._paginate("/view_count/", max_pages=2)
         assert len(items) == 60, "le garde-fou doit arrêter la lecture"
         assert api.est_tronque("/view_count/") is True
+
+    # ── Lecture parallèle (1.13.6) ──
+    def test_parallele_complet_et_dans_l_ordre(self):
+        api, serveur = self._api(1001)
+        vus = []
+        items = api._paginate("/view_count/", max_pages=1, progress_cb=vus.append)
+        assert [x["n"] for x in items] == list(range(1001)), "ordre ou contenu faux"
+        assert serveur.max_simultanes > 1, "les pages n'ont pas été lues en parallèle"
+        assert serveur.max_simultanes <= 4, "plus de 4 requêtes simultanées"
+        assert vus[-1] == 1001 and vus == sorted(vus), "progression incohérente"
+
+    def test_page_en_panne_reprise_sequentielle(self):
+        api, _ = self._api(100, en_panne={5})
+        items = api._paginate("/view_count/", max_pages=1)
+        assert [x["n"] for x in items] == list(range(100)), "trou ou doublon après la panne"
+        assert api.est_tronque("/view_count/") is False
+
+    def test_pagination_par_decalage_reste_sequentielle(self):
+        api, serveur = self._api(60, style="offset")
+        items = api._paginate("/view_count/", max_pages=1)
+        assert len(items) == 60
+        assert serveur.max_simultanes == 1
+
+    def test_elements_ajoutes_pendant_la_lecture(self):
+        """Le total annoncé (30) est dépassé : la fin se lit en suivant `next`."""
+        api, _ = self._api(40, annonce=30)
+        items = api._paginate("/view_count/", max_pages=1)
+        assert [x["n"] for x in items] == list(range(40))
 
     def test_reponse_sans_total(self):
         from pod_api import PodAPI

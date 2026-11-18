@@ -324,9 +324,7 @@ class TestRecuperationApres504:
 
         monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_TIMEOUT_S", delai)
         monkeypatch.setattr(A.cfg, "CHUNK_VERIFY_INTERVAL_S", 0.05)
-        return A.App._verify_chunked_creation(
-            _faux_app(candidats, appels), self.MARQUEUR, vehicule
-        )
+        return A.App._verify_chunked_creation(_faux_app(candidats, appels), self.MARQUEUR, vehicule)
 
     def test_lit_toutes_les_videos_du_vehicule_par_son_id(self, monkeypatch):
         """Régression : `?search=` est ignoré par Pod, seule la 1re page (12

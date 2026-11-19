@@ -1553,6 +1553,66 @@ class TestChainesEtThemesEnLot:
         assert "ChannelPicker(" not in source
 
 
+class TestProprieteEnLot:
+    """1.14.0 : propriétaire et copropriétaires de plusieurs vidéos à la fois."""
+
+    U = "https://exemple.invalid/rest/users"
+
+    def _app(self):
+        import app as module_app
+
+        return module_app
+
+    def test_ajouter_garde_les_actuels_sans_doublon(self):
+        f = self._app().calculer_coproprietaires
+        r = f([f"{self.U}/1/"], [f"{self.U}/1", f"{self.U}/2/"], "ajouter")
+        assert r == [f"{self.U}/1/", f"{self.U}/2/"]
+
+    def test_retirer_ne_retire_que_les_coches(self):
+        f = self._app().calculer_coproprietaires
+        r = f([f"{self.U}/1/", f"{self.U}/2/", f"{self.U}/3/"], [f"{self.U}/2"], "retirer")
+        assert r == [f"{self.U}/1/", f"{self.U}/3/"]
+
+    def test_remplacer_ignore_les_actuels(self):
+        f = self._app().calculer_coproprietaires
+        assert f([f"{self.U}/1/"], [f"{self.U}/4/"], "remplacer") == [f"{self.U}/4/"]
+
+    def test_le_proprietaire_n_est_jamais_copropriétaire(self):
+        f = self._app().calculer_coproprietaires
+        r = f([], [f"{self.U}/9/", f"{self.U}/2/"], "ajouter", proprietaire=f"{self.U}/9")
+        assert r == [f"{self.U}/2/"]
+
+    def test_mode_inconnu_refuse(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            self._app().calculer_coproprietaires([], [], "vider")
+
+    def test_actuels_en_objets(self):
+        f = self._app().calculer_coproprietaires
+        assert f([{"url": f"{self.U}/1/"}], [], "ajouter") == [f"{self.U}/1/"]
+
+    def test_changement_sans_garder_l_ancien(self):
+        f = self._app().calculer_changement_proprietaire
+        r = f(f"{self.U}/1/", [f"{self.U}/5/"], f"{self.U}/2/", False)
+        assert r == {"owner": f"{self.U}/2/", "additional_owners": [f"{self.U}/5/"]}
+
+    def test_changement_en_gardant_l_ancien(self):
+        f = self._app().calculer_changement_proprietaire
+        r = f(f"{self.U}/1/", [f"{self.U}/5/"], f"{self.U}/2/", True)
+        assert r["additional_owners"] == [f"{self.U}/5/", f"{self.U}/1/"]
+
+    def test_le_nouveau_quitte_les_copropriétaires(self):
+        f = self._app().calculer_changement_proprietaire
+        r = f(f"{self.U}/1/", [f"{self.U}/2", f"{self.U}/5/"], f"{self.U}/2/", False)
+        assert r["additional_owners"] == [f"{self.U}/5/"]
+
+    def test_meme_proprietaire_ne_devient_pas_copropriétaire(self):
+        f = self._app().calculer_changement_proprietaire
+        r = f(f"{self.U}/2/", [], f"{self.U}/2", True)
+        assert r["additional_owners"] == []
+
+
 class TestCouleursDuPanneauDeLot:
     """Boutons du panneau de sélection multiple : teintes voulues par Cédric,
     conservées. Seul le vert a été foncé, validé avec lui : #16a34a donnait

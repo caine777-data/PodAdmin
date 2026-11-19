@@ -7427,6 +7427,24 @@ class App(_AppBase):
             command=self._browse_lot_disciplines,
         ).pack(anchor="w", padx=6, pady=(6, 0))
 
+        # — Propriété du lot —
+        ctk.CTkLabel(
+            self.browse_detail, text="Propriété", font=ctk.CTkFont(size=12, weight="bold")
+        ).pack(anchor="w", padx=6, pady=(10, 2))
+        for libelle, commande in (
+            ("👤  Changer le propriétaire…", self._browse_lot_proprietaire),
+            ("👥  Copropriétaires…", self._browse_lot_coproprietaires),
+        ):
+            ctk.CTkButton(
+                self.browse_detail,
+                text=libelle,
+                anchor="w",
+                fg_color=C_NEUTRE,
+                hover_color=C_NEUTRE_SURV,
+                text_color=T_SUR_NEUTRE,
+                command=commande,
+            ).pack(anchor="w", padx=6, pady=(2, 0))
+
         self.browse_multi_msg = ctk.CTkLabel(
             self.browse_detail,
             text="",
@@ -7654,7 +7672,179 @@ class App(_AppBase):
             self._do_browse_multi_action, videos, None, None, (chaines, themes, mode), libelle
         )
 
-    def _do_browse_multi_action(self, videos, payload, groupes, chaines, libelle):
+    # ── Propriété en lot ─────────────────────────────────────────────────
+
+    def _browse_lot_proprietaire(self):
+        """Donne toutes les vidéos sélectionnées à un même compte.
+
+        Même sélecteur que le propriétaire d'un téléversement, puis la même
+        option que l'onglet Réaffectation : garder l'ancien en copropriétaire."""
+        videos = self._browse_videos_multi()
+        if videos:
+            OwnerPicker(
+                self,
+                on_done=lambda *a: None,
+                single=True,
+                # Différé : le sélecteur se ferme APRÈS on_single ; sans ce
+                # délai, les questions qui suivent s'ouvriraient derrière lui.
+                on_single=lambda u: self.after(
+                    50, lambda: self._browse_lot_proprietaire_choisi(videos, u)
+                ),
+                title=f"Nouveau propriétaire de {len(videos)} vidéo(s)",
+            )
+
+    def _browse_lot_proprietaire_choisi(self, videos, compte: dict):
+        """Suite du changement de propriétaire, une fois le compte choisi."""
+        nouveau = compte.get("url", "")
+        if not nouveau:
+            self.browse_multi_msg.configure(
+                text="Ce compte n'a pas d'adresse Pod : impossible de lui donner des vidéos.",
+                text_color=T_ALERTE,
+            )
+            return
+        nom = self._user_label(compte)
+        garder = messagebox.askyesnocancel(
+            "Ancien propriétaire",
+            f"Les {len(videos)} vidéo(s) vont être données à {nom}.\n\n"
+            "Garder l'ancien propriétaire de chaque vidéo comme copropriétaire ?\n"
+            "(il pourra encore la modifier, mais plus la supprimer)",
+        )
+        if garder is None:
+            return  # annulé
+        mention = ", l'ancien propriétaire restant copropriétaire" if garder else ""
+        if not messagebox.askyesno(
+            "Confirmer le changement de propriétaire",
+            f"Donner {len(videos)} vidéo(s) à {nom}{mention} ?",
+        ):
+            return
+
+        def calcul(video):
+            return calculer_changement_proprietaire(
+                video.get("owner"),
+                [_url_relation(u) for u in video.get("additional_owners") or []],
+                nouveau,
+                garder,
+            )
+
+        self._browse_lot_lancer(videos, calcul, f"propriétaire changé pour {nom}")
+
+    def _browse_lot_coproprietaires(self):
+        """Ajoute, retire ou remplace les copropriétaires des vidéos sélectionnées."""
+        videos = self._browse_videos_multi()
+        if videos:
+            OwnerPicker(
+                self,
+                on_done=lambda urls, labels: self._browse_lot_copro_choisis(videos, urls),
+                title=f"Copropriétaires de {len(videos)} vidéo(s)",
+            )
+
+    def _browse_lot_copro_choisis(self, videos, urls):
+        """Suite de la copropriété en lot, une fois les comptes cochés."""
+        urls = list(urls)
+        if not urls:
+            self.browse_multi_msg.configure(text="Aucun compte coché.", text_color=T_ALERTE)
+            return
+        mode = self._demander_mode_coproprietaires(len(videos), len(urls))
+        if mode is None:
+            return  # annulé
+        verbe = {"ajouter": "ajout de", "retirer": "retrait de", "remplacer": "remplacement par"}
+
+        def calcul(video):
+            return {
+                "additional_owners": calculer_coproprietaires(
+                    video.get("additional_owners"), urls, mode, video.get("owner")
+                )
+            }
+
+        self._browse_lot_lancer(videos, calcul, f"{verbe[mode]} {len(urls)} copropriétaire(s)")
+
+    def _browse_lot_lancer(self, videos, calcul, libelle: str):
+        """Lance un lot dont les champs se calculent vidéo par vidéo."""
+        self.browse_multi_msg.configure(text="⏳ Application en cours…", text_color=T_SECONDAIRE)
+        self._lot_debut()
+        self._run(self._do_browse_multi_action, videos, None, None, None, libelle, calcul)
+
+    def _demander_mode_coproprietaires(self, nb_videos: int, nb_comptes: int):
+        """Demande s'il faut AJOUTER, RETIRER ou REMPLACER les copropriétaires.
+
+        Même présentation que le choix du mode des chaînes. « Ajouter », le
+        moins destructeur, vient en premier. Renvoie le mode, ou None."""
+        fen = ctk.CTkToplevel(self)
+        fen.title("Copropriétaires")
+        fen.geometry("470x380")
+        fen.resizable(False, False)
+        _focus_toplevel(fen, self)
+        choix = {"mode": None}
+
+        ctk.CTkLabel(
+            fen, text="Que faire de ces comptes ?", font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            fen,
+            text=f"{nb_comptes} compte(s) coché(s) pour {nb_videos} vidéo(s).",
+            text_color=T_SECONDAIRE,
+            font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=20, pady=(0, 8))
+
+        def retenir(mode):
+            choix["mode"] = mode
+            fen.destroy()
+
+        for libelle, mode, couleur, survol, aide in (
+            (
+                "➕  Ajouter comme copropriétaires",
+                "ajouter",
+                C_SUCCES,
+                C_SUCCES_SURV,
+                "Les copropriétaires actuels de chaque vidéo sont conservés.",
+            ),
+            (
+                "➖  Retirer des copropriétaires",
+                "retirer",
+                C_NEUTRE,
+                C_NEUTRE_SURV,
+                "Seuls les comptes cochés perdent leurs droits ; les autres restent.",
+            ),
+            (
+                "🔄  Remplacer les copropriétaires actuels",
+                "remplacer",
+                C_ALERTE,
+                C_ALERTE_SURV,
+                "Les copropriétaires actuels sont PERDUS et remplacés par la sélection.",
+            ),
+        ):
+            ctk.CTkButton(
+                fen,
+                text=libelle,
+                height=H_PRINCIPAL,
+                fg_color=couleur,
+                hover_color=survol,
+                text_color=T_SUR_NEUTRE if mode == "retirer" else "white",
+                command=lambda m=mode: retenir(m),
+            ).pack(fill="x", padx=20, pady=(8, 2))
+            ctk.CTkLabel(
+                fen,
+                text=aide,
+                font=ctk.CTkFont(size=11),
+                text_color=T_DISCRET,
+                wraplength=420,
+                justify="left",
+            ).pack(anchor="w", padx=24)
+
+        ctk.CTkButton(
+            fen,
+            text="Annuler",
+            width=110,
+            fg_color=C_NEUTRE,
+            hover_color=C_NEUTRE_SURV,
+            command=fen.destroy,
+            text_color=T_SUR_NEUTRE,
+        ).pack(pady=(14, 10))
+
+        self.wait_window(fen)
+        return choix["mode"]
+
+    def _do_browse_multi_action(self, videos, payload, groupes, chaines, libelle, calcul=None):
         """(Thread) Applique l'action à chaque vidéo, une par une.
 
         Traitement séquentiel : plus lent que des envois simultanés, mais
@@ -7671,7 +7861,15 @@ class App(_AppBase):
                 break
             slug = v.get("slug", "?")
             try:
-                if payload is not None:
+                if calcul is not None:
+                    # Champs propres à chaque vidéo (propriété). Ils partent de
+                    # la vidéo RELUE sur le serveur, pas du cache : un
+                    # copropriétaire ajouté ailleurs depuis le chargement de la
+                    # liste serait sinon effacé sans prévenir.
+                    champs = calcul(self.api.get_video(v))
+                    self.api.patch_video(v, champs)
+                    self._sync_video_caches(slug, champs)
+                elif payload is not None:
                     self.api.patch_video(v, payload)
                     self._sync_video_caches(slug, payload)
                 elif groupes is not None:
@@ -13622,6 +13820,60 @@ def calculer_chaines_themes(
         finales = fusion(chaines)
         themes_finaux = fusion(themes) if themes_disponibles else None
     return finales, themes_finaux
+
+
+def _url_relation(u) -> str:
+    """URL telle que Pod l'a donnée (barre finale comprise) ; accepte un dict."""
+    if isinstance(u, dict):
+        u = u.get("url", "")
+    return str(u or "")
+
+
+def _sans_doublons(urls, exclure=()) -> list:
+    """Liste d'URLs dédoublonnée (comparaison sans barre finale), dans l'ordre,
+    privée des URLs de `exclure`."""
+    vues = {_norm_url(u) for u in exclure if _norm_url(u)}
+    sortie = []
+    for u in urls or []:
+        n = _norm_url(u)
+        if n and n not in vues:
+            vues.add(n)
+            sortie.append(_url_relation(u))
+    return sortie
+
+
+def calculer_coproprietaires(actuels, choisis, mode: str, proprietaire=None) -> list:
+    """Copropriétaires FINAUX d'une vidéo lors d'une modification en lot.
+
+      • « ajouter » : ceux de la vidéo, plus les comptes choisis ;
+      • « retirer » : ceux de la vidéo, moins les comptes choisis ;
+      • « remplacer » : exactement les comptes choisis.
+
+    Le propriétaire de la vidéo est toujours écarté : il a déjà tous les
+    droits, et le compter aussi en copropriétaire fausserait les listes."""
+    exclus = [proprietaire] if proprietaire else []
+    if mode == "ajouter":
+        return _sans_doublons(list(actuels or []) + list(choisis or []), exclus)
+    if mode == "retirer":
+        return _sans_doublons(actuels, exclus + list(choisis or []))
+    if mode == "remplacer":
+        return _sans_doublons(choisis, exclus)
+    raise ValueError(f"Mode de copropriété inconnu : {mode!r}")
+
+
+def calculer_changement_proprietaire(ancien, actuels, nouveau, garder_ancien: bool) -> dict:
+    """Champs à envoyer à Pod pour donner une vidéo à `nouveau`.
+
+    Le nouveau propriétaire sort des copropriétaires s'il y figurait ; avec
+    `garder_ancien`, l'ancien y entre, pour garder la main sur la vidéo (il
+    peut la modifier, pas la supprimer). Les autres copropriétaires restent."""
+    coproprietaires = list(actuels or [])
+    if garder_ancien and ancien and _norm_url(ancien) != _norm_url(nouveau):
+        coproprietaires.append(ancien)
+    return {
+        "owner": _url_relation(nouveau),
+        "additional_owners": _sans_doublons(coproprietaires, [nouveau]),
+    }
 
 
 class ChainesThemesPicker(ctk.CTkToplevel):

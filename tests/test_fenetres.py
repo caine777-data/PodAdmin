@@ -1335,6 +1335,94 @@ class TestClassementDuLot:
         assert "askyesno" in inspect.getsource(module_app.App._browse_lot_type)
 
 
+class TestProprieteDuLot:
+    """1.14.0 : propriétaire et copropriétaires d'une sélection multiple."""
+
+    U = "https://exemple.invalid/rest/users"
+
+    class _Api:
+        """Faux serveur : la vidéo relue porte des copropriétaires que le
+        cache local ignore (ajoutés ailleurs depuis le chargement)."""
+
+        def __init__(self, u):
+            self.u, self.envois = u, []
+
+        def get_video(self, v):
+            return {
+                "slug": v["slug"],
+                "owner": f"{self.u}/1/",
+                "additional_owners": [f"{self.u}/7/"],
+            }
+
+        def patch_video(self, v, champs):
+            self.envois.append((v["slug"], champs))
+
+    def _preparer(self, app, monkeypatch):
+        TestClassementDuLot()._lot(app, 3)
+        api = self._Api(self.U)
+        monkeypatch.setattr(app, "api", api)
+        # Traitement dans le thread du test, pour lire le résultat aussitôt.
+        monkeypatch.setattr(app, "_run", lambda fn, *a: fn(*a))
+        return api
+
+    def test_les_deux_boutons_sont_dans_le_panneau(self, app):
+        import customtkinter as ctk
+
+        TestClassementDuLot()._lot(app, 2)
+        try:
+            textes = [
+                str(w.cget("text"))
+                for w in app.browse_detail.winfo_children()
+                if isinstance(w, ctk.CTkButton)
+            ]
+            assert any("Changer le propriétaire" in x for x in textes), textes
+            assert any("Copropriétaires" in x for x in textes), textes
+        finally:
+            app.browse_multi.clear()
+
+    def test_changer_le_proprietaire_en_gardant_l_ancien(self, app, monkeypatch):
+        import app as module_app
+
+        api = self._preparer(app, monkeypatch)
+        monkeypatch.setattr(module_app.messagebox, "askyesnocancel", lambda *a, **k: True)
+        monkeypatch.setattr(module_app.messagebox, "askyesno", lambda *a, **k: True)
+        try:
+            videos = app._browse_videos_multi()
+            app._browse_lot_proprietaire_choisi(videos, {"url": f"{self.U}/2/", "username": "b"})
+            assert len(api.envois) == 3
+            for _slug, champs in api.envois:
+                assert champs == {
+                    "owner": f"{self.U}/2/",
+                    "additional_owners": [f"{self.U}/7/", f"{self.U}/1/"],
+                }
+        finally:
+            app.browse_multi.clear()
+
+    def test_annuler_la_question_n_envoie_rien(self, app, monkeypatch):
+        import app as module_app
+
+        api = self._preparer(app, monkeypatch)
+        monkeypatch.setattr(module_app.messagebox, "askyesnocancel", lambda *a, **k: None)
+        try:
+            app._browse_lot_proprietaire_choisi(
+                app._browse_videos_multi(), {"url": f"{self.U}/2/", "username": "b"}
+            )
+            assert api.envois == []
+        finally:
+            app.browse_multi.clear()
+
+    def test_ajouter_des_copropriétaires_garde_ceux_du_serveur(self, app, monkeypatch):
+        api = self._preparer(app, monkeypatch)
+        monkeypatch.setattr(app, "_demander_mode_coproprietaires", lambda *a: "ajouter")
+        try:
+            app._browse_lot_copro_choisis(app._browse_videos_multi(), [f"{self.U}/8/"])
+            assert [c for _s, c in api.envois] == [
+                {"additional_owners": [f"{self.U}/7/", f"{self.U}/8/"]}
+            ] * 3
+        finally:
+            app.browse_multi.clear()
+
+
 class TestSeparationBarreContenu:
     """Un filet marque la limite barre latérale / contenu.
 

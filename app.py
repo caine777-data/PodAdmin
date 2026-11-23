@@ -6589,7 +6589,22 @@ class App(_AppBase):
             font=ctk.CTkFont(size=11, underline=True),
             command=self._browse_effacer_filtres,
         )
-        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées.
+        # « Tout sélectionner » porte sur TOUTES les vidéos filtrées. Son
+        # contraire est à côté de lui, et non au bas du panneau de lot : les
+        # deux gestes se cherchent au même endroit. Inactif sans sélection.
+        self.browse_deselect_btn = ctk.CTkButton(
+            ligne_compte,
+            text="☐ Tout désélectionner",
+            width=150,
+            height=H_COMPACT,
+            font=ctk.CTkFont(size=11),
+            fg_color=C_NEUTRE,
+            hover_color=C_NEUTRE_SURV,
+            state="disabled",
+            command=self._browse_vider_multi,
+            text_color=T_SUR_NEUTRE,
+        )
+        self.browse_deselect_btn.pack(side="right", padx=(6, 0))
         ctk.CTkButton(
             ligne_compte,
             text="☑ Tout sélectionner",
@@ -7300,6 +7315,8 @@ class App(_AppBase):
 
     def _browse_refresh_multi(self):
         """Met à jour la teinte des lignes puis rebascule le panneau de droite."""
+        if hasattr(self, "browse_deselect_btn"):
+            self.browse_deselect_btn.configure(state="normal" if self.browse_multi else "disabled")
         self._browse_teinter()
         self._browse_render_detail()
 
@@ -7490,15 +7507,6 @@ class App(_AppBase):
             hover_color=C_DESTR_SURV,
             command=self._browse_multi_delete,
         ).pack(fill="x", padx=6, pady=4)
-
-        ctk.CTkButton(
-            self.browse_detail,
-            text="✖  Annuler la sélection",
-            fg_color=C_NEUTRE,
-            hover_color=C_NEUTRE_SURV,
-            command=self._browse_vider_multi,
-            text_color=T_SUR_NEUTRE,
-        ).pack(fill="x", padx=6, pady=(8, 6))
 
     def _browse_select(self, v):
         """Sélectionne une vidéo et affiche son panneau de détail.
@@ -8249,7 +8257,7 @@ class App(_AppBase):
 
         # — Classement : type ET disciplines, les deux nomenclatures de la
         #   vidéo, côte à côte. Le bouton Disciplines était d'abord rangé dans
-        #   « Relations » avec les chaînes ; il est plus naturel ici.
+        #   « Copropriétaires et chaînes » ; il est plus naturel ici.
         ctk.CTkLabel(
             self.browse_detail,
             text="Classement",
@@ -8295,10 +8303,10 @@ class App(_AppBase):
 
         type_menu.configure(command=_apply_type)
 
-        # — Co-propriétaires & chaînes —
+        # — Copropriétaires et chaînes —
         ctk.CTkLabel(
             self.browse_detail,
-            text="Relations",
+            text="Copropriétaires et chaînes",
             anchor="w",
             font=ctk.CTkFont(size=12, weight="bold"),
         ).pack(anchor="w", padx=4, pady=(12, 2))
@@ -8306,7 +8314,7 @@ class App(_AppBase):
         rel.pack(fill="x", padx=4)
         ctk.CTkButton(
             rel,
-            text="👥  Co-propriétaires…",
+            text="👥  Copropriétaires…",
             fg_color=C_NEUTRE,
             command=lambda: self._browse_edit_owners(courante()),
             text_color=T_SUR_NEUTRE,
@@ -12296,7 +12304,8 @@ class App(_AppBase):
             "et une vidéo peut légitimement appartenir à plusieurs chaînes.\n\n"
             "La sélection est CONSERVÉE après une action : on peut enchaîner "
             "(restreindre à un groupe, puis affecter à une chaîne) sans tout "
-            "recocher. « Annuler la sélection » revient au détail d'une vidéo.\n\n"
+            "recocher. « ☐ Tout désélectionner », à côté de « Tout sélectionner », "
+            "revient au détail d'une vidéo.\n\n"
             "Pendant un traitement, le bouton « 🛑 Interrompre le traitement » "
             "s'active. L'arrêt est PROPRE : la vidéo en cours est menée à son "
             "terme, puis le traitement s'arrête — on ne coupe jamais au milieu "
@@ -12324,13 +12333,24 @@ class App(_AppBase):
             "d'une vidéo fait la même chose.\n"
             "• « 📂 Fichiers du poste… » ou glisser-déposer : une vidéo ou un son part "
             f"ENTIER chez Aristote, jusqu'à {limite_ia}. Au-delà, déposez d'abord la "
-            "vidéo sur Pod. Un fichier VTT ou SRT est importé et redécoupé, sans rien envoyer.\n\n"
+            "vidéo sur Pod. Un fichier VTT ou SRT est importé et redécoupé, sans rien envoyer.\n"
+            "• Les vidéos sont traitées comme parlées en français : la correction est "
+            "rangée en français (« fr ») sur Pod.\n\n"
             "2. Trois cartes, une par partie\n"
             "Sous-titres et traduction, Métadonnées, Quiz. Chaque carte dit où en est sa "
             "partie et n'a qu'un bouton, qui suit l'étape : « Transcrire avec Aristote », "
             "« Relire… », « Ouvrir », « Réessayer ». Le seul bouton bleu de l'onglet est "
             "l'étape recommandée. Chaque carte ouvre l'éditeur sur SA partie ; s'il est déjà "
             "ouvert, il change de partie au lieu d'ouvrir une autre fenêtre.\n"
+            "• Sous-titres relus : « 🌐 Traduire… » ouvre l'éditeur, où l'on choisit la "
+            "langue. « Repartir de zéro… », en bas de la carte, efface la correction.\n"
+            "• Liste « Vidéos » : chaque ligne donne son état en couleur (Échec, "
+            "Transcription, Chez Aristote, À relire, Terminée) et un repère par partie : "
+            "● fait, ◐ à relire, ◔ en cours, ○ pas encore demandé, ✕ échec. Un clic sur la "
+            "ligne l'affiche au-dessus, repérée par un liseré bleu ; le bouton « ⋯ » ouvre "
+            "le dossier des exports ou retire la vidéo de la liste. À droite, la date de la "
+            f"dernière activité ; au-delà de {SEUIL_RECHERCHE_IA} vidéos, une recherche "
+            "par titre apparaît au-dessus de la liste.\n"
             "• Vidéo sans sous-titres : Métadonnées ou Quiz lancent d'abord la transcription, "
             "puis leur demande dès qu'elle est finie (c'est annoncé avant).\n"
             "• Une demande prend de quelques secondes à un quart d'heure : vous pouvez "
@@ -12356,7 +12376,7 @@ class App(_AppBase):
             "Chaque écriture sur Pod est notée dans le Journal. La connexion à Aristote "
             "est fournie avec l'application ; la carte « Aristote » de l'onglet "
             "Configuration permet de la tester ou d'en changer. Les travaux restent sur le "
-            "poste (dossier .soustitreur, bouton 📁 de chaque ligne) et leur suivi reprend "
+            "poste (dossier .soustitreur, menu « ⋯ » de chaque ligne) et leur suivi reprend "
             "tout seul si PodAdmin a été fermé entre-temps.",
         )
 
@@ -14252,13 +14272,8 @@ LIBELLES_PARTIE_IA = {
     "trad:pt": "traduction portugaise",
 }
 
-LIBELLES_ETAT_IA = {
-    "envoi": "Préparation",
-    "attente": "Chez Aristote",
-    "a_corriger": "À corriger",
-    "corrige": "Exporté",
-    "erreur": "Erreur",
-}
+# Couleur du texte de chaque teinte d'état (cartes, liste).
+TEINTES_IA = {"ok": T_SUCCES, "alerte": T_ALERTE, "cours": T_EN_COURS, "erreur": T_ERREUR}
 
 
 def message_editeur(e: Exception) -> str:
@@ -14333,11 +14348,24 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
     pod : vidéo sur Pod (False : fichier du poste).
     pistes_pod : langues des sous-titres déjà présents sur Pod.
 
-    Chaque carte : {pastille, teinte, detail, action, libelle, action2, libelle2}
-    (teinte : ok | alerte | cours | erreur | "" ; action : code, ou "").
+    Chaque carte : {pastille, teinte, detail, action, libelle, action2,
+    libelle2, lien, libelle_lien} (teinte : ok | alerte | cours | erreur | "" ;
+    action : code, ou ""). `lien` est une action rare ou destructrice
+    (« Repartir de zéro… ») : un simple lien en bas de carte, pas un bouton
+    pleine largeur juste sous l'action principale (1.15.0).
     """
 
-    def carte(pastille, teinte="", detail="", action="", libelle="", action2="", libelle2=""):
+    def carte(
+        pastille,
+        teinte="",
+        detail="",
+        action="",
+        libelle="",
+        action2="",
+        libelle2="",
+        lien="",
+        libelle_lien="",
+    ):
         return dict(
             pastille=pastille,
             teinte=teinte,
@@ -14346,6 +14374,8 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
             libelle=libelle,
             action2=action2,
             libelle2=libelle2,
+            lien=lien,
+            libelle_lien=libelle_lien,
         )
 
     pistes_pod = pistes_pod or []
@@ -14387,11 +14417,7 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                     )
                     + ")"
                 )
-        suite = (
-            ("Traductions : " + ", ".join(trad) + ".")
-            if trad
-            else "Traduction en anglais ou en portugais : depuis l'éditeur."
-        )
+        suite = ("Traductions : " + ", ".join(trad) + ".") if trad else ""
         if e["etat"] == "en_cours":
             cartes["st"] = carte(
                 "transcription en cours",
@@ -14431,8 +14457,8 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                     compte + suite,
                     "relire_st",
                     "Relire les sous-titres",
-                    "repartir",
-                    "Repartir de zéro…",
+                    lien="repartir",
+                    libelle_lien="Repartir de zéro…",
                 )
             else:
                 relu = (p.get("relu") or {}).get("le", "")
@@ -14446,8 +14472,13 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                     compte + quand + suite,
                     "ouvrir_st",
                     "Ouvrir",
-                    "repartir",
-                    "Repartir de zéro…",
+                    # La traduction était annoncée par une phrase (« depuis
+                    # l'éditeur ») qui passait inaperçue : bouton à part
+                    # entière, une fois les sous-titres relus.
+                    "traduire",
+                    "🌐  Traduire…",
+                    lien="repartir",
+                    libelle_lien="Repartir de zéro…",
                 )
 
     # ── Métadonnées et quiz : même logique, sauf la vidéo du poste ──
@@ -14522,10 +14553,17 @@ def cartes_ia(p: dict | None, pod: bool, pistes_pod: list[str] | None = None) ->
                 "Reprendre le suivi" if reprenable else "Réessayer",
             )
         elif e["etat"] == "vide":
+            # Conseil, sans blocage (décision du 2026-10-07) : Aristote part
+            # du texte des sous-titres, mieux vaut qu'il soit relu.
+            conseil = (
+                " Conseil : relisez d'abord les sous-titres, Aristote part de ce texte."
+                if projets_ia.etat_partie(p, "sous_titres")["etat"] == "a_relire"
+                else ""
+            )
             cartes[cle] = carte(
                 "pas encore demandé",
                 "",
-                (e["detail"] + ". " if e["detail"] else "") + presentation,
+                (e["detail"] + ". " if e["detail"] else "") + presentation + conseil,
                 f"demander_{cle}",
                 "Demander à Aristote…",
             )
@@ -14576,17 +14614,113 @@ def projet_a_faire_ia(p: dict) -> bool:
     publié ou exporté. Sert au filtre « À faire » de la liste (audit I1)."""
     if p.get("etat") in ("envoi", "attente", "erreur") or p.get("a_enchainer"):
         return True
+    return any(projets_ia.etat_partie(p, x)["etat"] in ETATS_A_FAIRE_IA for x in _parties_ia(p))
+
+
+def _parties_ia(p: dict) -> list[str]:
+    """Parties d'un projet : sous-titres, quiz, métadonnées (vidéo Pod
+    seulement) et chaque traduction demandée ou reçue."""
     e = projets_ia.enrichissement(p)
-    parties = (
+    return (
         ["sous_titres", "quiz"]
         + (["meta"] if p.get("pod") else [])
         + [
             f"trad:{lg}"
-            for lg in set(e["traductions"])
-            | {c[5:] for c in e["demandes"] if c.startswith("trad:")}
+            for lg in sorted(
+                set(e["traductions"]) | {c[5:] for c in e["demandes"] if c.startswith("trad:")}
+            )
         ]
     )
-    return any(projets_ia.etat_partie(p, x)["etat"] in ETATS_A_FAIRE_IA for x in parties)
+
+
+def statut_ligne_ia(p: dict) -> tuple[str, str]:
+    """État d'une vidéo dans la liste, en deux mots et une teinte
+    (ok | alerte | cours | erreur) : ce qui attend se repère sans lire.
+
+    Ordre de gravité : un échec passe avant tout, puis le travail en cours,
+    puis ce qui attend une relecture. Cohérent avec `projet_a_faire_ia` :
+    seule « Terminée » sort du filtre « À faire »."""
+    etats = {projets_ia.etat_partie(p, x)["etat"] for x in _parties_ia(p)}
+    if p.get("etat") == "erreur" or "erreur" in etats:
+        return "Échec", "erreur"
+    if p.get("etat") in ("envoi", "attente"):
+        return "Transcription", "cours"
+    if "en_cours" in etats:
+        return "Chez Aristote", "cours"
+    if etats & {"a_relire", "pret"}:
+        return "À relire", "alerte"
+    if p.get("a_enchainer"):
+        return "En attente", "cours"
+    return "Terminée", "ok"
+
+
+def date_ligne_ia(iso: str, maintenant: datetime | None = None) -> str:
+    """Dernière activité d'une vidéo, en clair : « aujourd'hui 14:05 »,
+    « hier 09:12 », sinon « 12/11 » (« 12/11/2025 » pour une autre année).
+
+    Une heure absolue plutôt que « il y a 5 min » : la ligne n'est redessinée
+    qu'à chaque événement, et une durée relative y vieillirait sans bouger."""
+    try:
+        quand = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return ""
+    maintenant = maintenant or datetime.now()
+    ecart = (maintenant.date() - quand.date()).days
+    if ecart == 0:
+        return f"aujourd'hui {quand:%H:%M}"
+    if ecart == 1:
+        return f"hier {quand:%H:%M}"
+    if quand.year == maintenant.year:
+        return f"{quand:%d/%m}"
+    return f"{quand:%d/%m/%Y}"
+
+
+# Nom court de chaque partie, pour annoncer une demande programmée.
+NOMS_PARTIES_IA = {"meta": "métadonnées", "quiz": "quiz"}
+
+# Au-delà de ce nombre de vidéos, la liste propose une recherche.
+SEUIL_RECHERCHE_IA = 10
+
+
+# Repère d'une partie dans la liste : symbole et teinte.
+REPERES_IA = {
+    "vide": ("○", ""),
+    "en_cours": ("◔", "cours"),
+    "erreur": ("✕", "erreur"),
+    "a_relire": ("◐", "alerte"),
+    "pret": ("◐", "alerte"),
+    "relu": ("●", "ok"),
+    "fait": ("●", "ok"),
+}
+
+
+def reperes_ligne_ia(p: dict) -> list[tuple[str, str, str]]:
+    """Un repère par partie, pour la ligne de la liste : (nom, symbole, teinte).
+
+    Remplace la phrase « sous-titres : à relire · métadonnées : pas encore
+    demandé · quiz : … », trop longue pour être lue d'un coup d'œil. Un
+    contenu à revoir (sous-titres modifiés depuis) est marqué comme à relire.
+    Une demande programmée après la transcription compte comme en cours."""
+    noms = [("Sous-titres", "sous_titres")]
+    if p.get("pod"):
+        noms.append(("Métadonnées", "meta"))
+    noms.append(("Quiz", "quiz"))
+    a_enchainer = p.get("a_enchainer") or []
+    sortie = []
+    for nom, partie in noms:
+        e = projets_ia.etat_partie(p, partie)
+        etat = e["etat"]
+        if etat == "vide" and partie in a_enchainer:
+            etat = "en_cours"
+        elif etat in ("relu", "fait") and (
+            e["perime"] or (partie == "sous_titres" and e["detail"])
+        ):
+            # Pour les sous-titres, `detail` signale une modification depuis la
+            # relecture ; pour le quiz, il compte les questions (sans alerte).
+            etat = "a_relire"
+        symbole, teinte = REPERES_IA.get(etat, ("○", ""))
+        sortie.append((nom, symbole, teinte))
+    return sortie
 
 
 def carte_principale_ia(cartes: dict) -> str:
@@ -14703,11 +14837,27 @@ class PanneauEnrichissement(ctk.CTkFrame):
             font=ctk.CTkFont(size=T_CORPS),
             text_color=T_SECONDAIRE,
             wraplength=520,
-            text="Une vidéo déjà sur Pod, ou déposez ici une vidéo, un son ou des "
-            "sous-titres (VTT, SRT) du poste. Les vidéos sont en français : la "
-            "correction est rangée en français sur Pod.",
+            # Consigne courte : la langue (français) est expliquée dans l'Aide.
+            text="Une vidéo déjà sur Pod, ou un fichier du poste : vidéo, son ou "
+            "sous-titres (VTT, SRT).",
         )
         consigne.pack(fill="x", pady=(4, 0))
+        cibles_depot = [zone, gauche, consigne]
+        # Zone de dépôt VISIBLE : rien n'indiquait qu'on pouvait déposer un
+        # fichier sur la carte. Montrée seulement si le glisser-déposer marche.
+        if HAS_DND and getattr(self.hote, "dnd_ok", False):
+            depot = ctk.CTkFrame(
+                gauche, fg_color="transparent", border_width=1, border_color=T_DISCRET
+            )
+            depot.pack(fill="x", pady=(10, 0))
+            texte_depot = ctk.CTkLabel(
+                depot,
+                text="⬇  Glissez ici une vidéo, un son ou des sous-titres",
+                text_color=T_SECONDAIRE,
+                font=ctk.CTkFont(size=T_PETIT),
+            )
+            texte_depot.pack(padx=12, pady=10)
+            cibles_depot += [depot, texte_depot]
         boutons = ctk.CTkFrame(zone, fg_color="transparent")
         boutons.pack(side="right", padx=16, pady=14)
         ctk.CTkButton(
@@ -14733,7 +14883,7 @@ class PanneauEnrichissement(ctk.CTkFrame):
         # Dépôt de fichiers sur la carte. PodAdmin n'inscrit au glisser-déposer
         # que la liste du Téléversement : aucun conflit possible.
         if HAS_DND and getattr(self.hote, "dnd_ok", False):
-            for w in (zone, gauche, consigne):
+            for w in cibles_depot:
                 try:
                     w.drop_target_register(DND_FILES)
                     w.dnd_bind("<<Drop>>", lambda e: self.ajouter(self.tk.splitlist(e.data)))
@@ -14842,6 +14992,21 @@ class PanneauEnrichissement(ctk.CTkFrame):
             cale = ctk.CTkFrame(c, height=H_COMPACT, fg_color="transparent")
             cale.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 10))
             cale.grid_remove()
+            # Action rare ou destructrice : lien discret en bas de carte, loin
+            # du bouton principal (un clic de travers effaçait la correction).
+            lien = ctk.CTkButton(
+                c,
+                text="",
+                width=0,
+                height=H_COMPACT,
+                fg_color="transparent",
+                hover_color=S_LIGNE,
+                text_color=T_DISCRET,
+                font=ctk.CTkFont(size=T_PETIT, underline=True),
+                command=lambda n=nom: self._action_carte(n, "lien"),
+            )
+            lien.grid(row=6, column=0, sticky="e", padx=8, pady=(0, 6))
+            lien.grid_remove()
             self.cartes[nom] = dict(
                 pastille=pastille,
                 detail=detail,
@@ -14849,6 +15014,7 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 bouton2=bouton2,
                 cale=cale,
                 barre=barre,
+                lien=lien,
             )
         self._bind_largeur_cartes(grille)
 
@@ -14871,6 +15037,12 @@ class PanneauEnrichissement(ctk.CTkFrame):
             height=H_NORMAL,
             command=lambda _v: self._reordonner(),
         ).pack(side="right")
+        # Recherche dans les titres : montrée seulement au-delà de
+        # SEUIL_RECHERCHE_IA vidéos, inutile pour une liste qui tient à l'écran.
+        self.recherche_liste = ctk.CTkEntry(
+            entete, width=220, height=H_NORMAL, placeholder_text="🔍 titre…"
+        )
+        self.recherche_liste.bind("<KeyRelease>", lambda _e: self._reordonner(), add="+")
         self.liste = ctk.CTkScrollableFrame(self, fg_color=S_CARTE, corner_radius=8)
         self.liste.pack(fill="both", expand=True)
         self.liste.grid_columnconfigure(0, weight=1)
@@ -14974,13 +15146,18 @@ class PanneauEnrichissement(ctk.CTkFrame):
         pistes = sorted({t.get("lang", "") for t in (self.fiche or {}).get("pistes") or []} - {""})
         etats = cartes_ia(p, pod, pistes)
         principale = carte_principale_ia(etats)
-        teintes = {"ok": T_SUCCES, "alerte": T_ALERTE, "cours": T_EN_COURS, "erreur": T_ERREUR}
         if (p or {}).get("etat") not in ("envoi", "attente"):
             self._barre_carte(None)
         for nom, w in self.cartes.items():
             e = etats[nom]
+            # Même étiquette que dans la liste : « ● » coloré pour un état qui
+            # compte, « ○ » gris et maigre sinon. « pas encore demandé » en
+            # blanc gras ressemblait à un second titre de carte.
+            neutre = not e["teinte"]
             w["pastille"].configure(
-                text=e["pastille"], text_color=teintes.get(e["teinte"], T_SECONDAIRE)
+                text=("○ " if neutre else "● ") + e["pastille"],
+                text_color=TEINTES_IA.get(e["teinte"], T_SECONDAIRE),
+                font=ctk.CTkFont(size=T_PETIT, weight="normal" if neutre else "bold"),
             )
             w["detail"].configure(text=e["detail"])
             w["action"] = e
@@ -15003,6 +15180,11 @@ class PanneauEnrichissement(ctk.CTkFrame):
             else:
                 w["bouton2"].grid_remove()
                 w["cale"].grid()
+            if e["lien"]:
+                w["lien"].configure(text=e["libelle_lien"])
+                w["lien"].grid()
+            else:
+                w["lien"].grid_remove()
 
     def _barre_carte(self, progression: float | None) -> None:
         """Barre de la carte Sous-titres : None la masque, < 0 = sans fin."""
@@ -15028,6 +15210,10 @@ class PanneauEnrichissement(ctk.CTkFrame):
         p = self._projet_courant()
         if action.startswith(("relire_", "ouvrir_")):
             self.ouvrir_editeur(self.pid_courant, action.split("_", 1)[1])
+        elif action == "traduire":
+            # La langue se choisit dans la partie Sous-titres de l'éditeur, qui
+            # lit chez Aristote la liste des langues réellement disponibles.
+            self.ouvrir_editeur(self.pid_courant, "st")
         elif action == "reessayer_st" and p is not None and p.get("reprenable"):
             self.reprendre_transcription(p)
         elif action in ("transcrire", "reessayer_st"):
@@ -15288,70 +15474,113 @@ class PanneauEnrichissement(ctk.CTkFrame):
     def _ligne(self, p: dict) -> None:
         pid = p["id"]
         if pid not in self.lignes:
-            cadre = ctk.CTkFrame(self.liste, fg_color=S_LIGNE, corner_radius=6)
-            cadre.grid_columnconfigure(0, weight=1)
-            # Sans icône : 🎞️ est mal rendu par Tk sous Windows (audit I5).
-            titre = p["nom"] + (
-                f"   ·   Pod n° {p['pod']['id']}" if p.get("pod") else "   ·   fichier du poste"
-            )
-            l_titre = ctk.CTkLabel(
-                cadre, text=titre, anchor="w", font=ctk.CTkFont(size=T_CORPS, weight="bold")
-            )
-            l_titre.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 0))
-            etat = ctk.CTkLabel(
-                cadre, text="", anchor="w", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=T_PETIT)
-            )
-            etat.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-            barre = ctk.CTkProgressBar(cadre, height=6, progress_color=C_ACTION, fg_color=S_PUCE)
-            barre.set(0)
-            # Actions répétées sur chaque ligne : neutres et compactes.
-            b_corr = ctk.CTkButton(
-                cadre,
-                text="Afficher",
-                width=96,
-                height=H_COMPACT,
-                fg_color=C_NEUTRE,
-                hover_color=C_NEUTRE_SURV,
-                text_color=T_SUR_NEUTRE,
-                command=lambda: self.selectionner_projet(pid),
-            )
-            ajouter_infobulle(b_corr, "Afficher ses trois parties : sous-titres, métadonnées, quiz")
-            b_dos = ctk.CTkButton(
-                cadre,
-                text="📁",
-                width=34,
-                height=H_COMPACT,
-                fg_color=C_NEUTRE,
-                hover_color=C_NEUTRE_SURV,
-                text_color=T_SUR_NEUTRE,
-                command=lambda: self.ouvrir_dossier_projet(pid),
-            )
-            ajouter_infobulle(b_dos, "Ouvrir le dossier des fichiers exportés")
-            # Suppression répétée : icône seule, neutre, rouge AU SURVOL.
-            b_sup = ctk.CTkButton(
-                cadre,
-                text="🗑",
-                width=34,
-                height=H_COMPACT,
-                fg_color=C_NEUTRE,
-                hover_color=C_DESTRUCTIF,
-                text_color=T_SUR_NEUTRE,
-                command=lambda: self.supprimer(pid),
-            )
-            ajouter_infobulle(b_sup, "Retirer cette vidéo de la liste")
-            b_corr.grid(row=0, column=1, rowspan=2, padx=3)
-            b_dos.grid(row=0, column=2, rowspan=2, padx=3)
-            b_sup.grid(row=0, column=3, rowspan=2, padx=(3, 8))
-            # Toute la ligne est cliquable (audit I2), pas seulement « Afficher ».
-            for w in (cadre, l_titre, etat):
-                w.bind("<Button-1>", lambda _e: self.selectionner_projet(pid), add="+")
-                w.configure(cursor="hand2")
-            self.lignes[pid] = dict(
-                cadre=cadre, etat=etat, barre=barre, afficher=b_corr, a_faire=True
-            )
+            self.lignes[pid] = self._construire_ligne(pid, p)
             self._reordonner(nouveau=pid)
         self._maj_ligne(p)
         self._maj_vide()
+
+    def _construire_ligne(self, pid: str, p: dict) -> dict:
+        """Ligne de la liste (1.15.0) : liseré de sélection, état en couleur,
+        titre, un repère par partie, et un seul bouton « ⋯ ».
+
+        Colonnes : 0 liseré, 1 état, 2 titre et repères, 3 menu. Le titre est
+        créé AVANT l'état : il reste la première étiquette de la ligne."""
+        cadre = ctk.CTkFrame(self.liste, fg_color=S_LIGNE, corner_radius=6)
+        cadre.grid_columnconfigure(2, weight=1)
+        # Liseré bleu de la vidéo affichée au-dessus : le fond seul, à peine
+        # plus clair que la zébrure, ne suffisait pas à la repérer.
+        # Hauteur minimale explicite : un CTkFrame mesure 200 px par défaut, et
+        # le liseré étiré sur la ligne (sticky « ns ») l'aurait imposée.
+        lisere = ctk.CTkFrame(cadre, width=4, height=4, corner_radius=2, fg_color="transparent")
+        lisere.grid(row=0, column=0, rowspan=3, sticky="ns", padx=(4, 0), pady=6)
+        # Sans icône : 🎞️ est mal rendu par Tk sous Windows (audit I5).
+        titre = p["nom"] + (
+            f"   ·   Pod n° {p['pod']['id']}" if p.get("pod") else "   ·   fichier du poste"
+        )
+        l_titre = ctk.CTkLabel(
+            cadre, text=titre, anchor="w", font=ctk.CTkFont(size=T_CORPS, weight="bold")
+        )
+        l_titre.grid(row=0, column=2, sticky="ew", padx=(4, 10), pady=(6, 0))
+        # État en deux mots et en couleur, largeur fixe : les titres restent
+        # alignés d'une ligne à l'autre.
+        statut = ctk.CTkLabel(
+            cadre, text="", width=120, anchor="w", font=ctk.CTkFont(size=T_PETIT, weight="bold")
+        )
+        statut.grid(row=0, column=1, rowspan=2, sticky="w", padx=(10, 6))
+        bas = ctk.CTkFrame(cadre, fg_color="transparent")
+        bas.grid(row=1, column=2, sticky="ew", padx=(4, 10), pady=(0, 6))
+        reperes = [ctk.CTkLabel(bas, text="", font=ctk.CTkFont(size=T_PETIT)) for _ in range(3)]
+        for r in reperes:
+            r.pack(side="left", padx=(0, 14))
+        # Détail ponctuel : message d'erreur, progression de la transcription.
+        etat = ctk.CTkLabel(
+            bas, text="", anchor="w", text_color=T_SECONDAIRE, font=ctk.CTkFont(size=T_PETIT)
+        )
+        etat.pack(side="left", fill="x", expand=True)
+        barre = ctk.CTkProgressBar(cadre, height=6, progress_color=C_ACTION, fg_color=S_PUCE)
+        barre.set(0)
+        # Un seul bouton par ligne : toute la ligne affiche déjà la vidéo, et
+        # les icônes 📁 et 🗑 étaient rendues minuscules par Tk sous Windows.
+        menu = ctk.CTkButton(
+            cadre,
+            text="⋯",
+            width=34,
+            height=H_COMPACT,
+            fg_color=C_NEUTRE,
+            hover_color=C_NEUTRE_SURV,
+            text_color=T_SUR_NEUTRE,
+            font=ctk.CTkFont(size=T_CORPS, weight="bold"),
+        )
+        menu.configure(command=lambda: self._menu_ligne(pid, menu))
+        ajouter_infobulle(menu, "Ouvrir le dossier des exports, retirer de la liste")
+        menu.grid(row=0, column=4, rowspan=2, padx=(3, 8))
+        # Dernière activité, à droite (la plus récente est en haut au chargement).
+        date = ctk.CTkLabel(
+            cadre, text="", anchor="e", text_color=T_DISCRET, font=ctk.CTkFont(size=T_PETIT)
+        )
+        date.grid(row=0, column=3, rowspan=2, padx=(6, 6))
+        # Toute la ligne est cliquable (audit I2).
+        for w in (cadre, l_titre, statut, bas, etat, date, *reperes):
+            w.bind("<Button-1>", lambda _e: self.selectionner_projet(pid), add="+")
+            w.configure(cursor="hand2")
+        return dict(
+            cadre=cadre,
+            lisere=lisere,
+            statut=statut,
+            reperes=reperes,
+            etat=etat,
+            date=date,
+            barre=barre,
+            menu=menu,
+            nom=_sans_accents(p.get("nom", "")),
+            a_faire=True,
+        )
+
+    # Libellés du menu « ⋯ » d'une ligne.
+    MENU_LIGNE_IA = ("Ouvrir le dossier des exports", "Retirer de la liste…")
+
+    def _menu_ligne(self, pid: str, bouton) -> None:
+        """Menu « ⋯ » d'une ligne : celui de CustomTkinter, comme les
+        pastilles de filtre (même aspect dans les deux thèmes)."""
+        from customtkinter.windows.widgets.core_widget_classes import DropdownMenu
+
+        dossier, retirer = self.MENU_LIGNE_IA
+
+        def choisir(valeur):
+            if valeur == dossier:
+                self.ouvrir_dossier_projet(pid)
+            elif valeur == retirer:
+                self.supprimer(pid)
+
+        DropdownMenu(
+            bouton,
+            values=list(self.MENU_LIGNE_IA),
+            command=choisir,
+            fg_color=C_CHAMP,
+            hover_color=C_CHAMP_SURV,
+            text_color=T_CHAMP,
+            font=ctk.CTkFont(size=12),
+        ).open(bouton.winfo_rootx(), bouton.winfo_rooty() + bouton.winfo_height())
 
     def _reordonner(self, nouveau: str | None = None):
         ordre = list(self.lignes)
@@ -15363,10 +15592,18 @@ class PanneauEnrichissement(ctk.CTkFrame):
             return  # placement unique en fin de chargement
         filtre = self.filtre_liste.get() if hasattr(self, "filtre_liste") else "Toutes"
         a_faire = sum(1 for w in self.lignes.values() if w["a_faire"])
+        cherche = ""
+        if hasattr(self, "recherche_liste"):
+            if len(self.lignes) > SEUIL_RECHERCHE_IA:
+                if not self.recherche_liste.winfo_manager():
+                    self.recherche_liste.pack(side="right", padx=(0, 8))
+                cherche = _sans_accents(self.recherche_liste.get().strip())
+            elif self.recherche_liste.winfo_manager():
+                self.recherche_liste.pack_forget()
         visibles = [
             pid
             for pid, w in self.lignes.items()
-            if filtre == "Toutes" or w["a_faire"] == (filtre == "À faire")
+            if (filtre == "Toutes" or w["a_faire"] == (filtre == "À faire")) and cherche in w["nom"]
         ]
         for pid, w in self.lignes.items():
             if pid not in visibles:
@@ -15377,6 +15614,9 @@ class PanneauEnrichissement(ctk.CTkFrame):
                 S_SELECTION if pid == self.pid_courant else (S_LIGNE if i % 2 == 0 else S_LIGNE_ALT)
             )
             self.lignes[pid]["cadre"].configure(fg_color=fond)
+            self.lignes[pid]["lisere"].configure(
+                fg_color=C_ACTION if pid == self.pid_courant else "transparent"
+            )
             self.lignes[pid]["cadre"].grid(row=i + 1, column=0, sticky="ew", padx=6, pady=2)
         if hasattr(self, "compte_liste"):
             self.compte_liste.configure(
@@ -15387,7 +15627,9 @@ class PanneauEnrichissement(ctk.CTkFrame):
             )
         if self.lignes and not visibles:
             self.vide_filtre.configure(
-                text="Rien à faire : tout est à jour. Voir « Terminées »."
+                text="Aucune vidéo ne correspond à cette recherche."
+                if cherche
+                else "Rien à faire : tout est à jour. Voir « Terminées »."
                 if filtre == "À faire"
                 else "Aucune vidéo terminée pour l'instant."
             )
@@ -15404,25 +15646,32 @@ class PanneauEnrichissement(ctk.CTkFrame):
         if a_faire != w["a_faire"]:
             w["a_faire"] = a_faire
             self._reordonner()
-        texte = LIBELLES_ETAT_IA.get(e, e)
-        if e == "erreur" and p.get("erreur"):
-            texte += " : " + p["erreur"]
-        elif e in ("a_corriger", "corrige"):
-            # Résumé des trois parties : ce qui reste à faire se lit sans ouvrir.
-            cartes = cartes_ia(p, bool(p.get("pod")))
-            texte = " · ".join(
-                f"{nom} : {cartes[cle]['pastille']}"
-                for cle, nom in (("st", "sous-titres"), ("meta", "métadonnées"), ("quiz", "quiz"))
-                if cle != "meta" or p.get("pod")
-            )
+        libelle, teinte = statut_ligne_ia(p)
+        w["statut"].configure(text=f"● {libelle}", text_color=TEINTES_IA[teinte])
+        # Un repère par partie : ce qui reste à faire se lit sans ouvrir.
+        reperes = reperes_ligne_ia(p)
+        for i, lab in enumerate(w["reperes"]):
+            if i < len(reperes):
+                nom, symbole, t = reperes[i]
+                lab.configure(text=f"{symbole} {nom}", text_color=TEINTES_IA.get(t, T_SECONDAIRE))
+                lab.pack(side="left", padx=(0, 14), before=w["etat"])
+            else:
+                lab.pack_forget()  # fichier du poste : pas de métadonnées
+        # Détail ponctuel seulement : message d'erreur, demande programmée,
+        # progression.
+        texte = p.get("erreur", "") if e == "erreur" else ""
+        suite = [NOMS_PARTIES_IA.get(x, x) for x in p.get("a_enchainer") or []]
+        if suite and not texte:
+            texte = "puis " + " et ".join(suite) + ", dès la fin de la transcription"
+        w["date"].configure(text=date_ligne_ia(p.get("modifie", "")))
         if detail:
-            texte += " · " + detail
+            texte = (texte + " · " if texte else "") + detail
         w["etat"].configure(text=texte, text_color=T_ERREUR if e == "erreur" else T_SECONDAIRE)
         pret = e in ("a_corriger", "corrige")
         if progression is None or pret or e == "erreur":
             w["barre"].grid_forget()
         else:
-            w["barre"].grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 8))
+            w["barre"].grid(row=2, column=1, columnspan=4, sticky="ew", padx=10, pady=(0, 8))
             if progression < 0:
                 w["barre"].configure(mode="indeterminate")
                 w["barre"].start()

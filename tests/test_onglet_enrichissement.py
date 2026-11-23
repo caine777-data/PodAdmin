@@ -246,7 +246,7 @@ assert attendre(lambda: carte("meta")["action"] == "enchainer_meta"), carte("met
 assert attendre(lambda: pan.cartes["st"]["barre"].winfo_manager() != ""), "pas de barre dans la carte"
 pan.cartes["meta"]["bouton"].invoke(); a.update()
 assert P.charger("pod7")["a_enchainer"] == ["meta", "quiz"]
-assert carte("meta")["pastille"] == "demandé après la transcription"
+assert carte("meta")["pastille"] == "● demandé après la transcription"
 porte_7.set()
 assert attendre(lambda: ("pod7", "quiz") in demandes and ("pod7", "meta") in demandes), demandes
 assert "a_enchainer" not in P.charger("pod7"), "enchaînement rejoué au redémarrage"

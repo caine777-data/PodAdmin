@@ -1423,6 +1423,110 @@ class TestProprieteDuLot:
             app.browse_multi.clear()
 
 
+class TestToutDeselectionner:
+    """1.14.1 : « Tout désélectionner » est à côté de « Tout sélectionner »,
+    actif seulement quand des vidéos sont sélectionnées."""
+
+    def test_actif_avec_une_selection_seulement(self, app):
+        TestClassementDuLot()._lot(app, 3)
+        try:
+            app._browse_refresh_multi()
+            assert app.browse_deselect_btn.cget("state") == "normal"
+            app.browse_deselect_btn.invoke()
+            assert not app.browse_multi
+            assert app.browse_deselect_btn.cget("state") == "disabled"
+        finally:
+            app.browse_multi.clear()
+
+    def test_meme_rangee_que_tout_selectionner(self, app):
+        import customtkinter as ctk
+
+        rangee = app.browse_deselect_btn.master
+        textes = [
+            str(w.cget("text")) for w in rangee.winfo_children() if isinstance(w, ctk.CTkButton)
+        ]
+        assert any("Tout sélectionner" in x for x in textes), textes
+
+    def test_le_panneau_de_lot_ne_le_repete_plus(self, app):
+        import customtkinter as ctk
+
+        TestClassementDuLot()._lot(app, 2)
+        try:
+            textes = [
+                str(w.cget("text"))
+                for w in app.browse_detail.winfo_children()
+                if isinstance(w, ctk.CTkButton)
+            ]
+            assert not any("Annuler la sélection" in x for x in textes), textes
+        finally:
+            app.browse_multi.clear()
+
+
+class TestListeEnrichissement:
+    """1.15.0 : lignes de la liste de l'onglet Enrichissement IA (projets
+    fictifs en mémoire : rien n'est écrit sur le disque)."""
+
+    def _panneau(self, app, monkeypatch, n):
+        import app as module_app
+
+        pj = module_app.projets_ia
+        magasin = {}
+        monkeypatch.setattr(pj, "existe", lambda pid: pid in magasin)
+        monkeypatch.setattr(pj, "charger", lambda pid: magasin[pid])
+        app._show_tab("enrich")
+        pan = app.enrich_panneau
+        for pid in list(pan.lignes):
+            pan.lignes.pop(pid)["cadre"].destroy()
+        for i in range(n):
+            p = pj.nouveau(f"cours_{i}.mp4", "fr")
+            p["nom"] = "Chimie organique" if i == 0 else f"Cours {i}"
+            p["etat"] = "a_corriger"
+            p["sous_titres"] = [{"start": 0, "end": 2, "text": "Bonjour."}]
+            magasin[p["id"]] = p
+            pan._ligne(p)
+        pan.filtre_liste.set("Toutes")
+        pan._reordonner()
+        app.update()
+        return pan, list(magasin)
+
+    def test_etat_repere_et_un_seul_bouton(self, app, monkeypatch):
+        import customtkinter as ctk
+
+        pan, pids = self._panneau(app, monkeypatch, 2)
+        w = pan.lignes[pids[0]]
+        assert w["statut"].cget("text") == "● À relire"
+        assert w["reperes"][0].cget("text") == "◐ Sous-titres"
+        assert w["date"].cget("text").startswith("aujourd'hui")
+        boutons = [b for b in w["cadre"].winfo_children() if isinstance(b, ctk.CTkButton)]
+        assert [b.cget("text") for b in boutons] == ["⋯"]
+
+    def test_liseré_sur_la_video_choisie(self, app, monkeypatch):
+        import app as module_app
+
+        pan, pids = self._panneau(app, monkeypatch, 2)
+        pan.selectionner_projet(pids[1])
+        app.update()
+        assert pan.lignes[pids[1]]["lisere"].cget("fg_color") == module_app.C_ACTION
+        assert pan.lignes[pids[0]]["lisere"].cget("fg_color") == "transparent"
+        pan.revenir_au_choix()
+
+    def test_recherche_au_dela_du_seuil(self, app, monkeypatch):
+        import app as module_app
+
+        pan, pids = self._panneau(app, monkeypatch, 3)
+        assert not pan.recherche_liste.winfo_manager(), "inutile pour 3 vidéos"
+        for pid in list(pan.lignes):
+            pan.lignes.pop(pid)["cadre"].destroy()
+        pan, pids = self._panneau(app, monkeypatch, module_app.SEUIL_RECHERCHE_IA + 1)
+        assert pan.recherche_liste.winfo_manager()
+        pan.recherche_liste.insert(0, "chimie")
+        pan._reordonner()
+        visibles = [p for p in pids if pan.lignes[p]["cadre"].winfo_manager()]
+        assert visibles == [pids[0]]
+        pan.recherche_liste.delete(0, "end")
+        pan._reordonner()
+
+
 class TestSeparationBarreContenu:
     """Un filet marque la limite barre latérale / contenu.
 
@@ -2901,7 +3005,7 @@ class TestDisciplineDUneVideo:
 
 class TestClassementTypeEtDisciplines:
     """Le bouton Disciplines est à côté du menu Type (section « Classement »),
-    et non dans « Relations » avec les chaînes : type et disciplines sont les
+    et non dans « Copropriétaires et chaînes » : type et disciplines sont les
     deux nomenclatures de la vidéo."""
 
     def test_disciplines_sur_la_meme_ligne_que_le_type(self, app):

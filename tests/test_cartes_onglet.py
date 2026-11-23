@@ -141,6 +141,119 @@ class TestVideoDuPoste:
         assert c["quiz"]["action"] == "demander_quiz", "le quiz, lui, reste possible"
 
 
+class TestCartesRefonte115:
+    """1.15.0 : « Repartir de zéro » devient un lien discret, « Traduire… »
+    un bouton à part entière une fois les sous-titres relus."""
+
+    def test_repartir_est_un_lien_pas_un_bouton(self):
+        p = projet()
+        c = A.cartes_ia(p, True)["st"]
+        assert c["lien"] == "repartir" and c["action2"] == ""
+        pj.marquer_relu(p)
+        c = A.cartes_ia(p, True)["st"]
+        assert c["lien"] == "repartir" and c["action2"] != "repartir"
+
+    def test_traduire_seulement_apres_relecture(self):
+        p = projet()
+        assert A.cartes_ia(p, True)["st"]["action2"] != "traduire"
+        pj.marquer_relu(p)
+        c = A.cartes_ia(p, True)["st"]
+        assert c["action2"] == "traduire" and "Traduire" in c["libelle2"]
+
+    def test_les_autres_cartes_n_ont_pas_de_lien(self):
+        c = A.cartes_ia(projet(), True)
+        assert c["meta"]["lien"] == "" and c["quiz"]["lien"] == ""
+
+
+class TestLigneDeLaListe:
+    """1.15.0 : état en deux mots et un repère par partie, sur chaque ligne."""
+
+    def test_a_relire(self):
+        p = projet()
+        assert A.statut_ligne_ia(p) == ("À relire", "alerte")
+        assert A.reperes_ligne_ia(p) == [
+            ("Sous-titres", "◐", "alerte"),
+            ("Métadonnées", "○", ""),
+            ("Quiz", "○", ""),
+        ]
+
+    def test_transcription_et_demande_programmee(self):
+        p = projet(etat="attente")
+        p["a_enchainer"] = ["meta"]
+        assert A.statut_ligne_ia(p) == ("Transcription", "cours")
+        assert A.reperes_ligne_ia(p)[1] == ("Métadonnées", "◔", "cours")
+
+    def test_echec_passe_avant_tout(self):
+        p = projet(etat="erreur")
+        p["erreur"] = "refus"
+        assert A.statut_ligne_ia(p) == ("Échec", "erreur")
+        assert A.reperes_ligne_ia(p)[0] == ("Sous-titres", "✕", "erreur")
+
+    def test_chez_aristote(self):
+        p = projet()
+        pj.marquer_relu(p)
+        pj.nouvelle_demande(p, "quiz", "e1", ["quiz"])
+        assert A.statut_ligne_ia(p) == ("Chez Aristote", "cours")
+
+    def test_terminee(self):
+        p = projet()
+        pj.marquer_relu(p)
+        assert A.statut_ligne_ia(p) == ("Terminée", "ok")
+        assert A.reperes_ligne_ia(p)[0] == ("Sous-titres", "●", "ok")
+        assert not A.projet_a_faire_ia(p), "Terminée doit sortir du filtre À faire"
+
+    def test_sous_titres_modifies_apres_relecture(self):
+        p = projet()
+        pj.marquer_relu(p)
+        p["sous_titres"][0]["text"] = "Bonjour à toutes et à tous."
+        assert A.reperes_ligne_ia(p)[0] == ("Sous-titres", "◐", "alerte")
+
+    def test_quiz_exporte_sans_fausse_alerte(self):
+        # Le détail du quiz compte les questions : ce n'est pas une alerte.
+        p = projet()
+        pj.marquer_relu(p)
+        pj.nouvelle_demande(p, "quiz", "e1", ["quiz"])
+        pj.appliquer_demande(
+            p,
+            "quiz",
+            {
+                "multipleChoiceQuestions": [
+                    {"question": "Q ?", "choices": [{"optionText": "a", "correctAnswer": True}]}
+                ]
+            },
+            PRM,
+        )
+        pj.marquer_fait(p, "quiz")
+        assert A.reperes_ligne_ia(p)[2] == ("Quiz", "●", "ok")
+
+    def test_fichier_du_poste_sans_metadonnees(self):
+        assert [r[0] for r in A.reperes_ligne_ia(projet(pod=False))] == ["Sous-titres", "Quiz"]
+
+
+class TestDateEtConseil:
+    """1.15.0, suite : date de dernière activité, conseil de relire d'abord."""
+
+    def test_date_en_clair(self):
+        from datetime import datetime
+
+        maintenant = datetime(2026, 11, 23, 16, 0)
+        f = A.date_ligne_ia
+        assert f("2026-11-23T14:05:00", maintenant) == "aujourd'hui 14:05"
+        assert f("2026-11-22T09:12:00", maintenant) == "hier 09:12"
+        assert f("2026-11-12T09:12:00", maintenant) == "12/11"
+        assert f("2025-11-12T09:12:00", maintenant) == "12/11/2025"
+        assert f("", maintenant) == "" and f("n'importe quoi", maintenant) == ""
+
+    def test_conseil_si_sous_titres_non_relus(self):
+        p = projet()
+        c = A.cartes_ia(p, True)
+        assert "relisez d'abord les sous-titres" in c["meta"]["detail"]
+        assert "relisez d'abord les sous-titres" in c["quiz"]["detail"]
+        assert c["meta"]["action"] == "demander_meta", "un conseil, pas un blocage"
+        pj.marquer_relu(p)
+        assert "relisez d'abord" not in A.cartes_ia(p, True)["meta"]["detail"]
+
+
 class TestUnSeulBoutonColore:
     def test_rien_a_recommander(self):
         p = projet()
